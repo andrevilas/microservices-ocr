@@ -72,6 +72,10 @@ class JobStore:
         with self._lock:
             return self.jobs.get(job_id)
 
+    def list_all(self) -> list[JobRecord]:
+        with self._lock:
+            return list(self.jobs.values())
+
     def update(self, job_id: str, **kwargs: object) -> JobRecord:
         with self._lock:
             job = self.jobs[job_id]

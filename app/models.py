@@ -4,13 +4,28 @@ from typing import Literal
 from pydantic import BaseModel
 
 
-JobStatus = Literal["queued", "processing", "completed", "failed"]
+JobStatus = Literal["queued", "processing", "completed", "failed", "canceled"]
 QualityLabel = Literal["HIGH", "LOW"]
 
 
 class UploadResponse(BaseModel):
     job_id: str
     status: JobStatus
+
+
+class BatchUploadJob(BaseModel):
+    job_id: str
+    filename: str
+    status: JobStatus
+
+
+class BatchUploadResponse(BaseModel):
+    jobs: list[BatchUploadJob]
+
+
+class QueueClearResponse(BaseModel):
+    cleared_count: int
+    processing_count: int
 
 
 class JobResponse(BaseModel):

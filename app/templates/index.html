@@ -8,26 +8,564 @@
   </head>
   <body>
     <main class="shell">
-      <section class="panel">
-        <p class="eyebrow">OCR Recognizer</p>
-        <h1>Upload e processamento OCR de PDFs</h1>
-        <p class="copy">
-          Envie um PDF para iniciar o pipeline com OCR primario, avaliacao de qualidade e fallback quando necessario.
-        </p>
-        <form id="upload-form">
-          <label class="upload">
-            <span>Selecionar PDF</span>
-            <input id="file-input" type="file" name="file" accept="application/pdf,.pdf" required />
-          </label>
-          <button type="submit">Processar</button>
-        </form>
-        <div id="job-state" class="job-state hidden"></div>
+      <section class="workspace">
+        <section class="hero panel">
+          <div class="hero-copy hero-copy-compact">
+            <div class="hero-brandline">
+              <p class="eyebrow">{{ app_name }}</p>
+              <span class="hero-tag">Triagem, fila e entrega PDF/A</span>
+            </div>
+            <div class="hero-heading">
+              <h1>{{ app_name }}</h1>
+              <p class="copy">
+                Central de operacao para receber lotes, acompanhar OCR e baixar resultados pesquisaveis sem trocar de contexto.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="hero-metrics hero-metrics-row">
+          <article class="metric-card">
+            <span class="metric-label">Arquivos no painel</span>
+            <strong id="metric-total">0</strong>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Prontos para fila</span>
+            <strong id="metric-ready">0</strong>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Concluidos</span>
+            <strong id="metric-completed">0</strong>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Volume total</span>
+            <strong id="metric-volume">0 KB</strong>
+          </article>
+        </section>
+
+        <section class="workspace-grid">
+          <section class="control-column">
+            <section class="selector-panel panel panel-soft">
+              <div>
+                <p class="section-kicker">Entrada</p>
+                <h2>Selecionar um diretorio com PDFs</h2>
+              </div>
+              <p class="section-copy">
+                Explore o diretorio do cliente ou monte um lote manual. Os arquivos entram em cards e podem seguir para
+                a fila apenas quando voce decidir.
+              </p>
+              <div class="selection-grid">
+                <label class="upload upload-directory">
+                  <span>Selecionar diretorio</span>
+                  <small>Descobre PDFs em lote preservando o caminho relativo.</small>
+                  <input
+                    id="directory-input"
+                    type="file"
+                    name="directory"
+                    accept="application/pdf,.pdf"
+                    webkitdirectory
+                    directory
+                    multiple
+                  />
+                </label>
+                <label class="upload">
+                  <span>Selecionar varios PDFs</span>
+                  <small>Entrada manual para lotes rapidos e complementares.</small>
+                  <input id="multi-file-input" type="file" name="files" accept="application/pdf,.pdf" multiple />
+                </label>
+              </div>
+              <div class="batch-actions">
+                <div id="selection-state" class="selection-state hidden"></div>
+                <div class="batch-buttons">
+                  <button id="queue-button" type="button" disabled>Adicionar selecionados a fila</button>
+                  <button id="download-all-button" type="button" class="secondary-button" disabled>
+                    Baixar todos os convertidos
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel panel-dark quick-panel">
+              <div>
+                <p class="section-kicker section-kicker-light">Atalho</p>
+                <h2>Modo rapido</h2>
+              </div>
+              <p class="section-copy section-copy-light">
+                Use o envio unitario quando precisar validar um unico arquivo antes de disparar o lote completo.
+              </p>
+              <form id="upload-form">
+                <label class="upload upload-contrast">
+                  <span>Selecionar PDF</span>
+                  <small>Ideal para teste pontual ou triagem inicial.</small>
+                  <input id="file-input" type="file" name="file" accept="application/pdf,.pdf" required />
+                </label>
+                <button type="submit">Processar arquivo unico</button>
+              </form>
+            </section>
+          </section>
+
+          <section class="content-column">
+            <section class="panel panel-soft status-panel">
+              <div class="status-header">
+                <div>
+                  <p class="section-kicker">Operacao</p>
+                  <h2>Painel de cards e resultados</h2>
+                </div>
+                <p class="section-copy">
+                  Cada item concentra selecao, estado, progresso operacional e acao de download sem mudar de contexto.
+                </p>
+              </div>
+              <div class="toolbar">
+                <div class="filter-group" id="filter-group">
+                  <button type="button" class="filter-chip active" data-filter="all">Todos</button>
+                  <button type="button" class="filter-chip" data-filter="ready">Prontos</button>
+                  <button type="button" class="filter-chip" data-filter="queued">Em fila</button>
+                  <button type="button" class="filter-chip" data-filter="processing">Processando</button>
+                  <button type="button" class="filter-chip" data-filter="completed">Concluidos</button>
+                  <button type="button" class="filter-chip" data-filter="failed">Falharam</button>
+                </div>
+                <div class="toolbar-controls">
+                  <label class="search-box">
+                    <span>Busca rapida</span>
+                    <input id="search-input" type="search" placeholder="Nome do arquivo ou caminho relativo" />
+                  </label>
+                  <label class="sort-box">
+                    <span>Ordenacao</span>
+                    <select id="sort-select">
+                      <option value="status">Estado primeiro</option>
+                      <option value="name">Nome A-Z</option>
+                      <option value="size_desc">Maior tamanho</option>
+                      <option value="size_asc">Menor tamanho</option>
+                      <option value="recent">Mais recentes</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              <section class="progress-panel">
+                <div class="progress-copy">
+                  <strong id="progress-label">Nenhum lote ativo.</strong>
+                  <span id="progress-detail">Carregue arquivos para iniciar a sessao de processamento.</span>
+                </div>
+                <div class="progress-track" aria-hidden="true">
+                  <span id="progress-fill" class="progress-fill"></span>
+                </div>
+              </section>
+              <div class="mass-actions">
+                <button id="select-visible-button" type="button" class="secondary-button">Selecionar visiveis</button>
+                <button id="clear-selection-button" type="button" class="secondary-button">Limpar selecao</button>
+                <button id="clear-queue-button" type="button" class="secondary-button">Limpar fila</button>
+                <button id="remove-completed-button" type="button" class="secondary-button">Remover concluidos</button>
+                <button id="reset-workspace-button" type="button" class="secondary-button">Resetar workspace</button>
+              </div>
+              <div id="results-summary" class="results-summary">Mostrando 0 de 0 arquivos.</div>
+              <div id="job-state" class="job-state hidden"></div>
+              <div id="cards-grid" class="cards-grid hidden"></div>
+              <div id="empty-state" class="empty-state">
+                <strong>Nenhum lote carregado ainda.</strong>
+                <p>Selecione um diretorio ou varios arquivos para preencher o workspace e iniciar a fila de conversao.</p>
+              </div>
+            </section>
+          </section>
+        </section>
       </section>
+      <aside id="detail-drawer" class="detail-drawer hidden">
+        <div class="detail-drawer__header">
+          <div>
+            <p class="section-kicker">Detalhes</p>
+            <h2 id="detail-title">Nenhum arquivo selecionado</h2>
+          </div>
+          <button id="detail-close-button" type="button" class="secondary-button">Fechar</button>
+        </div>
+        <div id="detail-body" class="detail-body">
+          <p>Selecione um card para inspecionar estado, caminho, tamanho e identificador de job.</p>
+        </div>
+      </aside>
+      <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
     </main>
     <script>
       const form = document.getElementById("upload-form");
+      const directoryInput = document.getElementById("directory-input");
+      const multiFileInput = document.getElementById("multi-file-input");
       const fileInput = document.getElementById("file-input");
+      const cardsGrid = document.getElementById("cards-grid");
+      const queueButton = document.getElementById("queue-button");
+      const downloadAllButton = document.getElementById("download-all-button");
+      const filterGroup = document.getElementById("filter-group");
+      const searchInput = document.getElementById("search-input");
+      const sortSelect = document.getElementById("sort-select");
+      const selectVisibleButton = document.getElementById("select-visible-button");
+      const clearSelectionButton = document.getElementById("clear-selection-button");
+      const clearQueueButton = document.getElementById("clear-queue-button");
+      const removeCompletedButton = document.getElementById("remove-completed-button");
+      const resetWorkspaceButton = document.getElementById("reset-workspace-button");
+      const progressLabelEl = document.getElementById("progress-label");
+      const progressDetailEl = document.getElementById("progress-detail");
+      const progressFillEl = document.getElementById("progress-fill");
+      const detailDrawer = document.getElementById("detail-drawer");
+      const detailTitleEl = document.getElementById("detail-title");
+      const detailBodyEl = document.getElementById("detail-body");
+      const detailCloseButton = document.getElementById("detail-close-button");
+      const toastStack = document.getElementById("toast-stack");
+      const resultsSummaryEl = document.getElementById("results-summary");
+      const emptyState = document.getElementById("empty-state");
+      const totalMetricEl = document.getElementById("metric-total");
+      const readyMetricEl = document.getElementById("metric-ready");
+      const completedMetricEl = document.getElementById("metric-completed");
+      const volumeMetricEl = document.getElementById("metric-volume");
+      const selectionEl = document.getElementById("selection-state");
       const stateEl = document.getElementById("job-state");
+      const selectedCards = new Map();
+      const activePollers = new Set();
+      const storageKey = "ocr-recognizer-workspace-v1";
+      let activeFilter = "all";
+      let activeSearch = "";
+      let activeSort = "status";
+      let activeDetailCardId = null;
+
+      const formatSize = (bytes) => {
+        if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+      };
+
+      const showToast = (message, tone = "info") => {
+        const toast = document.createElement("div");
+        toast.className = `toast toast-${tone}`;
+        toast.textContent = message;
+        toastStack.appendChild(toast);
+        window.setTimeout(() => {
+          toast.classList.add("toast-exit");
+          window.setTimeout(() => toast.remove(), 220);
+        }, 2600);
+      };
+
+      const matchesFilter = (item) => activeFilter === "all" || item.status === activeFilter;
+
+      const matchesSearch = (item) => {
+        if (!activeSearch) return true;
+        const haystack = `${item.file.name} ${item.relativePath || ""}`.toLowerCase();
+        return haystack.includes(activeSearch);
+      };
+
+      const statusRank = {
+        queued: 0,
+        processing: 1,
+        ready: 2,
+        completed: 3,
+        failed: 4,
+      };
+
+      const formatDate = (timestamp) => {
+        if (!timestamp) return "Indisponivel";
+        try {
+          return new Intl.DateTimeFormat("pt-BR", {
+            dateStyle: "short",
+            timeStyle: "short",
+          }).format(new Date(timestamp));
+        } catch (_error) {
+          return "Indisponivel";
+        }
+      };
+
+      const getStatusLabel = (status) => {
+        if (status === "queued") return "Em fila";
+        if (status === "processing") return "Processando";
+        if (status === "completed") return "Concluido";
+        if (status === "failed") return "Falhou";
+        if (status === "canceled") return "Cancelado";
+        return "Pronto";
+      };
+
+      const getVisibleFiles = () =>
+        Array.from(selectedCards.values()).filter((item) => matchesFilter(item) && matchesSearch(item));
+
+      const sortFiles = (items) => {
+        const sorted = [...items];
+        sorted.sort((left, right) => {
+          if (activeSort === "name") return left.file.name.localeCompare(right.file.name, "pt-BR");
+          if (activeSort === "size_desc") return right.file.size - left.file.size;
+          if (activeSort === "size_asc") return left.file.size - right.file.size;
+          if (activeSort === "recent") return right.file.lastModified - left.file.lastModified;
+
+          const statusDelta = statusRank[left.status] - statusRank[right.status];
+          if (statusDelta !== 0) return statusDelta;
+          return left.file.name.localeCompare(right.file.name, "pt-BR");
+        });
+        return sorted;
+      };
+
+      const serializeWorkspace = () => ({
+        filter: activeFilter,
+        search: activeSearch,
+        sort: activeSort,
+        activeDetailCardId,
+        cards: Array.from(selectedCards.values()).map((item) => ({
+          id: item.id,
+          fileName: item.file.name,
+          relativePath: item.relativePath,
+          size: item.file.size,
+          lastModified: item.file.lastModified,
+          status: item.status,
+          selected: item.selected,
+          jobId: item.jobId,
+          downloadUrl: item.downloadUrl,
+        })),
+      });
+
+      const persistWorkspace = () => {
+        try {
+          window.localStorage.setItem(storageKey, JSON.stringify(serializeWorkspace()));
+        } catch (_error) {
+          // Ignore storage errors silently; persistence is a convenience feature.
+        }
+      };
+
+      const hydrateWorkspace = () => {
+        try {
+          const raw = window.localStorage.getItem(storageKey);
+          if (!raw) return;
+          const parsed = JSON.parse(raw);
+          activeFilter = parsed.filter || "all";
+          activeSearch = parsed.search || "";
+          activeSort = parsed.sort || "status";
+          activeDetailCardId = parsed.activeDetailCardId || null;
+          searchInput.value = activeSearch;
+          sortSelect.value = activeSort;
+          Array.from(filterGroup.querySelectorAll(".filter-chip")).forEach((button) => {
+            button.classList.toggle("active", button.dataset.filter === activeFilter);
+          });
+          (parsed.cards || []).forEach((item) => {
+            const placeholderFile = {
+              name: item.fileName,
+              size: item.size,
+              lastModified: item.lastModified,
+            };
+            selectedCards.set(item.id, {
+              id: item.id,
+              file: placeholderFile,
+              relativePath: item.relativePath,
+              selected: Boolean(item.selected),
+              status: item.status,
+              jobId: item.jobId,
+              downloadUrl: item.downloadUrl,
+            });
+          });
+        } catch (_error) {
+          window.localStorage.removeItem(storageKey);
+        }
+      };
+
+      const renderDrawer = () => {
+        if (!activeDetailCardId || !selectedCards.has(activeDetailCardId)) {
+          activeDetailCardId = null;
+          detailDrawer.classList.add("hidden");
+          detailTitleEl.textContent = "Nenhum arquivo selecionado";
+          detailBodyEl.innerHTML = "<p>Selecione um card para inspecionar estado, caminho, tamanho e identificador de job.</p>";
+          return;
+        }
+
+        const item = selectedCards.get(activeDetailCardId);
+        const statusLabel = getStatusLabel(item.status);
+        detailDrawer.classList.remove("hidden");
+        detailTitleEl.textContent = item.file.name;
+        const contextualActions = [];
+        if (item.status === "ready") {
+          contextualActions.push(`<button type="button" class="secondary-button drawer-action" data-drawer-action="toggle-select">`);
+          contextualActions.push(item.selected ? "Remover da selecao" : "Selecionar para fila");
+          contextualActions.push(`</button>`);
+          contextualActions.push(`<button type="button" class="drawer-action" data-drawer-action="queue-single">Enviar este arquivo</button>`);
+        }
+        if (item.status === "completed" && item.downloadUrl) {
+          contextualActions.push(`<a class="drawer-link" href="${item.downloadUrl}">Baixar resultado PDF/A</a>`);
+        }
+        if (item.status === "completed" || item.status === "failed") {
+          contextualActions.push(`<button type="button" class="secondary-button drawer-action" data-drawer-action="remove-card">Remover do painel</button>`);
+        }
+        detailBodyEl.innerHTML = `
+          <section class="detail-highlight">
+            <span class="detail-badge detail-badge-${item.status}">${getStatusLabel(item.status)}</span>
+            <p>${item.status === "processing"
+              ? "O worker ja esta convertendo este PDF."
+              : item.status === "queued"
+                ? "Este PDF esta aguardando uma vaga de processamento."
+                : item.status === "completed"
+                  ? "Resultado final gerado com OCR e pronto para download."
+                  : item.status === "failed"
+                    ? "O processamento falhou e pode exigir revisao do arquivo."
+                    : "Este arquivo esta pronto para entrar na fila."}</p>
+          </section>
+          <dl class="detail-list">
+            <div><dt>Estado</dt><dd>${statusLabel}</dd></div>
+            <div><dt>Caminho</dt><dd>${item.relativePath || item.file.name}</dd></div>
+            <div><dt>Tamanho</dt><dd>${formatSize(item.file.size)}</dd></div>
+            <div><dt>Ultima modificacao</dt><dd>${formatDate(item.file.lastModified)}</dd></div>
+            <div><dt>Job</dt><dd>${item.jobId || "Ainda nao enviado"}</dd></div>
+            <div><dt>Download</dt><dd>${item.downloadUrl ? "Disponivel" : "Indisponivel"}</dd></div>
+          </dl>
+          <div class="drawer-actions">${contextualActions.join("") || "<span class=\"detail-empty-action\">Nenhuma acao imediata disponivel.</span>"}</div>
+        `;
+      };
+
+      const syncActionButtons = () => {
+        const selected = Array.from(selectedCards.values()).filter((item) => item.selected && item.status === "ready");
+        const completed = Array.from(selectedCards.values()).filter((item) => item.status === "completed" && item.jobId);
+        const queued = Array.from(selectedCards.values()).filter((item) => item.status === "queued");
+        const hasAnyCards = selectedCards.size > 0;
+        const visibleReady = getVisibleFiles().filter((item) => item.status === "ready");
+        queueButton.disabled = !selected.length;
+        queueButton.textContent = selected.length
+          ? `Adicionar ${selected.length} arquivo(s) a fila`
+          : "Adicionar selecionados a fila";
+        downloadAllButton.disabled = !completed.length;
+        downloadAllButton.textContent = completed.length
+          ? `Baixar ${completed.length} convertido(s)`
+          : "Baixar todos os convertidos";
+        selectVisibleButton.disabled = !visibleReady.length;
+        clearSelectionButton.disabled = !selected.length;
+        clearQueueButton.disabled = !queued.length;
+        removeCompletedButton.disabled = !completed.length;
+        resetWorkspaceButton.disabled = !hasAnyCards;
+      };
+
+      const syncMetrics = (files, readyFiles, completedFiles, totalBytes) => {
+        totalMetricEl.textContent = String(files.length);
+        readyMetricEl.textContent = String(readyFiles.length);
+        completedMetricEl.textContent = String(completedFiles.length);
+        volumeMetricEl.textContent = formatSize(totalBytes || 0);
+      };
+
+      const syncProgress = (files) => {
+        const activeCount = files.filter((item) => item.status === "queued" || item.status === "processing").length;
+        const processingCount = files.filter((item) => item.status === "processing").length;
+        const queuedCount = files.filter((item) => item.status === "queued").length;
+        const completedCount = files.filter((item) => item.status === "completed").length;
+        const failedCount = files.filter((item) => item.status === "failed").length;
+        const terminalCount = completedCount + failedCount;
+        const total = files.length;
+        const percent = total ? Math.round((terminalCount / total) * 100) : 0;
+
+        if (!total) {
+          progressLabelEl.textContent = "Nenhum lote ativo.";
+          progressDetailEl.textContent = "Carregue arquivos para iniciar a sessao de processamento.";
+          progressFillEl.style.width = "0%";
+          return;
+        }
+
+        progressLabelEl.textContent = `${percent}% do lote resolvido`;
+        progressDetailEl.textContent = `${completedCount} concluido(s), ${processingCount} processando, ${queuedCount} em fila, ${failedCount} falhou(aram).`;
+        progressFillEl.style.width = `${percent}%`;
+      };
+
+      const renderSelection = (rejectedCount = 0) => {
+        const files = Array.from(selectedCards.values());
+        const visibleFiles = sortFiles(files.filter((item) => matchesFilter(item) && matchesSearch(item)));
+        const readyFiles = files.filter((item) => item.status === "ready");
+        const queuedFiles = files.filter((item) => item.status === "queued");
+        const processingFiles = files.filter((item) => item.status === "processing");
+        const completedFiles = files.filter((item) => item.status === "completed");
+        const failedFiles = files.filter((item) => item.status === "failed");
+        if (!files.length && !rejectedCount) {
+          selectionEl.classList.add("hidden");
+          selectionEl.innerHTML = "";
+          cardsGrid.classList.add("hidden");
+          cardsGrid.innerHTML = "";
+          emptyState.classList.remove("hidden");
+          syncMetrics([], [], [], 0);
+          syncProgress([]);
+          syncActionButtons();
+          renderDrawer();
+          return;
+        }
+        const totalBytes = files.reduce((sum, item) => sum + item.file.size, 0);
+        syncMetrics(files, readyFiles, completedFiles, totalBytes);
+        syncProgress(files);
+        const warning = rejectedCount
+          ? `<p class="selection-warning">${rejectedCount} arquivo(s) ignorado(s) por nao serem PDF.</p>`
+          : "";
+        resultsSummaryEl.textContent = `Mostrando ${visibleFiles.length} de ${files.length} arquivo(s).`;
+
+        selectionEl.classList.remove("hidden");
+        selectionEl.innerHTML = `
+          <div class="selection-summary">
+            <strong>${readyFiles.length} PDF(s) pronto(s)</strong>
+            <span>${queuedFiles.length} em fila</span>
+            <span>${processingFiles.length} processando</span>
+            <span>${completedFiles.length} concluido(s)</span>
+            <span>${failedFiles.length} falharam</span>
+            <span>${formatSize(totalBytes)} carregados</span>
+          </div>
+          ${warning}
+        `;
+        emptyState.classList.add("hidden");
+        cardsGrid.classList.remove("hidden");
+        cardsGrid.innerHTML = visibleFiles
+          .map((item) => {
+            const cardClass = item.selected ? `file-card selected status-${item.status}` : `file-card status-${item.status}`;
+            const disabled = item.status !== "ready" ? "disabled" : "";
+            const checked = item.selected ? "checked" : "";
+            const badgeLabel = getStatusLabel(item.status);
+            const download = item.downloadUrl
+              ? `<a class="download-link" href="${item.downloadUrl}">Baixar PDF convertido</a>`
+              : "";
+            const selectionLabel = item.status === "ready" ? "Selecionar" : "Travado";
+            return `
+              <article class="${cardClass}" data-card-id="${item.id}">
+                <header class="card-topline">
+                  <label class="card-toggle">
+                  <input type="checkbox" data-card-toggle="${item.id}" ${checked} ${disabled} />
+                  <span>${selectionLabel}</span>
+                  </label>
+                  <span class="card-badge">${badgeLabel}</span>
+                </header>
+                <h3>${item.file.name}</h3>
+                <p class="card-path">${item.relativePath || item.file.name}</p>
+                <div class="card-meta">
+                  <span>${formatSize(item.file.size)}</span>
+                  <span>${item.jobId ? `Job ${item.jobId.slice(0, 8)}` : "Aguardando fila"}</span>
+                </div>
+                <footer class="card-footer">
+                  ${download}
+                </footer>
+              </article>
+            `;
+          })
+          .join("");
+        if (!visibleFiles.length) {
+          cardsGrid.innerHTML = `
+            <div class="empty-state empty-state-inline">
+              <strong>Nenhum card corresponde ao filtro atual.</strong>
+              <p>Ajuste a busca ou troque o estado selecionado para voltar a visualizar os arquivos carregados.</p>
+            </div>
+          `;
+        }
+        syncActionButtons();
+        renderDrawer();
+        persistWorkspace();
+      };
+
+      const upsertFiles = (files) => {
+        let rejectedCount = 0;
+        Array.from(files || []).forEach((file) => {
+          if (!file.name.toLowerCase().endsWith(".pdf")) {
+            rejectedCount += 1;
+            return;
+          }
+          const relativePath = file.webkitRelativePath || file.name;
+          const cardId = `${relativePath}::${file.size}::${file.lastModified}`;
+          if (!selectedCards.has(cardId)) {
+            selectedCards.set(cardId, {
+              id: cardId,
+              file,
+              relativePath,
+              selected: true,
+              status: "ready",
+              jobId: null,
+              downloadUrl: null,
+            });
+          }
+        });
+        renderSelection(rejectedCount);
+        if (rejectedCount) showToast(`${rejectedCount} arquivo(s) ignorado(s) por nao serem PDF.`, "warn");
+      };
 
       const renderState = (message, isError = false) => {
         stateEl.classList.remove("hidden");
@@ -35,20 +573,307 @@
         stateEl.innerHTML = message;
       };
 
-      const pollJob = async (jobId) => {
-        const response = await fetch(`/api/jobs/${jobId}`);
-        const job = await response.json();
+      const updateCardJobState = (job) => {
+        const item = Array.from(selectedCards.values()).find((entry) => entry.jobId === job.job_id);
+        if (!item) return;
         if (job.status === "completed") {
-          renderState(`Processamento concluido. <a href="${job.download_url}">Baixar PDF pesquisavel</a>`);
-          return;
+          item.status = "completed";
+          item.downloadUrl = job.download_url;
+        } else if (job.status === "failed") {
+          item.status = "failed";
+          item.selected = false;
+        } else if (job.status === "canceled") {
+          item.status = "canceled";
+          item.selected = false;
+        } else if (job.status === "processing") {
+          item.status = "processing";
+        } else {
+          item.status = "queued";
         }
-        if (job.status === "failed") {
-          renderState(`Falha no processamento: ${job.error || "erro desconhecido"}`, true);
-          return;
-        }
-        renderState(`Status atual: ${job.status}`);
-        window.setTimeout(() => pollJob(jobId), 1500);
+        renderSelection();
       };
+
+      const schedulePoll = (jobId, delay = 1500) => {
+        window.setTimeout(() => pollJob(jobId), delay);
+      };
+
+      const pollJob = async (jobId) => {
+        if (!jobId) return;
+        activePollers.add(jobId);
+        try {
+          const response = await fetch(`/api/jobs/${jobId}`);
+          if (!response.ok) throw new Error("Falha ao consultar status do job.");
+          const job = await response.json();
+          updateCardJobState(job);
+          if (job.status === "completed") {
+            activePollers.delete(jobId);
+            showToast(`Arquivo ${job.filename} concluido.`, "success");
+            renderState(`Processamento concluido. <a href="${job.download_url}">Baixar PDF pesquisavel</a>`);
+            return;
+          }
+          if (job.status === "failed") {
+            activePollers.delete(jobId);
+            showToast(`Falha no processamento de ${job.filename || "um arquivo"}.`, "error");
+            renderState(`Falha no processamento: ${job.error || "erro desconhecido"}`, true);
+            return;
+          }
+          if (job.status === "canceled") {
+            activePollers.delete(jobId);
+            showToast(`Job de ${job.filename || "um arquivo"} cancelado.`, "warn");
+            renderState(`Job cancelado: ${job.error || "removido da fila."}`, true);
+            return;
+          }
+          renderState(`Status atual: ${getStatusLabel(job.status)}.`);
+          schedulePoll(jobId);
+        } catch (_error) {
+          renderState("Falha temporaria ao sincronizar a fila. Tentando novamente...", true);
+          schedulePoll(jobId, 2500);
+        }
+      };
+
+      const resumeActiveJobs = () => {
+        Array.from(selectedCards.values()).forEach((item) => {
+          if (!item.jobId) return;
+          if (item.status !== "queued" && item.status !== "processing") return;
+          if (activePollers.has(item.jobId)) return;
+          pollJob(item.jobId);
+        });
+      };
+
+      directoryInput.addEventListener("change", () => {
+        upsertFiles(directoryInput.files);
+      });
+
+      multiFileInput.addEventListener("change", () => {
+        upsertFiles(multiFileInput.files);
+      });
+
+      cardsGrid.addEventListener("change", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement) || !target.dataset.cardToggle) return;
+        const card = selectedCards.get(target.dataset.cardToggle);
+        if (!card || card.status !== "ready") return;
+        card.selected = target.checked;
+        renderSelection();
+      });
+
+      cardsGrid.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        if (target.closest("a") || target.closest("input")) return;
+        const article = target.closest("[data-card-id]");
+        if (!article) return;
+        activeDetailCardId = article.dataset.cardId;
+        renderDrawer();
+        persistWorkspace();
+      });
+
+      detailBodyEl.addEventListener("click", async (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const action = target.dataset.drawerAction;
+        if (!action || !activeDetailCardId || !selectedCards.has(activeDetailCardId)) return;
+        const item = selectedCards.get(activeDetailCardId);
+        if (!item) return;
+
+        if (action === "toggle-select" && item.status === "ready") {
+          item.selected = !item.selected;
+          renderSelection();
+          showToast(item.selected ? "Arquivo adicionado a selecao." : "Arquivo removido da selecao.", "info");
+          return;
+        }
+
+        if (action === "remove-card" && (item.status === "completed" || item.status === "failed")) {
+          selectedCards.delete(item.id);
+          activeDetailCardId = null;
+          renderSelection();
+          showToast("Card removido do painel.", "info");
+          return;
+        }
+
+        if (action === "queue-single" && item.status === "ready" && item.file instanceof File) {
+          const body = new FormData();
+          body.append("file", item.file, item.file.name);
+          item.status = "queued";
+          item.selected = false;
+          renderSelection();
+          renderState(`Enviando ${item.file.name} para a fila...`);
+          const response = await fetch("/api/jobs", { method: "POST", body });
+          if (!response.ok) {
+            const payload = await response.json();
+            item.status = "ready";
+            renderSelection();
+            showToast(payload.detail || "Falha ao enviar arquivo.", "error");
+            renderState(payload.detail || "Falha ao enviar arquivo.", true);
+            return;
+          }
+          const payload = await response.json();
+          item.jobId = payload.job_id;
+          showToast(`${item.file.name} entrou na fila.`, "success");
+          renderState(`Job ${payload.job_id} criado para ${item.file.name}.`);
+          pollJob(payload.job_id);
+        }
+      });
+
+      selectVisibleButton.addEventListener("click", () => {
+        getVisibleFiles().forEach((item) => {
+          if (item.status === "ready") item.selected = true;
+        });
+        renderSelection();
+        showToast("Cards visiveis selecionados.", "info");
+      });
+
+      clearSelectionButton.addEventListener("click", () => {
+        Array.from(selectedCards.values()).forEach((item) => {
+          item.selected = false;
+        });
+        renderSelection();
+        showToast("Selecao limpa.", "info");
+      });
+
+      removeCompletedButton.addEventListener("click", () => {
+        let removedCount = 0;
+        Array.from(selectedCards.entries()).forEach(([key, item]) => {
+          if (item.status === "completed") {
+            selectedCards.delete(key);
+            removedCount += 1;
+          }
+        });
+        renderSelection();
+        if (removedCount) showToast(`${removedCount} concluido(s) removido(s) do painel.`, "info");
+      });
+
+      clearQueueButton.addEventListener("click", async () => {
+        renderState("Limpando jobs pendentes da fila...");
+        const response = await fetch("/api/jobs/clear-queue", { method: "POST" });
+        if (!response.ok) {
+          renderState("Falha ao limpar a fila.", true);
+          showToast("Falha ao limpar a fila.", "error");
+          return;
+        }
+        const payload = await response.json();
+        let removedCount = 0;
+        Array.from(selectedCards.entries()).forEach(([key, item]) => {
+          if (item.status === "queued") {
+            selectedCards.delete(key);
+            if (item.jobId) activePollers.delete(item.jobId);
+            removedCount += 1;
+          }
+        });
+        renderSelection();
+        renderState(
+          payload.processing_count
+            ? `${payload.cleared_count} job(s) removido(s) da fila. ${payload.processing_count} ainda estao em processamento.`
+            : `${payload.cleared_count} job(s) removido(s) da fila.`
+        );
+        showToast(`${removedCount || payload.cleared_count} item(ns) retirado(s) da fila.`, "info");
+      });
+
+      resetWorkspaceButton.addEventListener("click", async () => {
+        renderState("Resetando workspace e removendo jobs pendentes...");
+        try {
+          await fetch("/api/jobs/clear-queue", { method: "POST" });
+        } catch (_error) {
+          // The workspace reset should still clear the local session even if the queue cleanup fails.
+        }
+
+        Array.from(selectedCards.values()).forEach((item) => {
+          if (item.jobId) activePollers.delete(item.jobId);
+        });
+        selectedCards.clear();
+        activeDetailCardId = null;
+        activeFilter = "all";
+        activeSearch = "";
+        activeSort = "status";
+        searchInput.value = "";
+        sortSelect.value = activeSort;
+        Array.from(filterGroup.querySelectorAll(".filter-chip")).forEach((button) => {
+          button.classList.toggle("active", button.dataset.filter === activeFilter);
+        });
+        directoryInput.value = "";
+        multiFileInput.value = "";
+        fileInput.value = "";
+        window.localStorage.removeItem(storageKey);
+        stateEl.classList.add("hidden");
+        stateEl.classList.remove("error");
+        stateEl.innerHTML = "";
+        renderSelection();
+        showToast("Workspace resetado. A sessao local foi limpa.", "info");
+      });
+
+      filterGroup.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLButtonElement) || !target.dataset.filter) return;
+        activeFilter = target.dataset.filter;
+        Array.from(filterGroup.querySelectorAll(".filter-chip")).forEach((button) => {
+          button.classList.toggle("active", button === target);
+        });
+        renderSelection();
+      });
+
+      searchInput.addEventListener("input", () => {
+        activeSearch = searchInput.value.trim().toLowerCase();
+        renderSelection();
+      });
+
+      sortSelect.addEventListener("change", () => {
+        activeSort = sortSelect.value;
+        renderSelection();
+      });
+
+      queueButton.addEventListener("click", async () => {
+        const queued = Array.from(selectedCards.values()).filter((item) => item.selected && item.status === "ready");
+        if (!queued.length) return;
+        const body = new FormData();
+        queued.forEach((item) => {
+          body.append("files", item.file, item.file.name);
+          item.status = "queued";
+          item.selected = false;
+        });
+        renderSelection();
+        renderState(`Enviando ${queued.length} arquivo(s) para a fila...`);
+        const response = await fetch("/api/jobs/batch", { method: "POST", body });
+        if (!response.ok) {
+          const payload = await response.json();
+          queued.forEach((item) => {
+            item.status = "ready";
+          });
+          renderSelection();
+          showToast(payload.detail || "Falha ao criar fila em lote.", "error");
+          renderState(payload.detail || "Falha ao criar fila em lote.", true);
+          return;
+        }
+        const payload = await response.json();
+        payload.jobs.forEach((job, index) => {
+          const item = queued[index];
+          if (!item) return;
+          item.jobId = job.job_id;
+          pollJob(job.job_id);
+        });
+        showToast(`${payload.jobs.length} arquivo(s) enviado(s) para a fila.`, "success");
+        renderState(`${payload.jobs.length} job(s) criados e enviados para processamento.`);
+      });
+
+      downloadAllButton.addEventListener("click", () => {
+        const completedJobIds = Array.from(selectedCards.values())
+          .filter((item) => item.status === "completed" && item.jobId)
+          .map((item) => item.jobId);
+        if (!completedJobIds.length) return;
+        const params = new URLSearchParams();
+        completedJobIds.forEach((jobId) => params.append("job_ids", jobId));
+        showToast(`Preparando download de ${completedJobIds.length} arquivo(s).`, "info");
+        window.location.href = `/api/jobs/download-batch?${params.toString()}`;
+      });
+
+      detailCloseButton.addEventListener("click", () => {
+        activeDetailCardId = null;
+        renderDrawer();
+        persistWorkspace();
+      });
+
+      hydrateWorkspace();
+      renderSelection();
+      resumeActiveJobs();
 
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -60,10 +885,12 @@
         const response = await fetch("/api/jobs", { method: "POST", body });
         if (!response.ok) {
           const payload = await response.json();
+          showToast(payload.detail || "Falha ao criar job.", "error");
           renderState(payload.detail || "Falha ao criar job.", true);
           return;
         }
         const result = await response.json();
+        showToast(`Job ${result.job_id.slice(0, 8)} criado.`, "success");
         renderState(`Job ${result.job_id} criado. Iniciando processamento...`);
         pollJob(result.job_id);
       });
