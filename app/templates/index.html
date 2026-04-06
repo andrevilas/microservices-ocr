@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ app_name }}</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel">
+        <p class="eyebrow">OCR Recognizer</p>
+        <h1>Upload e processamento OCR de PDFs</h1>
+        <p class="copy">
+          Envie um PDF para iniciar o pipeline com OCR primario, avaliacao de qualidade e fallback quando necessario.
+        </p>
+        <form id="upload-form">
+          <label class="upload">
+            <span>Selecionar PDF</span>
+            <input id="file-input" type="file" name="file" accept="application/pdf,.pdf" required />
+          </label>
+          <button type="submit">Processar</button>
+        </form>
+        <div id="job-state" class="job-state hidden"></div>
+      </section>
+    </main>
+    <script>
+      const form = document.getElementById("upload-form");
+      const fileInput = document.getElementById("file-input");
+      const stateEl = document.getElementById("job-state");
+
+      const renderState = (message, isError = false) => {
+        stateEl.classList.remove("hidden");
+        stateEl.classList.toggle("error", isError);
+        stateEl.innerHTML = message;
+      };
+
+      const pollJob = async (jobId) => {
+        const response = await fetch(`/api/jobs/${jobId}`);
+        const job = await response.json();
+        if (job.status === "completed") {
+          renderState(`Processamento concluido. <a href="${job.download_url}">Baixar PDF pesquisavel</a>`);
+          return;
+        }
+        if (job.status === "failed") {
+          renderState(`Falha no processamento: ${job.error || "erro desconhecido"}`, true);
+          return;
+        }
+        renderState(`Status atual: ${job.status}`);
+        window.setTimeout(() => pollJob(jobId), 1500);
+      };
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const file = fileInput.files[0];
+        if (!file) return;
+        const body = new FormData();
+        body.append("file", file);
+        renderState("Enviando arquivo...");
+        const response = await fetch("/api/jobs", { method: "POST", body });
+        if (!response.ok) {
+          const payload = await response.json();
+          renderState(payload.detail || "Falha ao criar job.", true);
+          return;
+        }
+        const result = await response.json();
+        renderState(`Job ${result.job_id} criado. Iniciando processamento...`);
+        pollJob(result.job_id);
+      });
+    </script>
+  </body>
+</html>

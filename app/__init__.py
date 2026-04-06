@@ -1,0 +1,1 @@
+"""OCR Recognizer application package."""
