@@ -5,6 +5,7 @@ MVP da sprint inicial para processamento OCR de PDFs com:
 - API FastAPI para upload, status e download
 - upload de PDFs de ate 80 MB
 - pipeline com OCR primario e fallback opcional por baixa confianca
+- retorno final em PDF/A com compactacao
 - interface web simples
 - armazenamento temporario em `/tmp`
 - empacotamento Docker

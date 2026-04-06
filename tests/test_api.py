@@ -5,6 +5,7 @@ from reportlab.pdfgen import canvas
 
 from app.main import app
 from app.config import settings
+from app.services.easyocr_service import FallbackOcrService
 
 
 client = TestClient(app)
@@ -56,3 +57,13 @@ def test_processes_pdf_and_allows_download() -> None:
 
 def test_default_upload_limit_is_80_mb() -> None:
     assert settings.max_upload_size_mb == 80
+
+
+def test_default_final_output_settings() -> None:
+    assert settings.final_output_type == "pdfa"
+    assert settings.final_pdf_optimize_level == 3
+    assert settings.final_pdfa_image_compression == "jpeg"
+
+
+def test_fallback_is_optional_in_local_environment() -> None:
+    assert isinstance(FallbackOcrService.is_available(), bool)

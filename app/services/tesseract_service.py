@@ -1,31 +1,20 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 from pathlib import Path
 
 from pypdf import PdfReader
 
+from app.services.ocrmypdf_service import OcrmypdfService
+
 
 class PrimaryOcrService:
+    def __init__(self, ocrmypdf_service: OcrmypdfService | None = None) -> None:
+        self.ocrmypdf_service = ocrmypdf_service or OcrmypdfService()
+
     def process(self, input_pdf_path: Path, output_pdf_path: Path) -> str:
-        if shutil.which("ocrmypdf"):
-            try:
-                subprocess.run(
-                    [
-                        "ocrmypdf",
-                        "--skip-text",
-                        "--optimize",
-                        "0",
-                        str(input_pdf_path),
-                        str(output_pdf_path),
-                    ],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
-            except subprocess.CalledProcessError as exc:
-                raise RuntimeError(exc.stderr.strip() or str(exc)) from exc
+        if self.ocrmypdf_service.is_available():
+            self.ocrmypdf_service.run_ocr(input_pdf_path, output_pdf_path)
         else:
             output_pdf_path.write_bytes(input_pdf_path.read_bytes())
         return self.extract_text(output_pdf_path)

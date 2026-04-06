@@ -39,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     ghostscript \
     poppler-utils \
+    pngquant \
     libglib2.0-0 \
     libsm6 \
     libxext6 \

@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     quality_min_text: int = 40
     quality_valid_ratio_threshold: float = 0.7
     fallback_min_improvement_chars: int = 20
+    final_output_type: str = "pdfa"
+    final_pdf_optimize_level: int = 3
+    final_pdfa_image_compression: str = "jpeg"
+    final_pdf_jpeg_quality: int = 75
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
