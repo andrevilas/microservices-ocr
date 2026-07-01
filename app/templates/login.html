@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login - {{ app_name }}</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <style>
+      .login-shell {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      .login-card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow);
+        padding: 48px 40px 40px;
+        width: min(420px, 100%);
+        backdrop-filter: blur(12px);
+      }
+
+      .login-header {
+        text-align: center;
+        margin-bottom: 32px;
+      }
+
+      .login-header .eyebrow {
+        font-size: 0.75rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--accent);
+        font-weight: 600;
+        margin: 0 0 8px;
+      }
+
+      .login-header h1 {
+        font-size: 1.5rem;
+        margin: 0;
+        color: var(--text);
+      }
+
+      .login-form {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .form-group label {
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: var(--muted);
+        letter-spacing: 0.04em;
+      }
+
+      .form-group input {
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        font-size: 0.95rem;
+        font-family: inherit;
+        background: var(--panel-strong);
+        color: var(--text);
+        transition: border-color 0.2s;
+      }
+
+      .form-group input:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+
+      .login-btn {
+        margin-top: 8px;
+        padding: 14px;
+        border: none;
+        border-radius: var(--radius-md);
+        background: var(--accent);
+        color: #fff;
+        font-size: 0.95rem;
+        font-weight: 600;
+        font-family: inherit;
+        cursor: pointer;
+        transition: background 0.2s, transform 0.1s;
+      }
+
+      .login-btn:hover {
+        background: var(--accent-strong);
+      }
+
+      .login-btn:active {
+        transform: scale(0.98);
+      }
+
+      .login-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .login-error {
+        display: none;
+        padding: 12px 14px;
+        border-radius: var(--radius-md);
+        background: rgba(185, 28, 28, 0.08);
+        border: 1px solid rgba(185, 28, 28, 0.2);
+        color: var(--error);
+        font-size: 0.85rem;
+        text-align: center;
+      }
+
+      .login-error.visible {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="login-shell">
+      <div class="login-card">
+        <div class="login-header">
+          <p class="eyebrow">{{ app_name }}</p>
+          <h1>Entrar</h1>
+        </div>
+
+        <div id="login-error" class="login-error"></div>
+
+        <form id="login-form" class="login-form" autocomplete="on">
+          <div class="form-group">
+            <label for="email">E-mail</label>
+            <input
+              type="email"
+              id="email"
+              name="email"
+              required
+              autocomplete="email"
+              placeholder="seu@email.com"
+            />
+          </div>
+          <div class="form-group">
+            <label for="password">Senha</label>
+            <input
+              type="password"
+              id="password"
+              name="password"
+              required
+              autocomplete="current-password"
+              placeholder="Sua senha"
+            />
+          </div>
+          <button type="submit" id="login-btn" class="login-btn">Entrar</button>
+        </form>
+      </div>
+    </main>
+
+    <script>
+      (function () {
+        var form = document.getElementById("login-form");
+        var errorDiv = document.getElementById("login-error");
+        var btn = document.getElementById("login-btn");
+
+        function showError(msg) {
+          errorDiv.textContent = msg;
+          errorDiv.classList.add("visible");
+        }
+
+        function hideError() {
+          errorDiv.classList.remove("visible");
+        }
+
+        form.addEventListener("submit", function (e) {
+          e.preventDefault();
+          hideError();
+
+          var email = document.getElementById("email").value.trim();
+          var password = document.getElementById("password").value;
+
+          if (!email || !password) {
+            showError("Preencha todos os campos.");
+            return;
+          }
+
+          btn.disabled = true;
+          btn.textContent = "Entrando...";
+
+          fetch("/auth/login", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: email, password: password }),
+          })
+            .then(function (res) {
+              if (!res.ok) {
+                return res.json().then(function (data) {
+                  throw new Error(data.detail || "Credenciais invalidas.");
+                });
+              }
+              return res.json();
+            })
+            .then(function () {
+              window.location.href = "/";
+            })
+            .catch(function (err) {
+              showError(err.message);
+              btn.disabled = false;
+              btn.textContent = "Entrar";
+            });
+        });
+      })();
+    </script>
+  </body>
+</html>

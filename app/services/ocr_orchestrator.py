@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import re
+import time
 from pathlib import Path
 
 from app.config import settings
@@ -11,6 +13,8 @@ from app.services.pdf_builder import PdfBuilder
 from app.services.storage_service import JobRecord, JobStore
 from app.services.tesseract_service import PrimaryOcrService
 from app.utils.quality_evaluator import QualityEvaluation, evaluate_quality
+
+logger = logging.getLogger(__name__)
 
 
 class OcrOrchestrator:
@@ -33,10 +37,12 @@ class OcrOrchestrator:
 
     def process_job(self, job_id: str) -> OCRResult | None:
         job = self.job_store.update(job_id, status="processing", error=None)
+        _start_ms = time.monotonic()
         primary_output = job.working_dir / "primary-searchable.pdf"
         draft_output = job.working_dir / "final-draft.pdf"
         final_output = job.working_dir / "final-searchable-pdfa.pdf"
         try:
+            logger.info("Job %s started: %s", job_id, job.filename)
             primary_text = self.primary_ocr.process(job.input_pdf_path, primary_output)
             evaluation = evaluate_quality(
                 primary_text,
@@ -48,6 +54,7 @@ class OcrOrchestrator:
             base_pdf_path: Path | None = primary_output
 
             if evaluation.label == "LOW" and self.fallback_ocr.is_available():
+                logger.info("Job %s: primary quality LOW, trying fallback", job_id)
                 fallback_text = self.fallback_ocr.process(job.input_pdf_path)
                 fallback_eval = evaluate_quality(
                     fallback_text,
@@ -55,6 +62,10 @@ class OcrOrchestrator:
                     valid_ratio_threshold=settings.quality_valid_ratio_threshold,
                 )
                 if self._is_better(primary=evaluation, fallback=fallback_eval):
+                    logger.info(
+                        "Job %s: fallback chosen (ratio=%.2f, chars=%d)",
+                        job_id, fallback_eval.valid_ratio, fallback_eval.character_count,
+                    )
                     text = fallback_text
                     evaluation = fallback_eval
                     used_fallback = True
@@ -67,6 +78,11 @@ class OcrOrchestrator:
                 base_pdf_path=base_pdf_path,
             )
             self._finalize_output(draft_output, final_output)
+            _elapsed_ms = int((time.monotonic() - _start_ms) * 1000)
+            logger.info(
+                "Job %s completed in %d ms (fallback=%s, quality=%s)",
+                job_id, _elapsed_ms, used_fallback, evaluation.label,
+            )
             self.job_store.update(job_id, status="completed", output_pdf_path=final_output, quality=evaluation.label)
             return OCRResult(
                 text=text,
@@ -77,6 +93,8 @@ class OcrOrchestrator:
                 used_fallback=used_fallback,
             )
         except Exception as exc:  # pragma: no cover - final safety net for background work
+            _elapsed_ms = int((time.monotonic() - _start_ms) * 1000)
+            logger.error("Job %s failed after %d ms: %s", job_id, _elapsed_ms, exc)
             self.job_store.update(job_id, status="failed", error=str(exc))
             return None
 
@@ -88,7 +106,10 @@ class OcrOrchestrator:
 
     @staticmethod
     def _is_better(primary: QualityEvaluation, fallback: QualityEvaluation) -> bool:
+        # Conservative: fallback must not lose significant text and must have
+        # equal or better valid_ratio to be preferred over primary.
+        tolerance = settings.fallback_character_tolerance
         return (
-            fallback.character_count >= primary.character_count + settings.fallback_min_improvement_chars
-            or fallback.valid_ratio > primary.valid_ratio
+            fallback.valid_ratio >= primary.valid_ratio
+            and fallback.character_count >= primary.character_count - tolerance
         )

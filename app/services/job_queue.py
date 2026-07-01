@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
 
 from app.config import settings
 from app.services.ocr_orchestrator import OcrOrchestrator
 from app.services.storage_service import JobStore, get_job_store
+
+logger = logging.getLogger(__name__)
 
 
 class JobQueueProcessor:
@@ -25,6 +28,31 @@ class JobQueueProcessor:
             if self._started:
                 return
             self._stop_event.clear()
+
+            # --- Cleanup expired jobs before recovery ----------------------
+            try:
+                cleaned = self.job_store.cleanup_expired()
+                if cleaned:
+                    logger.info("Startup cleanup: removed files for %d expired jobs", len(cleaned))
+            except Exception:
+                logger.exception("Startup cleanup failed, continuing")
+
+            # --- Recovery: reset processing -> queued ----------------------
+            for job in self.job_store.get_processing_jobs():
+                logger.info("Recovery: job %s was processing, resetting to queued", job.job_id)
+                self.job_store.update(
+                    job.job_id,
+                    status="queued",
+                    error="Recovered after restart: was processing when server stopped.",
+                )
+
+            # --- Recovery: re-enqueue persisted queued jobs ----------------
+            for job in self.job_store.get_queued_jobs():
+                if job.job_id not in self._queued_ids:
+                    logger.info("Recovery: re-enqueuing persisted queued job %s", job.job_id)
+                    self._queued_ids.add(job.job_id)
+                    self._queue.put(job.job_id)
+
             self._threads = [
                 Thread(target=self._worker_loop, name=f"ocr-worker-{index + 1}", daemon=True)
                 for index in range(self.worker_count)
@@ -34,12 +62,24 @@ class JobQueueProcessor:
             self._started = True
 
     def stop(self) -> None:
+        timeout = settings.worker_shutdown_timeout_seconds
         with self._lock:
             if not self._started:
                 return
             self._stop_event.set()
         for thread in self._threads:
-            thread.join(timeout=1)
+            thread.join(timeout=timeout)
+        # Mark any jobs still processing as failed (shutdown)
+        for job in self.job_store.get_processing_jobs():
+            logger.warning("Shutdown: job %s still processing, marking as failed", job.job_id)
+            try:
+                self.job_store.update(
+                    job.job_id,
+                    status="failed",
+                    error="Server shutdown while job was processing.",
+                )
+            except Exception:
+                logger.exception("Failed to mark job %s during shutdown", job.job_id)
         with self._lock:
             self._threads = []
             self._started = False

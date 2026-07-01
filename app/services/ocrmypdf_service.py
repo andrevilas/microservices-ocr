@@ -58,6 +58,11 @@ class OcrmypdfService:
                 check=True,
                 capture_output=True,
                 text=True,
+                timeout=settings.ocr_subprocess_timeout_seconds,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"OCR subprocess timed out after {settings.ocr_subprocess_timeout_seconds} seconds."
+            ) from exc
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(exc.stderr.strip() or str(exc)) from exc

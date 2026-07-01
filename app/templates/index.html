@@ -7,6 +7,19 @@
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
+    <nav class="user-bar" style="display:flex;align-items:center;justify-content:flex-end;gap:1rem;padding:.5rem 1.5rem;background:var(--surface-alt,#1a1a2e);border-bottom:1px solid var(--border,#333);font-size:.875rem;color:var(--text-muted,#aaa);">
+      <span>{{ user.name }} ({{ user.email }})</span>
+      {% if user.role == 'admin' %}
+      <a href="/admin/users" style="color:var(--accent,#7c3aed);text-decoration:none;">Gestao de Usuarios</a>
+      {% endif %}
+      <button id="logout-button" type="button" style="background:none;border:1px solid var(--border,#555);color:var(--text-muted,#aaa);padding:.25rem .75rem;border-radius:4px;cursor:pointer;font-size:.8rem;">Logout</button>
+    </nav>
+    <script>
+      document.getElementById("logout-button").addEventListener("click", async () => {
+        await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
+        window.location.href = "/login";
+      });
+    </script>
     <main class="shell">
       <section class="workspace">
         <section class="hero panel">
@@ -183,6 +196,14 @@
       <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
     </main>
     <script>
+      // XSS protection: escape HTML entities in user-controlled strings
+      const escapeHtml = (str) => {
+        if (typeof str !== "string") return "";
+        const div = document.createElement("div");
+        div.appendChild(document.createTextNode(str));
+        return div.innerHTML;
+      };
+
       const form = document.getElementById("upload-form");
       const directoryInput = document.getElementById("directory-input");
       const multiFileInput = document.getElementById("multi-file-input");
@@ -375,7 +396,7 @@
           contextualActions.push(`<button type="button" class="drawer-action" data-drawer-action="queue-single">Enviar este arquivo</button>`);
         }
         if (item.status === "completed" && item.downloadUrl) {
-          contextualActions.push(`<a class="drawer-link" href="${item.downloadUrl}">Baixar resultado PDF/A</a>`);
+          contextualActions.push(`<a class="drawer-link" href="${escapeHtml(item.downloadUrl)}">Baixar resultado PDF/A</a>`);
         }
         if (item.status === "completed" || item.status === "failed") {
           contextualActions.push(`<button type="button" class="secondary-button drawer-action" data-drawer-action="remove-card">Remover do painel</button>`);
@@ -395,7 +416,7 @@
           </section>
           <dl class="detail-list">
             <div><dt>Estado</dt><dd>${statusLabel}</dd></div>
-            <div><dt>Caminho</dt><dd>${item.relativePath || item.file.name}</dd></div>
+            <div><dt>Caminho</dt><dd>${escapeHtml(item.relativePath || item.file.name)}</dd></div>
             <div><dt>Tamanho</dt><dd>${formatSize(item.file.size)}</dd></div>
             <div><dt>Ultima modificacao</dt><dd>${formatDate(item.file.lastModified)}</dd></div>
             <div><dt>Job</dt><dd>${item.jobId || "Ainda nao enviado"}</dd></div>
@@ -504,7 +525,7 @@
             const checked = item.selected ? "checked" : "";
             const badgeLabel = getStatusLabel(item.status);
             const download = item.downloadUrl
-              ? `<a class="download-link" href="${item.downloadUrl}">Baixar PDF convertido</a>`
+              ? `<a class="download-link" href="${escapeHtml(item.downloadUrl)}">Baixar PDF convertido</a>`
               : "";
             const selectionLabel = item.status === "ready" ? "Selecionar" : "Travado";
             return `
@@ -516,8 +537,8 @@
                   </label>
                   <span class="card-badge">${badgeLabel}</span>
                 </header>
-                <h3>${item.file.name}</h3>
-                <p class="card-path">${item.relativePath || item.file.name}</p>
+                <h3>${escapeHtml(item.file.name)}</h3>
+                <p class="card-path">${escapeHtml(item.relativePath || item.file.name)}</p>
                 <div class="card-meta">
                   <span>${formatSize(item.file.size)}</span>
                   <span>${item.jobId ? `Job ${item.jobId.slice(0, 8)}` : "Aguardando fila"}</span>
@@ -570,7 +591,13 @@
       const renderState = (message, isError = false) => {
         stateEl.classList.remove("hidden");
         stateEl.classList.toggle("error", isError);
-        stateEl.innerHTML = message;
+        stateEl.textContent = message;
+      };
+
+      const renderStateHtml = (html, isError = false) => {
+        stateEl.classList.remove("hidden");
+        stateEl.classList.toggle("error", isError);
+        stateEl.innerHTML = html;
       };
 
       const updateCardJobState = (job) => {
@@ -608,19 +635,19 @@
           if (job.status === "completed") {
             activePollers.delete(jobId);
             showToast(`Arquivo ${job.filename} concluido.`, "success");
-            renderState(`Processamento concluido. <a href="${job.download_url}">Baixar PDF pesquisavel</a>`);
+            renderStateHtml(`Processamento concluido. <a href="${escapeHtml(job.download_url)}">Baixar PDF pesquisavel</a>`);
             return;
           }
           if (job.status === "failed") {
             activePollers.delete(jobId);
             showToast(`Falha no processamento de ${job.filename || "um arquivo"}.`, "error");
-            renderState(`Falha no processamento: ${job.error || "erro desconhecido"}`, true);
+            renderState(`Falha no processamento: ${job.error || "erro desconhecido"}`, true);  // renderState uses textContent - safe
             return;
           }
           if (job.status === "canceled") {
             activePollers.delete(jobId);
             showToast(`Job de ${job.filename || "um arquivo"} cancelado.`, "warn");
-            renderState(`Job cancelado: ${job.error || "removido da fila."}`, true);
+            renderState(`Job cancelado: ${job.error || "removido da fila."}`, true);  // renderState uses textContent - safe
             return;
           }
           renderState(`Status atual: ${getStatusLabel(job.status)}.`);
@@ -697,14 +724,14 @@
           item.status = "queued";
           item.selected = false;
           renderSelection();
-          renderState(`Enviando ${item.file.name} para a fila...`);
+          renderState(`Enviando ${item.file.name} para a fila...`);  // renderState uses textContent - safe
           const response = await fetch("/api/jobs", { method: "POST", body });
           if (!response.ok) {
             const payload = await response.json();
             item.status = "ready";
             renderSelection();
             showToast(payload.detail || "Falha ao enviar arquivo.", "error");
-            renderState(payload.detail || "Falha ao enviar arquivo.", true);
+            renderState(payload.detail || "Falha ao enviar arquivo.", true);  // renderState uses textContent - safe
             return;
           }
           const payload = await response.json();
@@ -840,7 +867,7 @@
           });
           renderSelection();
           showToast(payload.detail || "Falha ao criar fila em lote.", "error");
-          renderState(payload.detail || "Falha ao criar fila em lote.", true);
+          renderState(payload.detail || "Falha ao criar fila em lote.", true);  // renderState uses textContent - safe
           return;
         }
         const payload = await response.json();
@@ -886,7 +913,7 @@
         if (!response.ok) {
           const payload = await response.json();
           showToast(payload.detail || "Falha ao criar job.", "error");
-          renderState(payload.detail || "Falha ao criar job.", true);
+          renderState(payload.detail || "Falha ao criar job.", true);  // renderState uses textContent - safe
           return;
         }
         const result = await response.json();

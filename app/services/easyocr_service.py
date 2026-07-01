@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from app.utils.image_preprocessing import preprocess_image
 
 
 class FallbackOcrService:
+    def __init__(self) -> None:
+        self._reader = None
+        self._reader_lock = threading.Lock()
+
     @staticmethod
     def is_available() -> bool:
         try:
@@ -15,15 +20,23 @@ class FallbackOcrService:
             return False
         return True
 
+    def _get_reader(self):
+        """Lazy, thread-safe singleton Reader per instance."""
+        if self._reader is None:
+            with self._reader_lock:
+                if self._reader is None:
+                    import easyocr
+                    self._reader = easyocr.Reader(["pt", "en"], gpu=False)
+        return self._reader
+
     def process(self, input_pdf_path: Path) -> str:
         if not self.is_available():
             return ""
 
-        import easyocr
         from pdf2image import convert_from_path
 
         images = convert_from_path(str(input_pdf_path))
-        reader = easyocr.Reader(["pt", "en"], gpu=False)
+        reader = self._get_reader()
         chunks: list[str] = []
         preprocessing_dir = input_pdf_path.parent / "preprocessed-pages"
         preprocessing_dir.mkdir(parents=True, exist_ok=True)
@@ -32,8 +45,8 @@ class FallbackOcrService:
             page_path = preprocessing_dir / f"page-{index}.png"
             image.save(page_path)
             processed_path = preprocess_image(page_path)
-            results = reader.readtext(image)
-            if processed_path.exists():
-                results = reader.readtext(str(processed_path))
+            # Single readtext call per page: prefer preprocessed image
+            ocr_input = str(processed_path) if processed_path.exists() else image
+            results = reader.readtext(ocr_input)
             chunks.extend(item[1] for item in results if len(item) > 1)
         return "\n".join(chunks).strip()
