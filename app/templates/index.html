@@ -7,39 +7,99 @@
     <link rel="stylesheet" href="/static/style.css?v={{ static_asset_version }}" />
   </head>
   <body>
-    <nav class="user-bar">
-      <span class="user-bar__identity">{{ user.name }} ({{ user.email }})</span>
-      <div class="user-bar__actions">
-      <a class="user-bar__link" href="/account">Minha conta</a>
-      {% if user.role == 'admin' %}
-      <a class="user-bar__link" href="/admin/users">Gestão de usuários</a>
-      {% endif %}
-      <button id="logout-button" type="button" class="secondary-button">Sair</button>
+    <nav class="app-navbar" aria-label="Menu principal">
+      <a class="app-navbar__brand" href="/">
+        <strong>{{ app_name }}</strong>
+        <span>Triagem, fila e entrega PDF/A</span>
+      </a>
+
+      <div class="app-navbar__menus">
+        <details class="nav-menu">
+          <summary>Entrada</summary>
+          <div class="nav-menu__panel nav-menu__panel-wide">
+            <label class="nav-upload">
+              <span>Selecionar diretório</span>
+              <small>Carrega PDFs mantendo o caminho relativo.</small>
+              <input
+                id="directory-input"
+                type="file"
+                name="directory"
+                accept="application/pdf,.pdf"
+                webkitdirectory
+                directory
+                multiple
+              />
+            </label>
+            <label class="nav-upload">
+              <span>Selecionar PDFs</span>
+              <small>Escolha múltiplos arquivos avulsos.</small>
+              <input id="multi-file-input" type="file" name="files" accept="application/pdf,.pdf" multiple />
+            </label>
+            <div class="nav-menu__actions">
+              <button id="queue-button" type="button" disabled>Adicionar selecionados à fila</button>
+              <button id="download-all-button" type="button" class="secondary-button" disabled>
+                Baixar todos os convertidos
+              </button>
+            </div>
+          </div>
+        </details>
+
+        <details class="nav-menu">
+          <summary>Modo rápido</summary>
+          <div class="nav-menu__panel">
+            <form id="upload-form" class="quick-upload-form">
+              <label class="nav-upload">
+                <span>Selecionar PDF</span>
+                <small>Envio pontual para processamento imediato.</small>
+                <input id="file-input" type="file" name="file" accept="application/pdf,.pdf" required />
+              </label>
+              <button type="submit">Processar arquivo único</button>
+            </form>
+          </div>
+        </details>
+
+        <details class="nav-menu nav-menu-account">
+          <summary>{{ user.name }}</summary>
+          <div class="nav-menu__panel">
+            <div class="nav-account">
+              <strong>{{ user.name }}</strong>
+              <span>{{ user.email }}</span>
+            </div>
+            <a class="nav-menu__link" href="/account">Minha conta</a>
+            {% if user.role == 'admin' %}
+            <a class="nav-menu__link" href="/admin/users">Gestão de usuários</a>
+            {% endif %}
+            <button id="logout-button" type="button" class="secondary-button">Sair</button>
+          </div>
+        </details>
       </div>
     </nav>
     <script>
+      const navMenus = Array.from(document.querySelectorAll(".nav-menu"));
+      window.closeNavMenus = () => {
+        navMenus.forEach((menu) => {
+          menu.open = false;
+        });
+      };
+      navMenus.forEach((menu) => {
+        menu.addEventListener("toggle", () => {
+          if (!menu.open) return;
+          navMenus.forEach((otherMenu) => {
+            if (otherMenu !== menu) otherMenu.open = false;
+          });
+        });
+      });
+      document.addEventListener("click", (event) => {
+        if (event.target.closest(".nav-menu")) return;
+        window.closeNavMenus();
+      });
       document.getElementById("logout-button").addEventListener("click", async () => {
         await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
         window.location.href = "/login";
       });
     </script>
-    <main class="shell">
+    <main class="shell app-shell">
       <section class="workspace">
-        <section class="hero panel">
-          <div class="hero-copy hero-copy-compact">
-            <div class="hero-brandline">
-              <p class="eyebrow">{{ app_name }}</p>
-              <span class="hero-tag">Triagem, fila e entrega PDF/A</span>
-            </div>
-            <div class="hero-heading">
-              <h1>{{ app_name }}</h1>
-              <p class="copy">
-                Central de operação para receber lotes, acompanhar OCR e baixar resultados pesquisáveis.
-              </p>
-            </div>
-          </div>
-        </section>
-
         <section class="hero-metrics hero-metrics-row">
           <article class="metric-card">
             <span class="metric-label">Arquivos no painel</span>
@@ -59,77 +119,19 @@
           </article>
         </section>
 
-        <section class="workspace-grid">
-          <section class="control-column">
-            <section class="selector-panel panel panel-soft">
-              <div>
-                <p class="section-kicker">Entrada</p>
-                <h2>Selecionar PDFs</h2>
-              </div>
-              <p class="section-copy">
-                Monte um lote por diretório ou arquivos avulsos e envie à fila quando estiver pronto.
-              </p>
-              <div class="selection-grid">
-                <label class="upload upload-directory">
-                  <span>Selecionar diretório</span>
-                  <small>Preserva o caminho relativo dos PDFs.</small>
-                  <input
-                    id="directory-input"
-                    type="file"
-                    name="directory"
-                    accept="application/pdf,.pdf"
-                    webkitdirectory
-                    directory
-                    multiple
-                  />
-                </label>
-                <label class="upload">
-                  <span>Selecionar vários PDFs</span>
-                  <small>Entrada manual para lotes rápidos.</small>
-                  <input id="multi-file-input" type="file" name="files" accept="application/pdf,.pdf" multiple />
-                </label>
-              </div>
-              <div class="batch-actions">
-                <div id="selection-state" class="selection-state hidden"></div>
-                <div class="batch-buttons">
-                  <button id="queue-button" type="button" disabled>Adicionar selecionados à fila</button>
-                  <button id="download-all-button" type="button" class="secondary-button" disabled>
-                    Baixar todos os convertidos
-                  </button>
-                </div>
-              </div>
-            </section>
-
-            <section class="panel panel-dark quick-panel">
-              <div>
-                <p class="section-kicker section-kicker-light">Atalho</p>
-                <h2>Modo rápido</h2>
-              </div>
-              <p class="section-copy section-copy-light">
-                Processamento pontual para um único PDF.
-              </p>
-              <form id="upload-form">
-                <label class="upload upload-contrast">
-                  <span>Selecionar PDF</span>
-                  <small>Ideal para teste pontual ou triagem inicial.</small>
-                  <input id="file-input" type="file" name="file" accept="application/pdf,.pdf" required />
-                </label>
-                <button type="submit">Processar arquivo único</button>
-              </form>
-            </section>
-          </section>
-
+        <section class="workspace-main">
           <section class="content-column">
-            <section class="panel panel-soft status-panel">
+            <section class="panel panel-soft status-panel main-panel">
               <div class="status-header">
                 <div>
-                  <p class="section-kicker">Operacao</p>
+                  <p class="section-kicker">Operação</p>
                   <h2>Painel de cards e resultados</h2>
                 </div>
                 <p class="section-copy">
                   Acompanhe seleção, fila, processamento e downloads.
                 </p>
               </div>
+              <div id="selection-state" class="selection-state hidden"></div>
               <div class="toolbar">
                 <div class="filter-group" id="filter-group">
                   <button type="button" class="filter-chip active" data-filter="all">Todos</button>
@@ -715,10 +717,12 @@
 
       directoryInput.addEventListener("change", () => {
         upsertFiles(directoryInput.files);
+        window.closeNavMenus?.();
       });
 
       multiFileInput.addEventListener("change", () => {
         upsertFiles(multiFileInput.files);
+        window.closeNavMenus?.();
       });
 
       cardsGrid.addEventListener("change", (event) => {
@@ -898,6 +902,7 @@
       queueButton.addEventListener("click", async () => {
         const queued = Array.from(selectedCards.values()).filter((item) => item.selected && item.status === "ready");
         if (!queued.length) return;
+        window.closeNavMenus?.();
         const body = new FormData();
         queued.forEach((item) => {
           body.append("files", item.file, item.file.name);
@@ -934,6 +939,7 @@
           .filter((item) => item.status === "completed" && item.jobId)
           .map((item) => item.jobId);
         if (!completedJobIds.length) return;
+        window.closeNavMenus?.();
         const params = new URLSearchParams();
         completedJobIds.forEach((jobId) => params.append("job_ids", jobId));
         showToast(`Preparando download de ${completedJobIds.length} arquivo(s).`, "info");
@@ -954,6 +960,7 @@
         event.preventDefault();
         const file = fileInput.files[0];
         if (!file) return;
+        window.closeNavMenus?.();
         const body = new FormData();
         body.append("file", file);
         renderState("Enviando arquivo...");
