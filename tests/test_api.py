@@ -59,16 +59,16 @@ def test_homepage_loads() -> None:
     response = client.get("/", cookies=cookies)
     assert response.status_code == 200
     assert "Fluxo OCR" in response.text
-    assert "Selecionar diretorio" in response.text
+    assert "Selecionar diretório" in response.text
     assert "Triagem, fila e entrega PDF/A" in response.text
     assert "Painel de cards e resultados" in response.text
-    assert "Busca rapida" in response.text
-    assert "Ordenacao" in response.text
-    assert "Concluidos" in response.text
-    assert "Selecionar visiveis" in response.text
+    assert "Busca rápida" in response.text
+    assert "Ordenação" in response.text
+    assert "Concluídos" in response.text
+    assert "Selecionar visíveis" in response.text
     assert "Limpar fila" in response.text
     assert "Resetar workspace" in response.text
-    assert "Remover concluidos" in response.text
+    assert "Remover concluídos" in response.text
     assert "Nenhum lote ativo." in response.text
     assert "Detalhes" in response.text
     assert "toast-stack" in response.text

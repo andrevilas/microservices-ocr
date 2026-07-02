@@ -3,265 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Gestao de Usuarios - {{ app_name }}</title>
+    <title>Gestão de usuários - {{ app_name }}</title>
     <link rel="stylesheet" href="/static/style.css" />
-    <style>
-      .users-shell {
-        min-height: 100vh;
-        padding: 24px;
-      }
-
-      .users-container {
-        width: min(960px, 100%);
-        margin: 0 auto;
-      }
-
-      /* -- Top bar -- */
-      .users-topbar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 28px;
-        flex-wrap: wrap;
-        gap: 12px;
-      }
-
-      .users-topbar-left {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-      }
-
-      .users-topbar h1 {
-        font-size: 1.35rem;
-        margin: 0;
-        color: var(--text);
-      }
-
-      .topbar-link {
-        font-size: 0.85rem;
-        color: var(--accent);
-        text-decoration: none;
-        font-weight: 600;
-        transition: color 0.2s;
-      }
-
-      .topbar-link:hover {
-        color: var(--accent-strong);
-      }
-
-      .topbar-btn {
-        padding: 8px 18px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-md);
-        background: var(--panel);
-        color: var(--text);
-        font-size: 0.82rem;
-        font-family: inherit;
-        font-weight: 600;
-        cursor: pointer;
-        transition: background 0.2s, border-color 0.2s;
-      }
-
-      .topbar-btn:hover {
-        background: var(--bg-strong);
-        border-color: var(--border-strong);
-      }
-
-      /* -- Alert messages -- */
-      .users-alert {
-        display: none;
-        padding: 12px 16px;
-        border-radius: var(--radius-md);
-        font-size: 0.85rem;
-        margin-bottom: 20px;
-        text-align: center;
-      }
-
-      .users-alert.visible {
-        display: block;
-      }
-
-      .users-alert.success {
-        background: rgba(15, 118, 110, 0.08);
-        border: 1px solid rgba(15, 118, 110, 0.2);
-        color: var(--accent);
-      }
-
-      .users-alert.error {
-        background: rgba(185, 28, 28, 0.08);
-        border: 1px solid rgba(185, 28, 28, 0.2);
-        color: var(--error);
-      }
-
-      /* -- Create user form card -- */
-      .create-card {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-lg);
-        box-shadow: var(--shadow);
-        padding: 28px 32px 24px;
-        margin-bottom: 28px;
-      }
-
-      .create-card h2 {
-        font-size: 1rem;
-        margin: 0 0 18px;
-        color: var(--text);
-      }
-
-      .create-form {
-        display: flex;
-        gap: 12px;
-        flex-wrap: wrap;
-        align-items: flex-end;
-      }
-
-      .create-form .field {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        flex: 1;
-        min-width: 160px;
-      }
-
-      .create-form label {
-        font-size: 0.78rem;
-        font-weight: 600;
-        color: var(--muted);
-        letter-spacing: 0.04em;
-      }
-
-      .create-form input {
-        padding: 10px 12px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-md);
-        font-size: 0.9rem;
-        font-family: inherit;
-        background: var(--panel-strong);
-        color: var(--text);
-        transition: border-color 0.2s;
-      }
-
-      .create-form input:focus {
-        outline: none;
-        border-color: var(--accent);
-        box-shadow: 0 0 0 3px var(--accent-soft);
-      }
-
-      .create-btn {
-        padding: 10px 22px;
-        border: none;
-        border-radius: var(--radius-md);
-        background: var(--accent);
-        color: #fff;
-        font-size: 0.88rem;
-        font-weight: 600;
-        font-family: inherit;
-        cursor: pointer;
-        transition: background 0.2s, transform 0.1s;
-        white-space: nowrap;
-      }
-
-      .create-btn:hover {
-        background: var(--accent-strong);
-      }
-
-      .create-btn:active {
-        transform: scale(0.97);
-      }
-
-      .create-btn:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-
-      /* -- Users table card -- */
-      .table-card {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-lg);
-        box-shadow: var(--shadow);
-        overflow: hidden;
-      }
-
-      .table-card h2 {
-        font-size: 1rem;
-        margin: 0;
-        padding: 20px 28px 14px;
-        color: var(--text);
-      }
-
-      .users-table-wrap {
-        overflow-x: auto;
-      }
-
-      .users-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.88rem;
-      }
-
-      .users-table th {
-        text-align: left;
-        padding: 10px 20px;
-        font-size: 0.75rem;
-        font-weight: 700;
-        color: var(--muted);
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        border-bottom: 1px solid var(--border);
-        background: var(--bg);
-      }
-
-      .users-table td {
-        padding: 12px 20px;
-        border-bottom: 1px solid var(--border);
-        color: var(--text);
-      }
-
-      .users-table tr:last-child td {
-        border-bottom: none;
-      }
-
-      .users-table tr:hover td {
-        background: var(--accent-soft);
-      }
-
-      .role-badge {
-        display: inline-block;
-        padding: 2px 10px;
-        border-radius: 20px;
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-      }
-
-      .role-badge.admin {
-        background: rgba(184, 102, 44, 0.12);
-        color: var(--warm);
-      }
-
-      .role-badge.user {
-        background: var(--accent-soft);
-        color: var(--accent);
-      }
-
-      .empty-msg {
-        text-align: center;
-        padding: 32px;
-        color: var(--muted);
-        font-size: 0.9rem;
-      }
-    </style>
   </head>
   <body>
     <main class="users-shell">
       <div class="users-container">
         <div class="users-topbar">
           <div class="users-topbar-left">
-            <h1>Gestao de Usuarios</h1>
+            <h1>Gestão de usuários</h1>
             <a href="/" class="topbar-link">Voltar ao painel</a>
           </div>
           <button id="logout-btn" class="topbar-btn">Sair</button>
@@ -272,7 +22,7 @@
 
         <!-- Create user form -->
         <div class="create-card">
-          <h2>Novo Usuario</h2>
+          <h2>Novo usuário</h2>
           <form id="create-form" class="create-form" autocomplete="off">
             <div class="field">
               <label for="new-name">Nome</label>
@@ -292,7 +42,7 @@
 
         <!-- Users table -->
         <div class="table-card">
-          <h2>Usuarios Cadastrados</h2>
+          <h2>Usuários cadastrados</h2>
           <div class="users-table-wrap">
             <table class="users-table">
               <thead>
@@ -381,7 +131,7 @@
 
         function renderUsers(users) {
           if (!users.length) {
-            setEmptyMessage("Nenhum usuario cadastrado.");
+            setEmptyMessage("Nenhum usuário cadastrado.");
             return;
           }
           var fragment = document.createDocumentFragment();
@@ -407,7 +157,7 @@
                 window.location.href = "/login";
                 return;
               }
-              if (!res.ok) throw new Error("Erro ao carregar usuarios.");
+              if (!res.ok) throw new Error("Erro ao carregar usuários.");
               return res.json();
             })
             .then(function (data) {
@@ -443,13 +193,13 @@
             .then(function (res) {
               if (!res.ok) {
                 return res.json().then(function (data) {
-                  throw new Error(data.detail || "Erro ao criar usuario.");
+                  throw new Error(data.detail || "Erro ao criar usuário.");
                 });
               }
               return res.json();
             })
             .then(function () {
-              showSuccess("Usuario criado com sucesso!");
+              showSuccess("Usuário criado com sucesso.");
               createForm.reset();
               loadUsers();
             })

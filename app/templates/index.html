@@ -7,12 +7,14 @@
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
-    <nav class="user-bar" style="display:flex;align-items:center;justify-content:flex-end;gap:1rem;padding:.5rem 1.5rem;background:var(--surface-alt,#1a1a2e);border-bottom:1px solid var(--border,#333);font-size:.875rem;color:var(--text-muted,#aaa);">
-      <span>{{ user.name }} ({{ user.email }})</span>
+    <nav class="user-bar">
+      <span class="user-bar__identity">{{ user.name }} ({{ user.email }})</span>
+      <div class="user-bar__actions">
       {% if user.role == 'admin' %}
-      <a href="/admin/users" style="color:var(--accent,#7c3aed);text-decoration:none;">Gestao de Usuarios</a>
+      <a class="user-bar__link" href="/admin/users">Gestão de usuários</a>
       {% endif %}
-      <button id="logout-button" type="button" style="background:none;border:1px solid var(--border,#555);color:var(--text-muted,#aaa);padding:.25rem .75rem;border-radius:4px;cursor:pointer;font-size:.8rem;">Logout</button>
+      <button id="logout-button" type="button" class="secondary-button">Sair</button>
+      </div>
     </nav>
     <script>
       document.getElementById("logout-button").addEventListener("click", async () => {
@@ -31,7 +33,7 @@
             <div class="hero-heading">
               <h1>{{ app_name }}</h1>
               <p class="copy">
-                Central de operacao para receber lotes, acompanhar OCR e baixar resultados pesquisaveis sem trocar de contexto.
+                Central de operação para receber lotes, acompanhar OCR e baixar resultados pesquisáveis.
               </p>
             </div>
           </div>
@@ -47,7 +49,7 @@
             <strong id="metric-ready">0</strong>
           </article>
           <article class="metric-card">
-            <span class="metric-label">Concluidos</span>
+            <span class="metric-label">Concluídos</span>
             <strong id="metric-completed">0</strong>
           </article>
           <article class="metric-card">
@@ -61,16 +63,15 @@
             <section class="selector-panel panel panel-soft">
               <div>
                 <p class="section-kicker">Entrada</p>
-                <h2>Selecionar um diretorio com PDFs</h2>
+                <h2>Selecionar PDFs</h2>
               </div>
               <p class="section-copy">
-                Explore o diretorio do cliente ou monte um lote manual. Os arquivos entram em cards e podem seguir para
-                a fila apenas quando voce decidir.
+                Monte um lote por diretório ou arquivos avulsos e envie à fila quando estiver pronto.
               </p>
               <div class="selection-grid">
                 <label class="upload upload-directory">
-                  <span>Selecionar diretorio</span>
-                  <small>Descobre PDFs em lote preservando o caminho relativo.</small>
+                  <span>Selecionar diretório</span>
+                  <small>Preserva o caminho relativo dos PDFs.</small>
                   <input
                     id="directory-input"
                     type="file"
@@ -82,15 +83,15 @@
                   />
                 </label>
                 <label class="upload">
-                  <span>Selecionar varios PDFs</span>
-                  <small>Entrada manual para lotes rapidos e complementares.</small>
+                  <span>Selecionar vários PDFs</span>
+                  <small>Entrada manual para lotes rápidos.</small>
                   <input id="multi-file-input" type="file" name="files" accept="application/pdf,.pdf" multiple />
                 </label>
               </div>
               <div class="batch-actions">
                 <div id="selection-state" class="selection-state hidden"></div>
                 <div class="batch-buttons">
-                  <button id="queue-button" type="button" disabled>Adicionar selecionados a fila</button>
+                  <button id="queue-button" type="button" disabled>Adicionar selecionados à fila</button>
                   <button id="download-all-button" type="button" class="secondary-button" disabled>
                     Baixar todos os convertidos
                   </button>
@@ -101,10 +102,10 @@
             <section class="panel panel-dark quick-panel">
               <div>
                 <p class="section-kicker section-kicker-light">Atalho</p>
-                <h2>Modo rapido</h2>
+                <h2>Modo rápido</h2>
               </div>
               <p class="section-copy section-copy-light">
-                Use o envio unitario quando precisar validar um unico arquivo antes de disparar o lote completo.
+                Processamento pontual para um único PDF.
               </p>
               <form id="upload-form">
                 <label class="upload upload-contrast">
@@ -112,7 +113,7 @@
                   <small>Ideal para teste pontual ou triagem inicial.</small>
                   <input id="file-input" type="file" name="file" accept="application/pdf,.pdf" required />
                 </label>
-                <button type="submit">Processar arquivo unico</button>
+                <button type="submit">Processar arquivo único</button>
               </form>
             </section>
           </section>
@@ -125,7 +126,7 @@
                   <h2>Painel de cards e resultados</h2>
                 </div>
                 <p class="section-copy">
-                  Cada item concentra selecao, estado, progresso operacional e acao de download sem mudar de contexto.
+                  Acompanhe seleção, fila, processamento e downloads.
                 </p>
               </div>
               <div class="toolbar">
@@ -134,16 +135,16 @@
                   <button type="button" class="filter-chip" data-filter="ready">Prontos</button>
                   <button type="button" class="filter-chip" data-filter="queued">Em fila</button>
                   <button type="button" class="filter-chip" data-filter="processing">Processando</button>
-                  <button type="button" class="filter-chip" data-filter="completed">Concluidos</button>
+                  <button type="button" class="filter-chip" data-filter="completed">Concluídos</button>
                   <button type="button" class="filter-chip" data-filter="failed">Falharam</button>
                 </div>
                 <div class="toolbar-controls">
                   <label class="search-box">
-                    <span>Busca rapida</span>
+                    <span>Busca rápida</span>
                     <input id="search-input" type="search" placeholder="Nome do arquivo ou caminho relativo" />
                   </label>
                   <label class="sort-box">
-                    <span>Ordenacao</span>
+                    <span>Ordenação</span>
                     <select id="sort-select">
                       <option value="status">Estado primeiro</option>
                       <option value="name">Nome A-Z</option>
@@ -157,17 +158,17 @@
               <section class="progress-panel">
                 <div class="progress-copy">
                   <strong id="progress-label">Nenhum lote ativo.</strong>
-                  <span id="progress-detail">Carregue arquivos para iniciar a sessao de processamento.</span>
+                  <span id="progress-detail">Carregue arquivos para iniciar a sessão de processamento.</span>
                 </div>
                 <div class="progress-track" aria-hidden="true">
                   <span id="progress-fill" class="progress-fill"></span>
                 </div>
               </section>
               <div class="mass-actions">
-                <button id="select-visible-button" type="button" class="secondary-button">Selecionar visiveis</button>
-                <button id="clear-selection-button" type="button" class="secondary-button">Limpar selecao</button>
+                <button id="select-visible-button" type="button" class="secondary-button">Selecionar visíveis</button>
+                <button id="clear-selection-button" type="button" class="secondary-button">Limpar seleção</button>
                 <button id="clear-queue-button" type="button" class="secondary-button">Limpar fila</button>
-                <button id="remove-completed-button" type="button" class="secondary-button">Remover concluidos</button>
+                <button id="remove-completed-button" type="button" class="secondary-button">Remover concluídos</button>
                 <button id="reset-workspace-button" type="button" class="secondary-button">Resetar workspace</button>
               </div>
               <div id="results-summary" class="results-summary">Mostrando 0 de 0 arquivos.</div>
@@ -175,7 +176,7 @@
               <div id="cards-grid" class="cards-grid hidden"></div>
               <div id="empty-state" class="empty-state">
                 <strong>Nenhum lote carregado ainda.</strong>
-                <p>Selecione um diretorio ou varios arquivos para preencher o workspace e iniciar a fila de conversao.</p>
+                <p>Selecione um diretório ou vários arquivos para iniciar a fila de conversão.</p>
               </div>
             </section>
           </section>
@@ -190,7 +191,7 @@
           <button id="detail-close-button" type="button" class="secondary-button">Fechar</button>
         </div>
         <div id="detail-body" class="detail-body">
-          <p>Selecione um card para inspecionar estado, caminho, tamanho e identificador de job.</p>
+          <p>Selecione um card para inspecionar estado, caminho, tamanho e identificador do job.</p>
         </div>
       </aside>
       <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
@@ -276,14 +277,14 @@
       };
 
       const formatDate = (timestamp) => {
-        if (!timestamp) return "Indisponivel";
+        if (!timestamp) return "Indisponível";
         try {
           return new Intl.DateTimeFormat("pt-BR", {
             dateStyle: "short",
             timeStyle: "short",
           }).format(new Date(timestamp));
         } catch (_error) {
-          return "Indisponivel";
+          return "Indisponível";
         }
       };
 
@@ -380,7 +381,7 @@
           activeDetailCardId = null;
           detailDrawer.classList.add("hidden");
           detailTitleEl.textContent = "Nenhum arquivo selecionado";
-          detailBodyEl.innerHTML = "<p>Selecione um card para inspecionar estado, caminho, tamanho e identificador de job.</p>";
+          detailBodyEl.innerHTML = "<p>Selecione um card para inspecionar estado, caminho, tamanho e identificador do job.</p>";
           return;
         }
 
@@ -391,7 +392,7 @@
         const contextualActions = [];
         if (item.status === "ready") {
           contextualActions.push(`<button type="button" class="secondary-button drawer-action" data-drawer-action="toggle-select">`);
-          contextualActions.push(item.selected ? "Remover da selecao" : "Selecionar para fila");
+          contextualActions.push(item.selected ? "Remover da seleção" : "Selecionar para fila");
           contextualActions.push(`</button>`);
           contextualActions.push(`<button type="button" class="drawer-action" data-drawer-action="queue-single">Enviar este arquivo</button>`);
         }
@@ -405,24 +406,24 @@
           <section class="detail-highlight">
             <span class="detail-badge detail-badge-${item.status}">${getStatusLabel(item.status)}</span>
             <p>${item.status === "processing"
-              ? "O worker ja esta convertendo este PDF."
+              ? "O worker já está convertendo este PDF."
               : item.status === "queued"
-                ? "Este PDF esta aguardando uma vaga de processamento."
+                ? "Este PDF está aguardando uma vaga de processamento."
                 : item.status === "completed"
                   ? "Resultado final gerado com OCR e pronto para download."
-                  : item.status === "failed"
-                    ? "O processamento falhou e pode exigir revisao do arquivo."
-                    : "Este arquivo esta pronto para entrar na fila."}</p>
+                : item.status === "failed"
+                    ? "O processamento falhou e pode exigir revisão do arquivo."
+                    : "Este arquivo está pronto para entrar na fila."}</p>
           </section>
           <dl class="detail-list">
             <div><dt>Estado</dt><dd>${statusLabel}</dd></div>
             <div><dt>Caminho</dt><dd>${escapeHtml(item.relativePath || item.file.name)}</dd></div>
             <div><dt>Tamanho</dt><dd>${formatSize(item.file.size)}</dd></div>
-            <div><dt>Ultima modificacao</dt><dd>${formatDate(item.file.lastModified)}</dd></div>
-            <div><dt>Job</dt><dd>${item.jobId || "Ainda nao enviado"}</dd></div>
-            <div><dt>Download</dt><dd>${item.downloadUrl ? "Disponivel" : "Indisponivel"}</dd></div>
+            <div><dt>Última modificação</dt><dd>${formatDate(item.file.lastModified)}</dd></div>
+            <div><dt>Job</dt><dd>${item.jobId || "Ainda não enviado"}</dd></div>
+            <div><dt>Download</dt><dd>${item.downloadUrl ? "Disponível" : "Indisponível"}</dd></div>
           </dl>
-          <div class="drawer-actions">${contextualActions.join("") || "<span class=\"detail-empty-action\">Nenhuma acao imediata disponivel.</span>"}</div>
+          <div class="drawer-actions">${contextualActions.join("") || "<span class=\"detail-empty-action\">Nenhuma ação imediata disponível.</span>"}</div>
         `;
       };
 
@@ -434,8 +435,8 @@
         const visibleReady = getVisibleFiles().filter((item) => item.status === "ready");
         queueButton.disabled = !selected.length;
         queueButton.textContent = selected.length
-          ? `Adicionar ${selected.length} arquivo(s) a fila`
-          : "Adicionar selecionados a fila";
+          ? `Adicionar ${selected.length} arquivo(s) à fila`
+          : "Adicionar selecionados à fila";
         downloadAllButton.disabled = !completed.length;
         downloadAllButton.textContent = completed.length
           ? `Baixar ${completed.length} convertido(s)`
@@ -466,13 +467,13 @@
 
         if (!total) {
           progressLabelEl.textContent = "Nenhum lote ativo.";
-          progressDetailEl.textContent = "Carregue arquivos para iniciar a sessao de processamento.";
+          progressDetailEl.textContent = "Carregue arquivos para iniciar a sessão de processamento.";
           progressFillEl.style.width = "0%";
           return;
         }
 
         progressLabelEl.textContent = `${percent}% do lote resolvido`;
-        progressDetailEl.textContent = `${completedCount} concluido(s), ${processingCount} processando, ${queuedCount} em fila, ${failedCount} falhou(aram).`;
+        progressDetailEl.textContent = `${completedCount} concluído(s), ${processingCount} processando, ${queuedCount} em fila, ${failedCount} com falha.`;
         progressFillEl.style.width = `${percent}%`;
       };
 
@@ -500,7 +501,7 @@
         syncMetrics(files, readyFiles, completedFiles, totalBytes);
         syncProgress(files);
         const warning = rejectedCount
-          ? `<p class="selection-warning">${rejectedCount} arquivo(s) ignorado(s) por nao serem PDF.</p>`
+          ? `<p class="selection-warning">${rejectedCount} arquivo(s) ignorado(s) por não serem PDF.</p>`
           : "";
         resultsSummaryEl.textContent = `Mostrando ${visibleFiles.length} de ${files.length} arquivo(s).`;
 
@@ -510,7 +511,7 @@
             <strong>${readyFiles.length} PDF(s) pronto(s)</strong>
             <span>${queuedFiles.length} em fila</span>
             <span>${processingFiles.length} processando</span>
-            <span>${completedFiles.length} concluido(s)</span>
+            <span>${completedFiles.length} concluído(s)</span>
             <span>${failedFiles.length} falharam</span>
             <span>${formatSize(totalBytes)} carregados</span>
           </div>
@@ -585,7 +586,7 @@
           }
         });
         renderSelection(rejectedCount);
-        if (rejectedCount) showToast(`${rejectedCount} arquivo(s) ignorado(s) por nao serem PDF.`, "warn");
+        if (rejectedCount) showToast(`${rejectedCount} arquivo(s) ignorado(s) por não serem PDF.`, "warn");
       };
 
       const renderState = (message, isError = false) => {
@@ -634,8 +635,8 @@
           updateCardJobState(job);
           if (job.status === "completed") {
             activePollers.delete(jobId);
-            showToast(`Arquivo ${job.filename} concluido.`, "success");
-            renderStateHtml(`Processamento concluido. <a href="${escapeHtml(job.download_url)}">Baixar PDF pesquisavel</a>`);
+            showToast(`Arquivo ${job.filename} concluído.`, "success");
+            renderStateHtml(`Processamento concluído. <a href="${escapeHtml(job.download_url)}">Baixar PDF pesquisável</a>`);
             return;
           }
           if (job.status === "failed") {
@@ -653,7 +654,7 @@
           renderState(`Status atual: ${getStatusLabel(job.status)}.`);
           schedulePoll(jobId);
         } catch (_error) {
-          renderState("Falha temporaria ao sincronizar a fila. Tentando novamente...", true);
+          renderState("Falha temporária ao sincronizar a fila. Tentando novamente...", true);
           schedulePoll(jobId, 2500);
         }
       };
@@ -706,7 +707,7 @@
         if (action === "toggle-select" && item.status === "ready") {
           item.selected = !item.selected;
           renderSelection();
-          showToast(item.selected ? "Arquivo adicionado a selecao." : "Arquivo removido da selecao.", "info");
+          showToast(item.selected ? "Arquivo adicionado à seleção." : "Arquivo removido da seleção.", "info");
           return;
         }
 
@@ -747,7 +748,7 @@
           if (item.status === "ready") item.selected = true;
         });
         renderSelection();
-        showToast("Cards visiveis selecionados.", "info");
+        showToast("Cards visíveis selecionados.", "info");
       });
 
       clearSelectionButton.addEventListener("click", () => {
@@ -755,7 +756,7 @@
           item.selected = false;
         });
         renderSelection();
-        showToast("Selecao limpa.", "info");
+        showToast("Seleção limpa.", "info");
       });
 
       removeCompletedButton.addEventListener("click", () => {
@@ -767,7 +768,7 @@
           }
         });
         renderSelection();
-        if (removedCount) showToast(`${removedCount} concluido(s) removido(s) do painel.`, "info");
+        if (removedCount) showToast(`${removedCount} concluído(s) removido(s) do painel.`, "info");
       });
 
       clearQueueButton.addEventListener("click", async () => {
@@ -790,7 +791,7 @@
         renderSelection();
         renderState(
           payload.processing_count
-            ? `${payload.cleared_count} job(s) removido(s) da fila. ${payload.processing_count} ainda estao em processamento.`
+            ? `${payload.cleared_count} job(s) removido(s) da fila. ${payload.processing_count} ainda estão em processamento.`
             : `${payload.cleared_count} job(s) removido(s) da fila.`
         );
         showToast(`${removedCount || payload.cleared_count} item(ns) retirado(s) da fila.`, "info");
@@ -825,7 +826,7 @@
         stateEl.classList.remove("error");
         stateEl.innerHTML = "";
         renderSelection();
-        showToast("Workspace resetado. A sessao local foi limpa.", "info");
+        showToast("Workspace resetado. A sessão local foi limpa.", "info");
       });
 
       filterGroup.addEventListener("click", (event) => {
