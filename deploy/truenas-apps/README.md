@@ -162,26 +162,43 @@ python3 deploy/truenas-apps/scripts/rollout.py validate
 
 O script deve ser executado no próprio shell do TrueNAS (ou ambiente com acesso ao comando `midclt` e `k3s`).
 
-### 1. Preflight (Verificação Prévia)
+### 1. Instalação inicial / reconciliação da release
+
+Quando a release `ocr-recognizer` ainda não existir no TrueNAS Apps, crie-a com o helper idempotente:
+
+```bash
+OCR_IMAGE_TAG=sha-749f6da \
+python3 deploy/truenas-apps/scripts/apply-ix-chart-app.py
+```
+
+O helper cria os datasets:
+
+- `NVME/ocr-apps/data`
+- `NVME/ocr-apps/releases`
+- `NVME/ocr-apps/backups`
+
+Ele também configura o volume persistente em `/tmp/ocr-recognizer`, o NodePort `31800`, segredos de produção e o portal da aplicação. Se `ADMIN_PASSWORD` e `JWT_SECRET` não forem informados por ambiente, valores seguros são gerados e preservados em atualizações futuras da release.
+
+### 2. Preflight (Verificação Prévia)
 Valida o ambiente e a disponibilidade da nova imagem sem alterar o estado de produção.
 ```bash
 python3 deploy/truenas-apps/scripts/rollout.py preflight --image-tag sha-e3b0c44
 ```
 
-### 2. Backup Manual
+### 3. Backup Manual
 Gera um backup avulso sob demanda dos dados persistentes (SQLite e arquivos de trabalho):
 ```bash
 python3 deploy/truenas-apps/scripts/rollout.py backup
 ```
 
-### 3. Deploy (Implantação Completa)
+### 4. Deploy (Implantação Completa)
 Executa a esteira completa: preflight -> backup -> atualização da imagem -> validação HTTP e de prontidão.
 ```bash
 python3 deploy/truenas-apps/scripts/rollout.py deploy --image-tag sha-e3b0c44
 ```
 *Caso necessite ignorar o backup (ex: migrações de teste), passe `--skip-backup --confirm-skip-backup`.*
 
-### 4. Validação Manual
+### 5. Validação Manual
 Roda as validações de prontidão da release, status do deployment e teste HTTP do serviço:
 ```bash
 python3 deploy/truenas-apps/scripts/rollout.py validate
