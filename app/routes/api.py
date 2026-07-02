@@ -195,7 +195,11 @@ async def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"app_name": settings.app_name, "user": user},
+        context={
+            "app_name": settings.app_name,
+            "static_asset_version": settings.static_asset_version,
+            "user": user,
+        },
     )
 
 

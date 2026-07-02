@@ -106,7 +106,7 @@ async def login_page(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="login.html",
-        context={"app_name": settings.app_name},
+        context={"app_name": settings.app_name, "static_asset_version": settings.static_asset_version},
     )
 
 
@@ -186,7 +186,7 @@ async def users_page(request: Request, user: dict = Depends(require_admin)):
     return templates.TemplateResponse(
         request=request,
         name="users.html",
-        context={"app_name": settings.app_name},
+        context={"app_name": settings.app_name, "static_asset_version": settings.static_asset_version},
     )
 
 
