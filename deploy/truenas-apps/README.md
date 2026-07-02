@@ -127,11 +127,21 @@ No Nginx Proxy Manager, criar um Proxy Host dedicado:
 | Websockets Support | habilitado |
 | Block Common Exploits | habilitado |
 
+No TrueNAS local, o helper abaixo cria/atualiza esse Proxy Host no NPM, faz backup do SQLite, gera o arquivo Nginx e recarrega o serviço:
+
+```bash
+python3 deploy/truenas-apps/scripts/configure-npm-ocr-host.py
+```
+
 No Cloudflare Tunnel `truenas-npm`, criar uma rota publicada:
 
 ```text
 ocr.andre.goiania.br -> http://192.168.3.140:30021
 ```
+
+Para túnel remoto/gerenciado pelo Cloudflare Zero Trust, o comando `cloudflared tunnel route dns`
+cria o CNAME público, mas não cria a regra de hostname publicada. A regra acima deve existir nas
+rotas publicadas do túnel `truenas-npm`.
 
 Depois que o proxy/tunnel estiver criado, executar validação pública com:
 
