@@ -62,7 +62,29 @@ O Dockerfile inclui HEALTHCHECK via python urllib (sem dependencia de curl).
 ## CI
 
 O pipeline `.github/workflows/ci.yml` roda em push/PR para main:
-instala `.[dev]` e executa `pytest -q`.
+instala `.[dev]` e executa `pytest -q`, cobrindo a suite da aplicacao e os testes do helper de rollout TrueNAS.
+
+O workflow `.github/workflows/publish-image.yml` publica a imagem em:
+
+```text
+ghcr.io/andrevilas/microservices-ocr
+```
+
+Tags esperadas:
+
+- `latest`, somente para a branch principal;
+- `sha-<commit>`, recomendada para rollout TrueNAS;
+- `v*`, quando houver tag semantica.
+
+Fluxo recomendado para producao:
+
+```bash
+git push origin main
+# aguardar CI e Publish OCR Image concluirem
+docker manifest inspect ghcr.io/andrevilas/microservices-ocr:sha-<commit-curto>
+python3 deploy/truenas-apps/scripts/rollout.py preflight --image-tag sha-<commit-curto>
+python3 deploy/truenas-apps/scripts/rollout.py deploy --image-tag sha-<commit-curto>
+```
 
 Sem os engines externos disponiveis, a aplicacao continua executando em modo degradado para desenvolvimento e testes.
 

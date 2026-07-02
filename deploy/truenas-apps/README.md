@@ -8,6 +8,14 @@ Esta pasta registra a infraestrutura, estratégia e comandos para implantação,
 
 O **microservices-ocr** é executado como um aplicativo TrueNAS SCALE (`ix-chart`) sob o nome de release `ocr-recognizer` no namespace `ix-ocr-recognizer`.
 
+A promoção regular segue o mesmo padrão operacional usado no Docflow:
+
+```text
+git commit -> git push origin main -> CI -> Publish OCR Image/GHCR -> TrueNAS preflight -> backup -> rollout -> validação HTTP
+```
+
+Use sempre uma tag imutável `sha-<commit-curto>` no TrueNAS. A tag `latest` só deve servir para inspeção ou teste manual explícito.
+
 A estratégia de rollout segue o modelo de promoção de imagens com validação ativa e preflight checks, dividida nas seguintes etapas:
 1. **Preflight**:
    - Valida a versão do TrueNAS SCALE e o estado dos nós do cluster Kubernetes (k3s).
@@ -47,6 +55,106 @@ O script `rollout.py` aceita configurações via variáveis de ambiente ou por p
 | `OCR_ROLLOUT_HTTP_ATTEMPTS`| Número de tentativas de checagem HTTP | `12` |
 | `OCR_ROLLOUT_HTTP_RETRY_DELAY`| Intervalo em segundos entre tentativas de checagem HTTP | `5` |
 | `OCR_IMAGE_PULL_POLICY` | Política de pull de imagem do Kubernetes | `IfNotPresent` |
+
+---
+
+## GHCR e pull de imagem
+
+O workflow `.github/workflows/publish-image.yml` publica a imagem em:
+
+```text
+ghcr.io/andrevilas/microservices-ocr
+```
+
+Tags esperadas:
+
+- `latest`, somente para a branch principal;
+- `sha-<commit>`, recomendada para rollout;
+- `v*`, quando houver tag semântica.
+
+Antes de promover uma versão, valide que o manifest existe:
+
+```bash
+docker manifest inspect ghcr.io/andrevilas/microservices-ocr:sha-8509947
+```
+
+Se o pacote GHCR permanecer privado, o TrueNAS/k3s precisa de uma credencial de pull dedicada. Não usar token pessoal amplo. Criar um token com escopo mínimo de leitura de pacotes e aplicar o Secret no namespace do App gerenciado:
+
+```bash
+export GHCR_USERNAME='usuario-ghcr'
+export GHCR_TOKEN='token-com-read-packages'
+export GHCR_EMAIL='email-institucional@example.com'
+export OCR_K8S_NAMESPACE='ix-ocr-recognizer'
+export OCR_TRUENAS_RELEASE='ocr-recognizer'
+deploy/truenas-apps/scripts/configure-ghcr-pull-secret.sh
+```
+
+O script:
+
+- cria/atualiza o Secret Kubernetes `ghcr-pull-secret`;
+- preserva os valores atuais do App TrueNAS `ocr-recognizer`;
+- adiciona `imagePullSecrets: [{name: ghcr-pull-secret}]` ao release;
+- valida o pull com um pod temporário usando `imagePullPolicy: Always`;
+- remove o pod temporário ao final.
+
+O `rollout.py` respeita essa configuração. Quando o release possui `imagePullSecrets`, o preflight cria um pod temporário no namespace do App para validar que o k3s consegue puxar a imagem privada do GHCR com a mesma credencial usada pelo deploy real. Quando não há `imagePullSecrets`, o preflight usa `k3s ctr images pull`, adequado para registry público ou imagem já acessível anonimamente.
+
+---
+
+## Exposição pública planejada
+
+Subdomínio alvo:
+
+```text
+https://ocr.andre.goiania.br
+```
+
+Desenho recomendado, igual ao padrão validado no Docflow:
+
+```text
+ocr.andre.goiania.br -> Cloudflare Tunnel truenas-npm -> http://192.168.3.140:30021 -> Nginx Proxy Manager -> http://192.168.3.140:31800
+```
+
+No Nginx Proxy Manager, criar um Proxy Host dedicado:
+
+| Campo | Valor |
+|---|---|
+| Domain Names | `ocr.andre.goiania.br` |
+| Scheme | `http` |
+| Forward Hostname / IP | `192.168.3.140` |
+| Forward Port | `31800` |
+| Websockets Support | habilitado |
+| Block Common Exploits | habilitado |
+
+No Cloudflare Tunnel `truenas-npm`, criar uma rota publicada:
+
+```text
+ocr.andre.goiania.br -> http://192.168.3.140:30021
+```
+
+Depois que o proxy/tunnel estiver criado, executar validação pública com:
+
+```bash
+curl -k -sS -o /tmp/ocr-health.json \
+  -w 'ocr_public_health http=%{http_code} content=%{content_type}\n' \
+  https://ocr.andre.goiania.br/health
+
+curl -k -sS -o /tmp/ocr-login.html \
+  -w 'ocr_public_login http=%{http_code} content=%{content_type}\n' \
+  https://ocr.andre.goiania.br/login
+```
+
+Resultado esperado:
+
+- `/health`: `200` com JSON `{"status":"ok"}`;
+- `/login`: `200` com HTML da aplicação.
+
+Quando a exposição pública estiver ativa, usar o domínio no rollout:
+
+```bash
+OCR_PUBLIC_URL=https://ocr.andre.goiania.br \
+python3 deploy/truenas-apps/scripts/rollout.py validate
+```
 
 ---
 
