@@ -23,7 +23,7 @@ DEFAULT_CURL_IP_VERSION = os.environ.get("OCR_CURL_IP_VERSION", "4")
 
 RELEASE_NAME = os.environ.get("OCR_TRUENAS_RELEASE", "ocr-recognizer")
 NAMESPACE = os.environ.get("OCR_TRUENAS_NAMESPACE", "ix-ocr-recognizer")
-ALL_DEPLOYMENTS = tuple(os.environ.get("OCR_TRUENAS_DEPLOYMENTS", "ocr-recognizer").split(","))
+ALL_DEPLOYMENTS = tuple(os.environ.get("OCR_TRUENAS_DEPLOYMENTS", "ocr-recognizer-ix-chart").split(","))
 
 DEFAULT_DATASET = os.environ.get("OCR_TRUENAS_DATASET", "NVME/ocr-apps/data")
 DEFAULT_DATA_DIR = os.environ.get("OCR_DATA_DIR", "/mnt/NVME/ocr-apps/data")
@@ -86,7 +86,7 @@ def wait_job(job_id: int, report: dict | None = None) -> dict:
         job = jobs[0] if jobs else None
         if job and job.get("state") in {"SUCCESS", "FAILED", "ABORTED"}:
             if report is not None:
-                report.setdefault("jobs", []).append(job)
+                report.setdefault("jobs", []).append(redact_sensitive(job))
             if job["state"] != "SUCCESS":
                 raise RolloutError(f"TrueNAS job {job_id} failed: {job['state']}")
             return job
@@ -164,6 +164,24 @@ def current_state() -> dict:
 def write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def redact_sensitive(value):
+    sensitive_names = ("PASSWORD", "SECRET", "TOKEN", "API_KEY", "ACCESS_KEY")
+    if isinstance(value, dict):
+        redacted = {}
+        item_name = str(value.get("name", "")).upper()
+        for key, item_value in value.items():
+            if key == "value" and any(marker in item_name for marker in sensitive_names):
+                redacted[key] = "********"
+            elif key.lower() in {"password", "secret", "token", "api_key"}:
+                redacted[key] = "********"
+            else:
+                redacted[key] = redact_sensitive(item_value)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive(item) for item in value]
+    return value
 
 
 def write_report(release_dir: Path, report: dict) -> None:

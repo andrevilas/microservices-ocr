@@ -49,7 +49,7 @@ O script `rollout.py` aceita configurações via variáveis de ambiente ou por p
 | `OCR_CURL_IP_VERSION` | Versão de IP usada pelo curl para validação HTTP (`4`, `6` ou `any`) | `4` |
 | `OCR_TRUENAS_RELEASE` | Nome da release configurada no Apps | `ocr-recognizer` |
 | `OCR_TRUENAS_NAMESPACE` | Namespace Kubernetes da aplicação | `ix-ocr-recognizer` |
-| `OCR_TRUENAS_DEPLOYMENTS`| Lista de deployments a validar, separados por vírgula | `ocr-recognizer` |
+| `OCR_TRUENAS_DEPLOYMENTS`| Lista de deployments a validar, separados por vírgula | `ocr-recognizer-ix-chart` |
 | `OCR_TRUENAS_DATASET` | Dataset ZFS a ser verificado no preflight | `NVME/ocr-apps/data` |
 | `OCR_DATA_DIR` | Caminho no host correspondente ao dataset persistente | `/mnt/NVME/ocr-apps/data` |
 | `OCR_ROLLOUT_HTTP_ATTEMPTS`| Número de tentativas de checagem HTTP | `12` |
