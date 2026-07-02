@@ -11,12 +11,14 @@ QualityLabel = Literal["HIGH", "LOW"]
 class UploadResponse(BaseModel):
     job_id: str
     status: JobStatus
+    progress_percent: int = 0
 
 
 class BatchUploadJob(BaseModel):
     job_id: str
     filename: str
     status: JobStatus
+    progress_percent: int = 0
 
 
 class BatchUploadResponse(BaseModel):
@@ -32,6 +34,7 @@ class JobResponse(BaseModel):
     job_id: str
     filename: str
     status: JobStatus
+    progress_percent: int = 0
     created_at: datetime
     updated_at: datetime
     quality: QualityLabel | None = None

@@ -1,6 +1,7 @@
 import subprocess
 import time
 from io import BytesIO
+from uuid import uuid4
 from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
@@ -9,6 +10,7 @@ from reportlab.pdfgen import canvas
 from app.config import settings
 from app.main import app
 from app.services.easyocr_service import FallbackOcrService
+from app.services.user_store import get_user_store
 
 client = TestClient(app)
 
@@ -20,6 +22,30 @@ def _auth_cookies() -> dict:
         json={"email": settings.admin_email, "password": settings.admin_password},
     )
     return dict(resp.cookies)
+
+
+def _user_cookies(email: str, password: str) -> dict:
+    resp = client.post("/auth/login", json={"email": email, "password": password})
+    assert resp.status_code == 200, resp.text
+    return dict(resp.cookies)
+
+
+def _user_auth_header(email: str, password: str) -> dict:
+    resp = client.post("/auth/login", json={"email": email, "password": password})
+    assert resp.status_code == 200, resp.text
+    return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+
+def _create_common_user() -> tuple[int, str, str]:
+    password = "senha-forte-123"
+    email = f"user-{uuid4().hex}@test.com"
+    user = get_user_store().create_user(
+        name="Usuário Teste",
+        email=email,
+        password=password,
+        role="user",
+    )
+    return int(user["id"]), email, password
 
 
 def _fresh_client() -> TestClient:
@@ -95,10 +121,13 @@ def test_processes_pdf_and_allows_download() -> None:
     )
 
     assert create_response.status_code == 202
-    job_id = create_response.json()["job_id"]
+    created = create_response.json()
+    assert created["progress_percent"] == 0
+    job_id = created["job_id"]
 
     payload = wait_for_job(job_id)
     assert payload["status"] == "completed"
+    assert payload["progress_percent"] == 100
     assert payload["download_url"] == f"/api/jobs/{job_id}/download"
 
     download_response = client.get(payload["download_url"], cookies=cookies)
@@ -125,6 +154,46 @@ def test_processes_batch_uploads() -> None:
     assert len(payload["jobs"]) == 2
     assert payload["jobs"][0]["filename"] == "first.pdf"
     assert payload["jobs"][1]["filename"] == "second.pdf"
+    assert payload["jobs"][0]["progress_percent"] == 0
+
+
+def test_job_status_is_isolated_between_users() -> None:
+    _user_a_id, email_a, password_a = _create_common_user()
+    _user_b_id, email_b, password_b = _create_common_user()
+    headers_a = _user_auth_header(email_a, password_a)
+    headers_b = _user_auth_header(email_b, password_b)
+    pdf_bytes = build_pdf_bytes("documento isolado")
+
+    create_response = client.post(
+        "/api/jobs",
+        files={"file": ("isolado.pdf", pdf_bytes, "application/pdf")},
+        headers=headers_a,
+    )
+    assert create_response.status_code == 202
+    job_id = create_response.json()["job_id"]
+
+    owner_response = client.get(f"/api/jobs/{job_id}", headers=headers_a)
+    assert owner_response.status_code == 200
+
+    other_response = client.get(f"/api/jobs/{job_id}", headers=headers_b)
+    assert other_response.status_code == 404
+
+
+def test_metrics_are_scoped_to_authenticated_user() -> None:
+    _user_id, email, password = _create_common_user()
+    headers = _user_auth_header(email, password)
+    pdf_bytes = build_pdf_bytes("metricas por usuario")
+
+    create_response = client.post(
+        "/api/jobs",
+        files={"file": ("metricas.pdf", pdf_bytes, "application/pdf")},
+        headers=headers,
+    )
+    assert create_response.status_code == 202
+
+    metrics_response = client.get("/metrics", headers=headers)
+    assert metrics_response.status_code == 200
+    assert metrics_response.json()["total_jobs"] == 1
 
 
 def test_downloads_completed_jobs_as_zip() -> None:

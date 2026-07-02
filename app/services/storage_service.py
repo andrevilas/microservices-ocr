@@ -27,7 +27,7 @@ _JOB_RECORD_FIELDS: frozenset[str] | None = None
 def _allowed_update_fields() -> frozenset[str]:
     global _JOB_RECORD_FIELDS
     if _JOB_RECORD_FIELDS is None:
-        _JOB_RECORD_FIELDS = frozenset(f.name for f in dc_fields(JobRecord)) - {"job_id", "created_at"}
+        _JOB_RECORD_FIELDS = frozenset(f.name for f in dc_fields(JobRecord)) - {"job_id", "created_at", "owner_user_id"}
     return _JOB_RECORD_FIELDS
 
 
@@ -37,6 +37,8 @@ class JobRecord:
     filename: str
     working_dir: Path
     status: JobStatus
+    owner_user_id: int | None
+    progress_percent: int
     created_at: datetime
     updated_at: datetime
     input_pdf_path: Path
@@ -50,6 +52,7 @@ class JobRecord:
             job_id=self.job_id,
             filename=self.filename,
             status=self.status,
+            progress_percent=self.progress_percent,
             created_at=self.created_at,
             updated_at=self.updated_at,
             quality=self.quality,
@@ -68,6 +71,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     filename        TEXT NOT NULL,
     working_dir     TEXT NOT NULL,
     status          TEXT NOT NULL,
+    owner_user_id   INTEGER,
+    progress_percent INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL,
     input_pdf_path  TEXT NOT NULL,
@@ -109,6 +114,11 @@ class JobStore:
     def _init_db(self) -> None:
         conn = self._get_conn()
         conn.execute(_CREATE_TABLE_SQL)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+        if "owner_user_id" not in columns:
+            conn.execute("ALTER TABLE jobs ADD COLUMN owner_user_id INTEGER")
+        if "progress_percent" not in columns:
+            conn.execute("ALTER TABLE jobs ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0")
         conn.commit()
 
     def _load_from_db(self) -> None:
@@ -118,6 +128,7 @@ class JobStore:
         if not col_names:
             col_names = [
                 "job_id", "filename", "working_dir", "status",
+                "owner_user_id", "progress_percent",
                 "created_at", "updated_at", "input_pdf_path",
                 "output_pdf_path", "quality", "error",
             ]
@@ -133,6 +144,8 @@ class JobStore:
             filename=data["filename"],
             working_dir=Path(data["working_dir"]),
             status=data["status"],
+            owner_user_id=data.get("owner_user_id"),
+            progress_percent=int(data.get("progress_percent") or 0),
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
             input_pdf_path=Path(data["input_pdf_path"]),
@@ -146,15 +159,17 @@ class JobStore:
         conn.execute(
             """
             INSERT OR REPLACE INTO jobs
-                (job_id, filename, working_dir, status, created_at, updated_at,
+                (job_id, filename, working_dir, status, owner_user_id, progress_percent, created_at, updated_at,
                  input_pdf_path, output_pdf_path, quality, error)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.job_id,
                 job.filename,
                 str(job.working_dir),
                 job.status,
+                job.owner_user_id,
+                job.progress_percent,
                 job.created_at.isoformat(),
                 job.updated_at.isoformat(),
                 str(job.input_pdf_path),
@@ -167,7 +182,7 @@ class JobStore:
 
     # -- public API (same semantics) -----------------------------------------
 
-    def create(self, filename: str, payload: bytes) -> JobRecord:
+    def create(self, filename: str, payload: bytes, owner_user_id: int | None = None) -> JobRecord:
         job_id = uuid4().hex
         working_dir = self.root_dir / job_id
         working_dir.mkdir(parents=True, exist_ok=True)
@@ -179,6 +194,8 @@ class JobStore:
             filename=filename,
             working_dir=working_dir,
             status="queued",
+            owner_user_id=owner_user_id,
+            progress_percent=0,
             created_at=now,
             updated_at=now,
             input_pdf_path=input_pdf_path,
@@ -196,6 +213,12 @@ class JobStore:
         with self._lock:
             return list(self.jobs.values())
 
+    def list_for_owner(self, owner_user_id: int | None) -> list[JobRecord]:
+        if owner_user_id is None:
+            return self.list_all()
+        with self._lock:
+            return [job for job in self.jobs.values() if job.owner_user_id == owner_user_id]
+
     def update(self, job_id: str, **kwargs: object) -> JobRecord:
         allowed = _allowed_update_fields()
         bad_keys = set(kwargs.keys()) - allowed
@@ -209,6 +232,10 @@ class JobStore:
             raise ValueError(
                 f"Invalid quality {kwargs['quality']!r}; must be one of {sorted(_VALID_QUALITIES)} or None"
             )
+        if "progress_percent" in kwargs:
+            progress = kwargs["progress_percent"]
+            if not isinstance(progress, int) or progress < 0 or progress > 100:
+                raise ValueError("progress_percent must be an integer between 0 and 100")
         with self._lock:
             job = self.jobs[job_id]
             for key, value in kwargs.items():

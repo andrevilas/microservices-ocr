@@ -238,7 +238,7 @@
       const stateEl = document.getElementById("job-state");
       const selectedCards = new Map();
       const activePollers = new Set();
-      const storageKey = "ocr-recognizer-workspace-v1";
+      const storageKey = "ocr-recognizer-workspace-v2";
       let activeFilter = "all";
       let activeSearch = "";
       let activeSort = "status";
@@ -291,10 +291,32 @@
       const getStatusLabel = (status) => {
         if (status === "queued") return "Em fila";
         if (status === "processing") return "Processando";
-        if (status === "completed") return "Concluido";
+        if (status === "completed") return "Concluído";
         if (status === "failed") return "Falhou";
         if (status === "canceled") return "Cancelado";
         return "Pronto";
+      };
+
+      const clampProgress = (value) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return 0;
+        return Math.max(0, Math.min(100, Math.round(numeric)));
+      };
+
+      const progressForStatus = (item) => {
+        if (item.status === "completed") return 100;
+        if (item.status === "failed") return 100;
+        if (item.status === "ready" || item.status === "queued") return 0;
+        return clampProgress(item.progressPercent);
+      };
+
+      const progressText = (item) => {
+        const percent = progressForStatus(item);
+        if (item.status === "processing") return `${percent}% convertido`;
+        if (item.status === "completed") return "100% convertido";
+        if (item.status === "failed") return "Processamento encerrado";
+        if (item.status === "queued") return "0% - aguardando";
+        return "0% - pronto para envio";
       };
 
       const getVisibleFiles = () =>
@@ -330,6 +352,7 @@
           selected: item.selected,
           jobId: item.jobId,
           downloadUrl: item.downloadUrl,
+          progressPercent: item.progressPercent || 0,
         })),
       });
 
@@ -369,6 +392,7 @@
               status: item.status,
               jobId: item.jobId,
               downloadUrl: item.downloadUrl,
+              progressPercent: clampProgress(item.progressPercent),
             });
           });
         } catch (_error) {
@@ -419,6 +443,7 @@
             <div><dt>Estado</dt><dd>${statusLabel}</dd></div>
             <div><dt>Caminho</dt><dd>${escapeHtml(item.relativePath || item.file.name)}</dd></div>
             <div><dt>Tamanho</dt><dd>${formatSize(item.file.size)}</dd></div>
+            <div><dt>Progresso</dt><dd>${progressText(item)}</dd></div>
             <div><dt>Última modificação</dt><dd>${formatDate(item.file.lastModified)}</dd></div>
             <div><dt>Job</dt><dd>${item.jobId || "Ainda não enviado"}</dd></div>
             <div><dt>Download</dt><dd>${item.downloadUrl ? "Disponível" : "Indisponível"}</dd></div>
@@ -456,14 +481,14 @@
       };
 
       const syncProgress = (files) => {
-        const activeCount = files.filter((item) => item.status === "queued" || item.status === "processing").length;
         const processingCount = files.filter((item) => item.status === "processing").length;
         const queuedCount = files.filter((item) => item.status === "queued").length;
         const completedCount = files.filter((item) => item.status === "completed").length;
         const failedCount = files.filter((item) => item.status === "failed").length;
-        const terminalCount = completedCount + failedCount;
         const total = files.length;
-        const percent = total ? Math.round((terminalCount / total) * 100) : 0;
+        const percent = total
+          ? Math.round(files.reduce((sum, item) => sum + progressForStatus(item), 0) / total)
+          : 0;
 
         if (!total) {
           progressLabelEl.textContent = "Nenhum lote ativo.";
@@ -472,7 +497,7 @@
           return;
         }
 
-        progressLabelEl.textContent = `${percent}% do lote resolvido`;
+        progressLabelEl.textContent = `${percent}% do lote convertido`;
         progressDetailEl.textContent = `${completedCount} concluído(s), ${processingCount} processando, ${queuedCount} em fila, ${failedCount} com falha.`;
         progressFillEl.style.width = `${percent}%`;
       };
@@ -529,6 +554,7 @@
               ? `<a class="download-link" href="${escapeHtml(item.downloadUrl)}">Baixar PDF convertido</a>`
               : "";
             const selectionLabel = item.status === "ready" ? "Selecionar" : "Travado";
+            const itemProgress = progressForStatus(item);
             return `
               <article class="${cardClass}" data-card-id="${item.id}">
                 <header class="card-topline">
@@ -543,6 +569,15 @@
                 <div class="card-meta">
                   <span>${formatSize(item.file.size)}</span>
                   <span>${item.jobId ? `Job ${item.jobId.slice(0, 8)}` : "Aguardando fila"}</span>
+                </div>
+                <div class="card-progress" aria-label="Progresso da conversão">
+                  <div class="card-progress__label">
+                    <span>${progressText(item)}</span>
+                    <strong>${itemProgress}%</strong>
+                  </div>
+                  <div class="card-progress__track" aria-hidden="true">
+                    <span class="card-progress__fill" style="width: ${itemProgress}%"></span>
+                  </div>
                 </div>
                 <footer class="card-footer">
                   ${download}
@@ -582,6 +617,7 @@
               status: "ready",
               jobId: null,
               downloadUrl: null,
+              progressPercent: 0,
             });
           }
         });
@@ -606,17 +642,25 @@
         if (!item) return;
         if (job.status === "completed") {
           item.status = "completed";
+          item.progressPercent = 100;
           item.downloadUrl = job.download_url;
         } else if (job.status === "failed") {
           item.status = "failed";
+          item.progressPercent = 100;
           item.selected = false;
         } else if (job.status === "canceled") {
           item.status = "canceled";
+          item.progressPercent = 0;
           item.selected = false;
         } else if (job.status === "processing") {
           item.status = "processing";
+          item.progressPercent = Math.max(
+            clampProgress(job.progress_percent),
+            Math.min(95, clampProgress(item.progressPercent) + 3)
+          );
         } else {
           item.status = "queued";
+          item.progressPercent = clampProgress(job.progress_percent);
         }
         renderSelection();
       };
@@ -737,6 +781,7 @@
           }
           const payload = await response.json();
           item.jobId = payload.job_id;
+          item.progressPercent = clampProgress(payload.progress_percent);
           showToast(`${item.file.name} entrou na fila.`, "success");
           renderState(`Job ${payload.job_id} criado para ${item.file.name}.`);
           pollJob(payload.job_id);
@@ -876,6 +921,7 @@
           const item = queued[index];
           if (!item) return;
           item.jobId = job.job_id;
+          item.progressPercent = clampProgress(job.progress_percent);
           pollJob(job.job_id);
         });
         showToast(`${payload.jobs.length} arquivo(s) enviado(s) para a fila.`, "success");
@@ -918,6 +964,18 @@
           return;
         }
         const result = await response.json();
+        const cardId = `quick::${result.job_id}`;
+        selectedCards.set(cardId, {
+          id: cardId,
+          file,
+          relativePath: file.name,
+          selected: false,
+          status: result.status,
+          jobId: result.job_id,
+          downloadUrl: null,
+          progressPercent: clampProgress(result.progress_percent),
+        });
+        renderSelection();
         showToast(`Job ${result.job_id.slice(0, 8)} criado.`, "success");
         renderState(`Job ${result.job_id} criado. Iniciando processamento...`);
         pollJob(result.job_id);

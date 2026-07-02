@@ -12,6 +12,7 @@ import pytest
 
 from app.config import settings
 from app.services.storage_service import JobRecord, JobStore
+from app.services.job_queue import JobQueueProcessor
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +74,23 @@ class TestJobStorePersistence:
     def test_check_db_returns_true(self, tmp_path: Path) -> None:
         store = _make_store(tmp_path)
         assert store.check_db() is True
+
+
+def test_clear_pending_jobs_respects_owner(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    job_a = store.create("a.pdf", b"%PDF-1.4\n%%EOF", owner_user_id=10)
+    job_b = store.create("b.pdf", b"%PDF-1.4\n%%EOF", owner_user_id=20)
+    processor = JobQueueProcessor(job_store=store, worker_count=1)
+    processor._queued_ids.update({job_a.job_id, job_b.job_id})
+    processor._queue.put(job_a.job_id)
+    processor._queue.put(job_b.job_id)
+
+    cleared_count, processing_count = processor.clear_pending_jobs(owner_user_id=10)
+
+    assert cleared_count == 1
+    assert processing_count == 0
+    assert store.get(job_a.job_id).status == "canceled"
+    assert store.get(job_b.job_id).status == "queued"
 
 
 # ---------------------------------------------------------------------------

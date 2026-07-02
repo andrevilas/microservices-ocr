@@ -1,5 +1,6 @@
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from threading import Lock
@@ -26,6 +27,18 @@ templates = Jinja2Templates(directory="app/templates")
 
 _rate_lock = Lock()
 _rate_buckets: dict[str, list[float]] = defaultdict(list)
+
+
+@dataclass(frozen=True)
+class AuthContext:
+    user: dict | None
+    via_api_key: bool = False
+
+    @property
+    def owner_user_id(self) -> int | None:
+        if self.user is None:
+            return None
+        return int(self.user["id"])
 
 
 def _check_rate_limit(request: Request) -> None:
@@ -55,17 +68,17 @@ def _check_rate_limit(request: Request) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _require_auth_or_api_key(request: Request) -> None:
+def _require_auth_or_api_key(request: Request) -> AuthContext:
     """Allow access if valid API key OR valid JWT token is present."""
     # API key takes priority for automation clients
     if settings.api_key:
         provided = request.headers.get("X-API-Key", "")
         if provided == settings.api_key:
-            return
+            return AuthContext(user=None, via_api_key=True)
     # Fall back to JWT authentication
     user = get_current_user(request)
     if user is not None:
-        return
+        return AuthContext(user=user, via_api_key=False)
     # If API key is configured but not provided, and no JWT
     if settings.api_key:
         raise HTTPException(
@@ -85,6 +98,21 @@ def _require_auth_or_api_key(request: Request) -> None:
 
 def get_orchestrator(job_store: JobStore = Depends(get_job_store)) -> OcrOrchestrator:
     return OcrOrchestrator(job_store=job_store)
+
+
+def _can_access_job(auth: AuthContext, job) -> bool:
+    if auth.via_api_key:
+        return True
+    if job.owner_user_id is None:
+        return True
+    return job.owner_user_id == auth.owner_user_id
+
+
+def _get_authorized_job(job_store: JobStore, job_id: str, auth: AuthContext):
+    job = job_store.get(job_id)
+    if job is None or not _can_access_job(auth, job):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+    return job
 
 
 async def _validate_pdf_upload(file: UploadFile) -> tuple[str, bytes]:
@@ -146,10 +174,12 @@ def _schedule_job(
     orchestrator: OcrOrchestrator,
     filename: str,
     payload: bytes,
+    owner_user_id: int | None,
 ) -> UploadResponse:
-    job = orchestrator.create_job(filename=filename, payload=payload)
+    job = orchestrator.create_job(filename=filename, payload=payload, owner_user_id=owner_user_id)
+    response = UploadResponse(job_id=job.job_id, status=job.status, progress_percent=job.progress_percent)
     processor.enqueue(job.job_id)
-    return UploadResponse(job_id=job.job_id, status=job.status)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -176,11 +206,11 @@ async def health() -> dict:
 
 @router.get("/metrics")
 async def metrics(
-    _auth: None = Depends(_require_auth_or_api_key),
+    auth: AuthContext = Depends(_require_auth_or_api_key),
     job_store: JobStore = Depends(get_job_store),
 ) -> dict:
     """Lightweight JSON metrics: job counts by status and queue size."""
-    jobs = job_store.list_all()
+    jobs = job_store.list_all() if auth.via_api_key else job_store.list_for_owner(auth.owner_user_id)
     counts: dict[str, int] = {}
     for job in jobs:
         counts[job.status] = counts.get(job.status, 0) + 1
@@ -222,19 +252,19 @@ async def readiness(job_store: JobStore = Depends(get_job_store)) -> Response:
 @router.post("/api/jobs", response_model=UploadResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_job(
     file: UploadFile = File(...),
-    _auth: None = Depends(_require_auth_or_api_key),
+    auth: AuthContext = Depends(_require_auth_or_api_key),
     _rate: None = Depends(_check_rate_limit),
     processor: JobQueueProcessor = Depends(get_job_queue_processor),
     orchestrator: OcrOrchestrator = Depends(get_orchestrator),
 ) -> UploadResponse:
     filename, payload = await _validate_pdf_upload(file)
-    return _schedule_job(processor, orchestrator, filename, payload)
+    return _schedule_job(processor, orchestrator, filename, payload, auth.owner_user_id)
 
 
 @router.post("/api/jobs/batch", response_model=BatchUploadResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_batch_jobs(
     files: list[UploadFile] = File(...),
-    _auth: None = Depends(_require_auth_or_api_key),
+    auth: AuthContext = Depends(_require_auth_or_api_key),
     _rate: None = Depends(_check_rate_limit),
     processor: JobQueueProcessor = Depends(get_job_queue_processor),
     orchestrator: OcrOrchestrator = Depends(get_orchestrator),
@@ -251,8 +281,15 @@ async def create_batch_jobs(
     jobs: list[BatchUploadJob] = []
     for file in files:
         filename, payload = await _validate_pdf_upload(file)
-        scheduled = _schedule_job(processor, orchestrator, filename, payload)
-        jobs.append(BatchUploadJob(job_id=scheduled.job_id, filename=filename, status=scheduled.status))
+        scheduled = _schedule_job(processor, orchestrator, filename, payload, auth.owner_user_id)
+        jobs.append(
+            BatchUploadJob(
+                job_id=scheduled.job_id,
+                filename=filename,
+                status=scheduled.status,
+                progress_percent=scheduled.progress_percent,
+            )
+        )
 
     return BatchUploadResponse(jobs=jobs)
 
@@ -260,7 +297,7 @@ async def create_batch_jobs(
 @router.get("/api/jobs/download-batch")
 async def download_batch_results(
     job_ids: list[str] = Query(...),
-    _auth: None = Depends(_require_auth_or_api_key),
+    auth: AuthContext = Depends(_require_auth_or_api_key),
     job_store: JobStore = Depends(get_job_store),
 ) -> Response:
     if not job_ids:
@@ -269,7 +306,7 @@ async def download_batch_results(
     completed_jobs = []
     for job_id in job_ids:
         job = job_store.get(job_id)
-        if job and job.status == "completed" and job.output_pdf_path:
+        if job and _can_access_job(auth, job) and job.status == "completed" and job.output_pdf_path:
             completed_jobs.append(job)
 
     if not completed_jobs:
@@ -287,26 +324,30 @@ async def download_batch_results(
 
 @router.post("/api/jobs/clear-queue", response_model=QueueClearResponse)
 async def clear_queue(
-    _auth: None = Depends(_require_auth_or_api_key),
+    auth: AuthContext = Depends(_require_auth_or_api_key),
     processor: JobQueueProcessor = Depends(get_job_queue_processor),
 ) -> QueueClearResponse:
-    cleared_count, processing_count = processor.clear_pending_jobs()
+    cleared_count, processing_count = processor.clear_pending_jobs(None if auth.via_api_key else auth.owner_user_id)
     return QueueClearResponse(cleared_count=cleared_count, processing_count=processing_count)
 
 
 @router.get("/api/jobs/{job_id}", response_model=JobResponse)
-async def get_job(job_id: str, _auth: None = Depends(_require_auth_or_api_key), job_store: JobStore = Depends(get_job_store)) -> JobResponse:
-    job = job_store.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+async def get_job(
+    job_id: str,
+    auth: AuthContext = Depends(_require_auth_or_api_key),
+    job_store: JobStore = Depends(get_job_store),
+) -> JobResponse:
+    job = _get_authorized_job(job_store, job_id, auth)
     return job.to_response()
 
 
 @router.get("/api/jobs/{job_id}/download")
-async def download_result(job_id: str, _auth: None = Depends(_require_auth_or_api_key), job_store: JobStore = Depends(get_job_store)) -> Response:
-    job = job_store.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+async def download_result(
+    job_id: str,
+    auth: AuthContext = Depends(_require_auth_or_api_key),
+    job_store: JobStore = Depends(get_job_store),
+) -> Response:
+    job = _get_authorized_job(job_store, job_id, auth)
     if job.status != "completed" or not job.output_pdf_path:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job is not ready for download.")
     return FileResponse(job.output_pdf_path, filename=f"{Path(job.filename).stem}-searchable.pdf", media_type="application/pdf")

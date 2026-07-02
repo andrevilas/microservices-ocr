@@ -32,11 +32,11 @@ class OcrOrchestrator:
         self.fallback_ocr = fallback_ocr or FallbackOcrService()
         self.pdf_builder = pdf_builder or PdfBuilder()
 
-    def create_job(self, filename: str, payload: bytes) -> JobRecord:
-        return self.job_store.create(filename=filename, payload=payload)
+    def create_job(self, filename: str, payload: bytes, owner_user_id: int | None = None) -> JobRecord:
+        return self.job_store.create(filename=filename, payload=payload, owner_user_id=owner_user_id)
 
     def process_job(self, job_id: str) -> OCRResult | None:
-        job = self.job_store.update(job_id, status="processing", error=None)
+        job = self.job_store.update(job_id, status="processing", progress_percent=5, error=None)
         _start_ms = time.monotonic()
         primary_output = job.working_dir / "primary-searchable.pdf"
         draft_output = job.working_dir / "final-draft.pdf"
@@ -44,6 +44,7 @@ class OcrOrchestrator:
         try:
             logger.info("Job %s started: %s", job_id, job.filename)
             primary_text = self.primary_ocr.process(job.input_pdf_path, primary_output)
+            self.job_store.update(job_id, progress_percent=35)
             evaluation = evaluate_quality(
                 primary_text,
                 min_text=settings.quality_min_text,
@@ -55,7 +56,9 @@ class OcrOrchestrator:
 
             if evaluation.label == "LOW" and self.fallback_ocr.is_available():
                 logger.info("Job %s: primary quality LOW, trying fallback", job_id)
+                self.job_store.update(job_id, progress_percent=45)
                 fallback_text = self.fallback_ocr.process(job.input_pdf_path)
+                self.job_store.update(job_id, progress_percent=60)
                 fallback_eval = evaluate_quality(
                     fallback_text,
                     min_text=settings.quality_min_text,
@@ -71,19 +74,28 @@ class OcrOrchestrator:
                     used_fallback = True
                     base_pdf_path = None
 
+            self.job_store.update(job_id, progress_percent=72)
             self.pdf_builder.build(
                 original_pdf_path=job.input_pdf_path,
                 output_pdf_path=draft_output,
                 text=text or primary_text,
                 base_pdf_path=base_pdf_path,
             )
+            self.job_store.update(job_id, progress_percent=88)
             self._finalize_output(draft_output, final_output)
+            self.job_store.update(job_id, progress_percent=96)
             _elapsed_ms = int((time.monotonic() - _start_ms) * 1000)
             logger.info(
                 "Job %s completed in %d ms (fallback=%s, quality=%s)",
                 job_id, _elapsed_ms, used_fallback, evaluation.label,
             )
-            self.job_store.update(job_id, status="completed", output_pdf_path=final_output, quality=evaluation.label)
+            self.job_store.update(
+                job_id,
+                status="completed",
+                progress_percent=100,
+                output_pdf_path=final_output,
+                quality=evaluation.label,
+            )
             return OCRResult(
                 text=text,
                 quality=evaluation.label,
@@ -95,7 +107,7 @@ class OcrOrchestrator:
         except Exception as exc:  # pragma: no cover - final safety net for background work
             _elapsed_ms = int((time.monotonic() - _start_ms) * 1000)
             logger.error("Job %s failed after %d ms: %s", job_id, _elapsed_ms, exc)
-            self.job_store.update(job_id, status="failed", error=str(exc))
+            self.job_store.update(job_id, status="failed", progress_percent=100, error=str(exc))
             return None
 
     def _finalize_output(self, draft_output: Path, final_output: Path) -> None:

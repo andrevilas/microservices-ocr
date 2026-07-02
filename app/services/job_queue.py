@@ -43,6 +43,7 @@ class JobQueueProcessor:
                 self.job_store.update(
                     job.job_id,
                     status="queued",
+                    progress_percent=0,
                     error="Recovered after restart: was processing when server stopped.",
                 )
 
@@ -76,6 +77,7 @@ class JobQueueProcessor:
                 self.job_store.update(
                     job.job_id,
                     status="failed",
+                    progress_percent=100,
                     error="Server shutdown while job was processing.",
                 )
             except Exception:
@@ -92,7 +94,7 @@ class JobQueueProcessor:
             self._queued_ids.add(job_id)
         self._queue.put(job_id)
 
-    def clear_pending_jobs(self) -> tuple[int, int]:
+    def clear_pending_jobs(self, owner_user_id: int | None = None) -> tuple[int, int]:
         cleared_count = 0
         retained: list[str] = []
         while True:
@@ -101,8 +103,13 @@ class JobQueueProcessor:
             except Empty:
                 break
             job = self.job_store.get(job_id)
-            if job and job.status == "queued":
-                self.job_store.update(job_id, status="canceled", error="Job removido da fila pelo operador.")
+            if job and job.status == "queued" and (owner_user_id is None or job.owner_user_id == owner_user_id):
+                self.job_store.update(
+                    job_id,
+                    status="canceled",
+                    progress_percent=0,
+                    error="Job removido da fila pelo operador.",
+                )
                 with self._lock:
                     self._queued_ids.discard(job_id)
                 cleared_count += 1
@@ -113,7 +120,11 @@ class JobQueueProcessor:
         for job_id in retained:
             self._queue.put(job_id)
 
-        processing_count = sum(1 for job in self.job_store.list_all() if job.status == "processing")
+        processing_count = sum(
+            1
+            for job in self.job_store.list_for_owner(owner_user_id)
+            if job.status == "processing"
+        )
         return cleared_count, processing_count
 
     def _worker_loop(self) -> None:

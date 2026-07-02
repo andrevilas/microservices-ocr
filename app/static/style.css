@@ -18,9 +18,9 @@
   --warning-soft: #fffbeb;
   --error: #b91c1c;
   --error-soft: #fef2f2;
-  --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
-  --radius: 8px;
-  --radius-sm: 6px;
+  --shadow: 0 8px 18px rgba(15, 23, 42, 0.07);
+  --radius: 0;
+  --radius-sm: 0;
   --focus: 0 0 0 3px rgba(37, 99, 235, 0.18);
 }
 
@@ -38,7 +38,7 @@ body {
   min-height: 100vh;
   color: var(--text);
   background: var(--bg);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "Aptos", "Segoe UI", Arial, Helvetica, sans-serif;
   font-size: 16px;
   line-height: 1.5;
 }
@@ -152,8 +152,6 @@ button:disabled {
 }
 
 .user-bar {
-  position: sticky;
-  top: 0;
   z-index: 30;
   display: grid;
   gap: 10px;
@@ -437,7 +435,7 @@ form,
   width: 100%;
   height: 8px;
   overflow: hidden;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--surface-strong);
 }
 
@@ -446,6 +444,34 @@ form,
   width: 0;
   height: 100%;
   border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
+.card-progress {
+  display: grid;
+  gap: 6px;
+}
+
+.card-progress__label {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.card-progress__track {
+  height: 7px;
+  overflow: hidden;
+  background: var(--surface-strong);
+}
+
+.card-progress__fill {
+  display: block;
+  height: 100%;
+  width: 0;
   background: var(--accent);
   transition: width 180ms ease;
 }
