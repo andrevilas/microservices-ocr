@@ -54,6 +54,7 @@ O script `rollout.py` aceita configurações via variáveis de ambiente ou por p
 | `OCR_DATA_DIR` | Caminho no host correspondente ao dataset persistente | `/mnt/NVME/ocr-apps/data` |
 | `OCR_ROLLOUT_HTTP_ATTEMPTS`| Número de tentativas de checagem HTTP | `12` |
 | `OCR_ROLLOUT_HTTP_RETRY_DELAY`| Intervalo em segundos entre tentativas de checagem HTTP | `5` |
+| `OCR_ROLLOUT_RELEASE_ATTEMPTS`| Número de tentativas para aguardar a release voltar a `ACTIVE` | `90` |
 | `OCR_IMAGE_PULL_POLICY` | Política de pull de imagem do Kubernetes | `IfNotPresent` |
 
 ---

@@ -20,6 +20,7 @@ DEFAULT_IMAGE_REPOSITORY = os.environ.get("OCR_IMAGE_REPOSITORY", "ghcr.io/andre
 DEFAULT_RELEASE_ROOT = Path(os.environ.get("OCR_RELEASE_ROOT", "/mnt/NVME/ocr-apps/releases"))
 DEFAULT_BACKUP_ROOT = Path(os.environ.get("OCR_BACKUP_ROOT", "/mnt/NVME/ocr-apps/backups"))
 DEFAULT_CURL_IP_VERSION = os.environ.get("OCR_CURL_IP_VERSION", "4")
+DEFAULT_RELEASE_ATTEMPTS = int(os.environ.get("OCR_ROLLOUT_RELEASE_ATTEMPTS", "90"))
 
 RELEASE_NAME = os.environ.get("OCR_TRUENAS_RELEASE", "ocr-recognizer")
 NAMESPACE = os.environ.get("OCR_TRUENAS_NAMESPACE", "ix-ocr-recognizer")
@@ -217,7 +218,7 @@ def check_fail(report: dict, name: str, detail: str) -> None:
 
 def validate_releases(report: dict) -> None:
     last_detail = ""
-    for _attempt in range(30):
+    for _attempt in range(DEFAULT_RELEASE_ATTEMPTS):
         releases = release_map()
         release = releases.get(RELEASE_NAME)
         if not release:
