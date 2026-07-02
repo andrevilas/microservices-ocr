@@ -10,6 +10,7 @@
     <nav class="user-bar">
       <span class="user-bar__identity">{{ user.name }} ({{ user.email }})</span>
       <div class="user-bar__actions">
+      <a class="user-bar__link" href="/account">Minha conta</a>
       {% if user.role == 'admin' %}
       <a class="user-bar__link" href="/admin/users">Gestão de usuários</a>
       {% endif %}

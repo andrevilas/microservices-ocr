@@ -800,6 +800,11 @@ form,
   margin: 0 auto;
 }
 
+.account-container {
+  width: min(680px, 100%);
+  margin: 0 auto;
+}
+
 .users-topbar {
   align-items: flex-start;
   margin-bottom: 14px;
@@ -811,12 +816,21 @@ form,
   gap: 4px;
 }
 
+.account-card,
 .create-card,
 .table-card {
   padding: 16px;
   margin-bottom: 14px;
 }
 
+.account-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.account-form,
 .create-form {
   display: grid;
   gap: 10px;
@@ -829,7 +843,7 @@ form,
 
 .users-table {
   width: 100%;
-  min-width: 680px;
+  min-width: 980px;
   border-collapse: collapse;
   font-size: 0.92rem;
 }
@@ -852,6 +866,26 @@ form,
 
 .users-table tr:last-child td {
   border-bottom: 0;
+}
+
+.user-edit-form {
+  display: grid;
+  min-width: 360px;
+  gap: 8px;
+}
+
+.user-edit-form input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.user-edit-save {
+  width: 100%;
 }
 
 .empty-msg {
@@ -925,7 +959,21 @@ form,
     align-items: end;
   }
 
+  .account-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: end;
+  }
+
   .create-btn {
+    width: auto;
+  }
+
+  .user-edit-form {
+    grid-template-columns: minmax(110px, 1fr) minmax(150px, 1.1fr) minmax(120px, 1fr) auto;
+    align-items: end;
+  }
+
+  .user-edit-save {
     width: auto;
   }
 }

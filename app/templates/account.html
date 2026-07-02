@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Minha conta - {{ app_name }}</title>
+    <link rel="stylesheet" href="/static/style.css?v={{ static_asset_version }}" />
+  </head>
+  <body>
+    <main class="users-shell">
+      <div class="account-container">
+        <div class="users-topbar">
+          <div class="users-topbar-left">
+            <h1>Minha conta</h1>
+            <a href="/" class="topbar-link">Voltar ao painel</a>
+          </div>
+          <button id="logout-btn" class="topbar-btn">Sair</button>
+        </div>
+
+        <div id="alert-success" class="users-alert success"></div>
+        <div id="alert-error" class="users-alert error"></div>
+
+        <section class="account-card">
+          <h2>Dados de acesso</h2>
+          <form id="account-form" class="account-form" autocomplete="off">
+            <div class="field">
+              <label for="account-name">Nome</label>
+              <input type="text" id="account-name" value="{{ user.name }}" required />
+            </div>
+            <div class="field">
+              <label for="account-email">Login</label>
+              <input type="email" id="account-email" value="{{ user.email }}" required />
+            </div>
+            <div class="field">
+              <label for="account-current-password">Senha atual</label>
+              <input
+                type="password"
+                id="account-current-password"
+                autocomplete="current-password"
+                placeholder="Obrigatória para trocar login ou senha"
+              />
+            </div>
+            <div class="field">
+              <label for="account-password">Nova senha</label>
+              <input
+                type="password"
+                id="account-password"
+                autocomplete="new-password"
+                placeholder="Deixe em branco para manter"
+              />
+            </div>
+            <button type="submit" id="account-save-btn" class="create-btn">Salvar alterações</button>
+          </form>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      (function () {
+        var form = document.getElementById("account-form");
+        var saveBtn = document.getElementById("account-save-btn");
+        var logoutBtn = document.getElementById("logout-btn");
+        var alertSuccess = document.getElementById("alert-success");
+        var alertError = document.getElementById("alert-error");
+
+        function hideAlerts() {
+          alertSuccess.classList.remove("visible");
+          alertError.classList.remove("visible");
+        }
+
+        function showSuccess(message) {
+          hideAlerts();
+          alertSuccess.textContent = message;
+          alertSuccess.classList.add("visible");
+        }
+
+        function showError(message) {
+          hideAlerts();
+          alertError.textContent = message;
+          alertError.classList.add("visible");
+        }
+
+        form.addEventListener("submit", function (event) {
+          event.preventDefault();
+          hideAlerts();
+
+          var name = document.getElementById("account-name").value.trim();
+          var email = document.getElementById("account-email").value.trim();
+          var currentPassword = document.getElementById("account-current-password").value;
+          var password = document.getElementById("account-password").value;
+
+          if (!name || !email) {
+            showError("Informe nome e login.");
+            return;
+          }
+
+          saveBtn.disabled = true;
+          saveBtn.textContent = "Salvando...";
+
+          fetch("/api/me", {
+            method: "PUT",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: name,
+              email: email,
+              current_password: currentPassword,
+              password: password,
+            }),
+          })
+            .then(function (response) {
+              if (!response.ok) {
+                return response.json().then(function (data) {
+                  throw new Error(data.detail || "Não foi possível atualizar a conta.");
+                });
+              }
+              return response.json();
+            })
+            .then(function (data) {
+              document.getElementById("account-name").value = data.name;
+              document.getElementById("account-email").value = data.email;
+              document.getElementById("account-current-password").value = "";
+              document.getElementById("account-password").value = "";
+              showSuccess("Conta atualizada com sucesso.");
+            })
+            .catch(function (error) {
+              showError(error.message);
+            })
+            .finally(function () {
+              saveBtn.disabled = false;
+              saveBtn.textContent = "Salvar alterações";
+            });
+        });
+
+        logoutBtn.addEventListener("click", function () {
+          fetch("/auth/logout", { method: "POST", credentials: "same-origin" })
+            .then(function () {
+              window.location.href = "/login";
+            });
+        });
+      })();
+    </script>
+  </body>
+</html>

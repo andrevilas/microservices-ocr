@@ -150,6 +150,29 @@ class UserStore:
             "created_at": row["created_at"],
         }
 
+    def get_user_credentials_by_id(self, user_id: int) -> dict | None:
+        """Return the full user dict (including password_hash and salt) or None."""
+        with self._lock:
+            conn = self._get_conn()
+            row = conn.execute(
+                "SELECT id, name, email, password_hash, salt, role, created_at "
+                "FROM users WHERE id = ?",
+                (user_id,),
+            ).fetchone()
+
+        if row is None:
+            return None
+
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "email": row["email"],
+            "password_hash": row["password_hash"],
+            "salt": row["salt"],
+            "role": row["role"],
+            "created_at": row["created_at"],
+        }
+
     def list_users(self) -> list[dict]:
         """Return a list of all users (without password_hash/salt)."""
         with self._lock:
@@ -168,6 +191,55 @@ class UserStore:
             }
             for row in rows
         ]
+
+    def update_user(
+        self,
+        user_id: int,
+        *,
+        name: str | None = None,
+        email: str | None = None,
+        password: str | None = None,
+    ) -> dict | None:
+        """Update user identity and/or password, returning the public user dict."""
+        updates: list[str] = []
+        values: list[str | int] = []
+
+        if name is not None:
+            updates.append("name = ?")
+            values.append(name)
+
+        if email is not None:
+            updates.append("email = ?")
+            values.append(email)
+
+        if password is not None:
+            salt = _generate_salt()
+            updates.extend(["password_hash = ?", "salt = ?"])
+            values.extend([_hash_password(password, salt), salt])
+
+        if not updates:
+            return self.get_user_by_id(user_id)
+
+        values.append(user_id)
+
+        with self._lock:
+            conn = self._get_conn()
+            existing = conn.execute(
+                "SELECT id FROM users WHERE id = ?",
+                (user_id,),
+            ).fetchone()
+            if existing is None:
+                return None
+            try:
+                conn.execute(
+                    f"UPDATE users SET {', '.join(updates)} WHERE id = ?",
+                    values,
+                )
+                conn.commit()
+            except sqlite3.IntegrityError:
+                raise ValueError(f"Email already exists: {email}")
+
+        return self.get_user_by_id(user_id)
 
     @staticmethod
     def verify_password(stored_hash: str, salt: str, password: str) -> bool:

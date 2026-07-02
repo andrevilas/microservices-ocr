@@ -18,6 +18,38 @@ auth_router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
 
+def _public_user(user: dict) -> dict:
+    return {
+        "id": user["id"],
+        "name": user["name"],
+        "email": user["email"],
+        "role": user["role"],
+    }
+
+
+def _clean_update_body(body: dict) -> tuple[str | None, str | None, str | None]:
+    name = body.get("name")
+    email = body.get("email")
+    password = body.get("password")
+
+    clean_name = name.strip() if isinstance(name, str) else None
+    clean_email = email.strip() if isinstance(email, str) else None
+    clean_password = password if isinstance(password, str) and password else None
+
+    if name is not None and not clean_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nome não pode ficar vazio.",
+        )
+    if email is not None and not clean_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Login não pode ficar vazio.",
+        )
+
+    return clean_name, clean_email, clean_password
+
+
 # ---------------------------------------------------------------------------
 # Helper: extract current user from request
 # ---------------------------------------------------------------------------
@@ -167,12 +199,75 @@ async def logout():
 @auth_router.get("/auth/me")
 async def me(user: dict = Depends(require_auth)):
     """Return the current authenticated user info."""
-    return {
-        "id": user["id"],
-        "name": user["name"],
-        "email": user["email"],
-        "role": user["role"],
-    }
+    return _public_user(user)
+
+
+@auth_router.get("/account")
+async def account_page(request: Request, user: dict = Depends(require_auth)):
+    """Render the current user's account page."""
+    return templates.TemplateResponse(
+        request=request,
+        name="account.html",
+        context={
+            "app_name": settings.app_name,
+            "static_asset_version": settings.static_asset_version,
+            "user": user,
+        },
+    )
+
+
+@auth_router.put("/api/me")
+async def update_me(request: Request, user: dict = Depends(require_auth)):
+    """Update the authenticated user's own login and password."""
+    body = await request.json()
+    name, email, password = _clean_update_body(body)
+    current_password = body.get("current_password", "")
+
+    changing_login = email is not None and email != user["email"]
+    changing_password = password is not None
+    if changing_login or changing_password:
+        if not current_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Informe a senha atual para alterar login ou senha.",
+            )
+
+        store = get_user_store()
+        credentials = store.get_user_credentials_by_id(int(user["id"]))
+        if credentials is None or not store.verify_password(
+            credentials["password_hash"], credentials["salt"], current_password
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Senha atual inválida.",
+            )
+
+    if name is None and email is None and password is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Informe pelo menos um campo para atualizar.",
+        )
+
+    store = get_user_store()
+    try:
+        updated = store.update_user(
+            int(user["id"]),
+            name=name,
+            email=email,
+            password=password,
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Já existe um usuário com este login.",
+        )
+
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuário não encontrado.",
+        )
+    return _public_user(updated)
 
 
 # ---------------------------------------------------------------------------
@@ -221,3 +316,43 @@ async def create_user(request: Request, user: dict = Depends(require_admin)):
         )
 
     return new_user
+
+
+@auth_router.put("/api/users/{user_id}")
+async def update_user(user_id: int, request: Request, user: dict = Depends(require_admin)):
+    """Update a user's login and password (admin JWT only)."""
+    body = await request.json()
+    name, email, password = _clean_update_body(body)
+
+    if name is None and email is None and password is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Informe pelo menos um campo para atualizar.",
+        )
+
+    store = get_user_store()
+    try:
+        updated = store.update_user(
+            user_id,
+            name=name,
+            email=email,
+            password=password,
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Já existe um usuário com este login.",
+        )
+
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuário não encontrado.",
+        )
+
+    logger.info(
+        "Admin user %s updated account %s",
+        user.get("email"),
+        updated.get("email"),
+    )
+    return updated

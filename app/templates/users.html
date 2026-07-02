@@ -13,6 +13,7 @@
           <div class="users-topbar-left">
             <h1>Gestão de usuários</h1>
             <a href="/" class="topbar-link">Voltar ao painel</a>
+            <a href="/account" class="topbar-link">Minha conta</a>
           </div>
           <button id="logout-btn" class="topbar-btn">Sair</button>
         </div>
@@ -52,11 +53,12 @@
                   <th>E-mail</th>
                   <th>Perfil</th>
                   <th>Criado em</th>
+                  <th>Ações</th>
                 </tr>
               </thead>
               <tbody id="users-tbody">
                 <tr>
-                  <td colspan="5" class="empty-msg">Carregando...</td>
+                  <td colspan="6" class="empty-msg">Carregando...</td>
                 </tr>
               </tbody>
             </table>
@@ -115,7 +117,7 @@
         function setEmptyMessage(message) {
           var tr = document.createElement("tr");
           var td = document.createElement("td");
-          td.colSpan = 5;
+          td.colSpan = 6;
           td.className = "empty-msg";
           td.textContent = message;
           tr.appendChild(td);
@@ -127,6 +129,47 @@
           td.textContent = value == null ? "-" : String(value);
           row.appendChild(td);
           return td;
+        }
+
+        function appendEditCell(row, user) {
+          var td = document.createElement("td");
+          var form = document.createElement("form");
+          var nameInput = document.createElement("input");
+          var emailInput = document.createElement("input");
+          var passwordInput = document.createElement("input");
+          var button = document.createElement("button");
+
+          form.className = "user-edit-form";
+          form.dataset.userId = user.id;
+
+          nameInput.type = "text";
+          nameInput.name = "name";
+          nameInput.value = user.name || "";
+          nameInput.required = true;
+          nameInput.setAttribute("aria-label", "Nome");
+
+          emailInput.type = "email";
+          emailInput.name = "email";
+          emailInput.value = user.email || "";
+          emailInput.required = true;
+          emailInput.setAttribute("aria-label", "Login");
+
+          passwordInput.type = "password";
+          passwordInput.name = "password";
+          passwordInput.placeholder = "Nova senha";
+          passwordInput.autocomplete = "new-password";
+          passwordInput.setAttribute("aria-label", "Nova senha");
+
+          button.type = "submit";
+          button.className = "secondary-button user-edit-save";
+          button.textContent = "Salvar";
+
+          form.appendChild(nameInput);
+          form.appendChild(emailInput);
+          form.appendChild(passwordInput);
+          form.appendChild(button);
+          td.appendChild(form);
+          row.appendChild(td);
         }
 
         function renderUsers(users) {
@@ -145,6 +188,7 @@
             roleCell.appendChild(roleBadge(u.role));
             tr.appendChild(roleCell);
             appendCell(tr, formatDate(u.created_at));
+            appendEditCell(tr, u);
             fragment.appendChild(tr);
           }
           tbody.replaceChildren(fragment);
@@ -209,6 +253,53 @@
             .finally(function () {
               createBtn.disabled = false;
               createBtn.textContent = "Criar";
+            });
+        });
+
+        tbody.addEventListener("submit", function (e) {
+          e.preventDefault();
+          var form = e.target;
+          if (!form.classList.contains("user-edit-form")) return;
+
+          hideAlerts();
+          var userId = form.dataset.userId;
+          var button = form.querySelector("button");
+          var name = form.elements.name.value.trim();
+          var email = form.elements.email.value.trim();
+          var password = form.elements.password.value;
+
+          if (!name || !email) {
+            showError("Informe nome e login.");
+            return;
+          }
+
+          button.disabled = true;
+          button.textContent = "Salvando...";
+
+          fetch("/api/users/" + encodeURIComponent(userId), {
+            method: "PUT",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: name, email: email, password: password }),
+          })
+            .then(function (res) {
+              if (!res.ok) {
+                return res.json().then(function (data) {
+                  throw new Error(data.detail || "Erro ao atualizar usuário.");
+                });
+              }
+              return res.json();
+            })
+            .then(function () {
+              showSuccess("Usuário atualizado com sucesso.");
+              loadUsers();
+            })
+            .catch(function (err) {
+              showError(err.message);
+            })
+            .finally(function () {
+              button.disabled = false;
+              button.textContent = "Salvar";
             });
         });
 

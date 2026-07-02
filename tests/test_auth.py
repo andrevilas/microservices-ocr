@@ -382,6 +382,157 @@ class TestAdminCreatesUser:
 
 
 # ---------------------------------------------------------------------------
+# 6b. User profile and admin account updates
+# ---------------------------------------------------------------------------
+
+
+class TestUserAccountUpdates:
+    def test_authenticated_user_updates_own_login_and_password(self) -> None:
+        store = get_user_store()
+        old_email = f"self-{uuid4().hex}@test.com"
+        new_email = f"self-updated-{uuid4().hex}@test.com"
+        old_password = "senha-antiga-123"
+        new_password = "senha-nova-456"
+        store.create_user(
+            name="Self Update",
+            email=old_email,
+            password=old_password,
+            role="user",
+        )
+
+        login = client.post(
+            "/auth/login",
+            json={"email": old_email, "password": old_password},
+        )
+        assert login.status_code == 200
+        token = login.json()["access_token"]
+
+        resp = client.put(
+            "/api/me",
+            json={
+                "name": "Self Updated",
+                "email": new_email,
+                "current_password": old_password,
+                "password": new_password,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "Self Updated"
+        assert data["email"] == new_email
+        assert "password_hash" not in data
+        assert "salt" not in data
+
+        old_login = client.post(
+            "/auth/login",
+            json={"email": old_email, "password": old_password},
+        )
+        assert old_login.status_code == 401
+
+        new_login = client.post(
+            "/auth/login",
+            json={"email": new_email, "password": new_password},
+        )
+        assert new_login.status_code == 200
+
+    def test_authenticated_user_must_confirm_current_password(self) -> None:
+        store = get_user_store()
+        email = f"confirm-{uuid4().hex}@test.com"
+        new_email = f"confirm-new-{uuid4().hex}@test.com"
+        store.create_user(
+            name="Needs Confirm",
+            email=email,
+            password="senha-atual",
+            role="user",
+        )
+        login = client.post(
+            "/auth/login",
+            json={"email": email, "password": "senha-atual"},
+        )
+        assert login.status_code == 200
+
+        resp = client.put(
+            "/api/me",
+            json={"email": new_email, "password": "senha-nova"},
+            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        )
+        assert resp.status_code == 400
+
+        failed_confirm = client.put(
+            "/api/me",
+            json={
+                "email": new_email,
+                "current_password": "senha-errada",
+                "password": "senha-nova",
+            },
+            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        )
+        assert failed_confirm.status_code == 403
+
+    def test_admin_updates_other_user_login_and_password(self) -> None:
+        token = _admin_token()
+        old_email = f"admin-target-{uuid4().hex}@test.com"
+        new_email = f"admin-target-updated-{uuid4().hex}@test.com"
+        created = client.post(
+            "/api/users",
+            json={"name": "Target User", "email": old_email, "password": "old-pass"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert created.status_code == 201
+        user_id = created.json()["id"]
+
+        resp = client.put(
+            f"/api/users/{user_id}",
+            json={
+                "name": "Target Updated",
+                "email": new_email,
+                "password": "new-pass",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == user_id
+        assert data["name"] == "Target Updated"
+        assert data["email"] == new_email
+
+        login = client.post(
+            "/auth/login",
+            json={"email": new_email, "password": "new-pass"},
+        )
+        assert login.status_code == 200
+
+    def test_common_user_cannot_update_other_users(self) -> None:
+        store = get_user_store()
+        email = f"common-edit-{uuid4().hex}@test.com"
+        target = store.create_user(
+            name="Target",
+            email=f"common-target-{uuid4().hex}@test.com",
+            password="target-pass",
+            role="user",
+        )
+        store.create_user(
+            name="Common Editor",
+            email=email,
+            password="common-pass",
+            role="user",
+        )
+        login = client.post(
+            "/auth/login",
+            json={"email": email, "password": "common-pass"},
+        )
+        assert login.status_code == 200
+
+        resp = client.put(
+            f"/api/users/{target['id']}",
+            json={"email": f"blocked-{uuid4().hex}@test.com"},
+            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        )
+        assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
 # 7. Password never stored in plain text
 # ---------------------------------------------------------------------------
 
