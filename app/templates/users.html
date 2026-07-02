@@ -22,8 +22,11 @@
         <div id="alert-error" class="users-alert error"></div>
 
         <!-- Create user form -->
-        <div class="create-card">
-          <h2>Novo usuário</h2>
+        <div class="create-card admin-form-card">
+          <div class="account-card__header">
+            <span class="section-kicker">Cadastro</span>
+            <h2>Novo usuário</h2>
+          </div>
           <form id="create-form" class="create-form" autocomplete="off">
             <div class="field">
               <label for="new-name">Nome</label>
@@ -41,9 +44,39 @@
           </form>
         </div>
 
+        <div id="edit-card" class="edit-card hidden">
+          <div class="account-card__header">
+            <span class="section-kicker">Edição</span>
+            <h2 id="edit-title">Editar usuário</h2>
+          </div>
+          <form id="edit-form" class="edit-form" autocomplete="off">
+            <input type="hidden" id="edit-id" />
+            <div class="field">
+              <label for="edit-name">Nome</label>
+              <input type="text" id="edit-name" required />
+            </div>
+            <div class="field">
+              <label for="edit-email">Login</label>
+              <input type="email" id="edit-email" required />
+            </div>
+            <div class="field">
+              <label for="edit-password">Nova senha</label>
+              <input type="password" id="edit-password" autocomplete="new-password" placeholder="Deixe em branco para manter" />
+            </div>
+            <div class="form-actions">
+              <button type="submit" id="edit-save-btn" class="create-btn">Salvar alterações</button>
+              <button type="button" id="edit-cancel-btn" class="secondary-button">Cancelar</button>
+            </div>
+          </form>
+        </div>
+
         <!-- Users table -->
         <div class="table-card">
-          <h2>Usuários cadastrados</h2>
+          <div class="account-card__header">
+            <span class="section-kicker">Acessos</span>
+            <h2>Usuários cadastrados</h2>
+          </div>
+          <div id="users-list" class="users-list"></div>
           <div class="users-table-wrap">
             <table class="users-table">
               <thead>
@@ -52,13 +85,12 @@
                   <th>Nome</th>
                   <th>E-mail</th>
                   <th>Perfil</th>
-                  <th>Criado em</th>
                   <th>Ações</th>
                 </tr>
               </thead>
               <tbody id="users-tbody">
                 <tr>
-                  <td colspan="6" class="empty-msg">Carregando...</td>
+                  <td colspan="5" class="empty-msg">Carregando...</td>
                 </tr>
               </tbody>
             </table>
@@ -70,11 +102,18 @@
     <script>
       (function () {
         var tbody = document.getElementById("users-tbody");
+        var usersList = document.getElementById("users-list");
         var alertSuccess = document.getElementById("alert-success");
         var alertError = document.getElementById("alert-error");
         var createForm = document.getElementById("create-form");
         var createBtn = document.getElementById("create-btn");
+        var editCard = document.getElementById("edit-card");
+        var editForm = document.getElementById("edit-form");
+        var editSaveBtn = document.getElementById("edit-save-btn");
+        var editCancelBtn = document.getElementById("edit-cancel-btn");
+        var editTitle = document.getElementById("edit-title");
         var logoutBtn = document.getElementById("logout-btn");
+        var currentUsers = [];
 
         function hideAlerts() {
           alertSuccess.classList.remove("visible");
@@ -117,11 +156,12 @@
         function setEmptyMessage(message) {
           var tr = document.createElement("tr");
           var td = document.createElement("td");
-          td.colSpan = 6;
+          td.colSpan = 5;
           td.className = "empty-msg";
           td.textContent = message;
           tr.appendChild(td);
           tbody.replaceChildren(tr);
+          usersList.innerHTML = '<div class="empty-state empty-state-inline"><strong>' + message + '</strong></div>';
         }
 
         function appendCell(row, value) {
@@ -131,52 +171,81 @@
           return td;
         }
 
-        function appendEditCell(row, user) {
+        function appendActionCell(row, user) {
           var td = document.createElement("td");
-          var form = document.createElement("form");
-          var nameInput = document.createElement("input");
-          var emailInput = document.createElement("input");
-          var passwordInput = document.createElement("input");
           var button = document.createElement("button");
-
-          form.className = "user-edit-form";
-          form.dataset.userId = user.id;
-
-          nameInput.type = "text";
-          nameInput.name = "name";
-          nameInput.value = user.name || "";
-          nameInput.required = true;
-          nameInput.setAttribute("aria-label", "Nome");
-
-          emailInput.type = "email";
-          emailInput.name = "email";
-          emailInput.value = user.email || "";
-          emailInput.required = true;
-          emailInput.setAttribute("aria-label", "Login");
-
-          passwordInput.type = "password";
-          passwordInput.name = "password";
-          passwordInput.placeholder = "Nova senha";
-          passwordInput.autocomplete = "new-password";
-          passwordInput.setAttribute("aria-label", "Nova senha");
-
           button.type = "submit";
-          button.className = "secondary-button user-edit-save";
-          button.textContent = "Salvar";
-
-          form.appendChild(nameInput);
-          form.appendChild(emailInput);
-          form.appendChild(passwordInput);
-          form.appendChild(button);
-          td.appendChild(form);
+          button.className = "secondary-button user-row-action";
+          button.dataset.editUserId = user.id;
+          button.textContent = "Editar";
+          td.appendChild(button);
           row.appendChild(td);
         }
 
+        function renderUserCards(users) {
+          if (!users.length) {
+            usersList.innerHTML = '<div class="empty-state empty-state-inline"><strong>Nenhum usuário cadastrado.</strong></div>';
+            return;
+          }
+          var fragment = document.createDocumentFragment();
+          for (var i = 0; i < users.length; i++) {
+            var user = users[i];
+            var card = document.createElement("article");
+            card.className = "user-card";
+            var header = document.createElement("div");
+            header.className = "user-card__header";
+            var identity = document.createElement("div");
+            identity.className = "user-card__identity";
+            var name = document.createElement("strong");
+            name.textContent = user.name || "-";
+            var email = document.createElement("span");
+            email.textContent = user.email || "-";
+            identity.appendChild(name);
+            identity.appendChild(email);
+            header.appendChild(identity);
+            header.appendChild(roleBadge(user.role));
+
+            var meta = document.createElement("div");
+            meta.className = "user-card__meta";
+            meta.textContent = "ID " + user.id + " · criado em " + formatDate(user.created_at);
+
+            var action = document.createElement("button");
+            action.type = "button";
+            action.className = "secondary-button user-row-action";
+            action.dataset.editUserId = user.id;
+            action.textContent = "Editar credenciais";
+
+            card.appendChild(header);
+            card.appendChild(meta);
+            card.appendChild(action);
+            fragment.appendChild(card);
+          }
+          usersList.replaceChildren(fragment);
+        }
+
+        function openEdit(user) {
+          document.getElementById("edit-id").value = user.id;
+          document.getElementById("edit-name").value = user.name || "";
+          document.getElementById("edit-email").value = user.email || "";
+          document.getElementById("edit-password").value = "";
+          editTitle.textContent = "Editar " + (user.name || user.email);
+          editCard.classList.remove("hidden");
+          editCard.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+
+        function closeEdit() {
+          editForm.reset();
+          document.getElementById("edit-id").value = "";
+          editCard.classList.add("hidden");
+        }
+
         function renderUsers(users) {
+          currentUsers = users;
           if (!users.length) {
             setEmptyMessage("Nenhum usuário cadastrado.");
             return;
           }
+          renderUserCards(users);
           var fragment = document.createDocumentFragment();
           for (var i = 0; i < users.length; i++) {
             var u = users[i];
@@ -187,8 +256,7 @@
             var roleCell = document.createElement("td");
             roleCell.appendChild(roleBadge(u.role));
             tr.appendChild(roleCell);
-            appendCell(tr, formatDate(u.created_at));
-            appendEditCell(tr, u);
+            appendActionCell(tr, u);
             fragment.appendChild(tr);
           }
           tbody.replaceChildren(fragment);
@@ -256,25 +324,37 @@
             });
         });
 
-        tbody.addEventListener("submit", function (e) {
-          e.preventDefault();
-          var form = e.target;
-          if (!form.classList.contains("user-edit-form")) return;
+        function handleEditClick(e) {
+          var button = e.target.closest("[data-edit-user-id]");
+          if (!button) return;
 
           hideAlerts();
-          var userId = form.dataset.userId;
-          var button = form.querySelector("button");
-          var name = form.elements.name.value.trim();
-          var email = form.elements.email.value.trim();
-          var password = form.elements.password.value;
+          var userId = Number(button.dataset.editUserId);
+          var user = currentUsers.find(function (item) {
+            return Number(item.id) === userId;
+          });
+          if (user) openEdit(user);
+        }
+
+        tbody.addEventListener("click", handleEditClick);
+        usersList.addEventListener("click", handleEditClick);
+
+        editForm.addEventListener("submit", function (e) {
+          e.preventDefault();
+          hideAlerts();
+
+          var userId = document.getElementById("edit-id").value;
+          var name = document.getElementById("edit-name").value.trim();
+          var email = document.getElementById("edit-email").value.trim();
+          var password = document.getElementById("edit-password").value;
 
           if (!name || !email) {
             showError("Informe nome e login.");
             return;
           }
 
-          button.disabled = true;
-          button.textContent = "Salvando...";
+          editSaveBtn.disabled = true;
+          editSaveBtn.textContent = "Salvando...";
 
           fetch("/api/users/" + encodeURIComponent(userId), {
             method: "PUT",
@@ -292,16 +372,19 @@
             })
             .then(function () {
               showSuccess("Usuário atualizado com sucesso.");
+              closeEdit();
               loadUsers();
             })
             .catch(function (err) {
               showError(err.message);
             })
             .finally(function () {
-              button.disabled = false;
-              button.textContent = "Salvar";
+              editSaveBtn.disabled = false;
+              editSaveBtn.textContent = "Salvar alterações";
             });
         });
+
+        editCancelBtn.addEventListener("click", closeEdit);
 
         logoutBtn.addEventListener("click", function () {
           fetch("/auth/logout", { method: "POST", credentials: "same-origin" })

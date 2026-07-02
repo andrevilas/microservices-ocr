@@ -305,7 +305,9 @@ h3 {
 
 input[type="file"],
 .form-group input,
+.account-form input,
 .create-form input,
+.edit-form input,
 .search-box input,
 .sort-box select {
   width: 100%;
@@ -403,7 +405,9 @@ form,
 
 .search-box,
 .sort-box,
+.account-form .field,
 .create-form .field,
+.edit-form .field,
 .form-group {
   display: grid;
   gap: 6px;
@@ -411,7 +415,9 @@ form,
 
 .search-box span,
 .sort-box span,
+.account-form label,
 .create-form label,
+.edit-form label,
 .form-group label {
   color: var(--text-muted);
   font-size: 0.78rem;
@@ -796,54 +802,105 @@ form,
 }
 
 .users-container {
-  width: min(1080px, 100%);
+  width: min(1180px, 100%);
   margin: 0 auto;
 }
 
 .account-container {
-  width: min(680px, 100%);
+  width: min(980px, 100%);
   margin: 0 auto;
 }
 
 .users-topbar {
-  align-items: flex-start;
-  margin-bottom: 14px;
+  display: grid;
+  gap: 12px;
+  align-items: start;
+  margin-bottom: 16px;
   flex-wrap: wrap;
 }
 
 .users-topbar-left {
   display: grid;
-  gap: 4px;
+  gap: 6px;
 }
 
+.users-topbar-left h1 {
+  font-size: clamp(1.55rem, 7vw, 2.15rem);
+}
+
+.account-layout {
+  display: grid;
+  gap: 14px;
+  align-items: start;
+}
+
+.account-summary,
 .account-card,
 .create-card,
+.edit-card,
 .table-card {
-  padding: 16px;
-  margin-bottom: 14px;
-}
-
-.account-card {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
   box-shadow: var(--shadow);
 }
 
-.account-form,
-.create-form {
+.account-summary {
   display: grid;
-  gap: 10px;
+  gap: 8px;
+  padding: 16px;
+}
+
+.account-summary strong {
+  font-size: 1.1rem;
+  line-height: 1.2;
+}
+
+.account-summary span:not(.section-kicker):not(.role-badge) {
+  color: var(--text-muted);
+  word-break: break-word;
+}
+
+.account-card,
+.create-card,
+.edit-card,
+.table-card {
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.account-card__header {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.account-card__header h2 {
+  font-size: 1.15rem;
+}
+
+.account-form,
+.create-form,
+.edit-form {
+  display: grid;
+  gap: 12px;
+}
+
+.form-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .users-table-wrap {
+  display: none;
   margin: 0 -16px -16px;
   overflow-x: auto;
 }
 
 .users-table {
   width: 100%;
-  min-width: 980px;
+  min-width: 720px;
   border-collapse: collapse;
   font-size: 0.92rem;
 }
@@ -868,23 +925,46 @@ form,
   border-bottom: 0;
 }
 
-.user-edit-form {
+.users-list {
   display: grid;
-  min-width: 360px;
-  gap: 8px;
+  gap: 10px;
 }
 
-.user-edit-form input {
-  width: 100%;
-  min-height: 40px;
-  padding: 8px 10px;
+.user-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   background: var(--surface);
-  color: var(--text);
 }
 
-.user-edit-save {
+.user-card__header {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.user-card__identity {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.user-card__identity strong,
+.user-card__identity span {
+  min-width: 0;
+  word-break: break-word;
+}
+
+.user-card__identity span,
+.user-card__meta {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.user-row-action {
   width: 100%;
 }
 
@@ -905,6 +985,11 @@ form,
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     padding-inline: 20px;
+  }
+
+  .users-topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
   }
 
   .selection-grid,
@@ -954,7 +1039,12 @@ form,
     max-height: calc(100vh - 40px);
   }
 
-  .create-form {
+  .account-layout {
+    grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
+  }
+
+  .create-form,
+  .edit-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: end;
   }
@@ -964,16 +1054,12 @@ form,
     align-items: end;
   }
 
+  .form-actions {
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+
   .create-btn {
-    width: auto;
-  }
-
-  .user-edit-form {
-    grid-template-columns: minmax(110px, 1fr) minmax(150px, 1.1fr) minmax(120px, 1fr) auto;
-    align-items: end;
-  }
-
-  .user-edit-save {
     width: auto;
   }
 }
@@ -1005,7 +1091,20 @@ form,
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   }
 
-  .create-form {
+  .users-list {
+    display: none;
+  }
+
+  .users-table-wrap {
+    display: block;
+  }
+
+  .create-form,
+  .edit-form {
     grid-template-columns: 1fr 1.2fr 1fr auto;
+  }
+
+  .user-row-action {
+    width: auto;
   }
 }

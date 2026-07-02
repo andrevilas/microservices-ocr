@@ -20,37 +20,51 @@
         <div id="alert-success" class="users-alert success"></div>
         <div id="alert-error" class="users-alert error"></div>
 
-        <section class="account-card">
-          <h2>Dados de acesso</h2>
-          <form id="account-form" class="account-form" autocomplete="off">
-            <div class="field">
-              <label for="account-name">Nome</label>
-              <input type="text" id="account-name" value="{{ user.name }}" required />
+        <section class="account-layout">
+          <aside class="account-summary">
+            <span class="section-kicker">Sessão atual</span>
+            <strong>{{ user.name }}</strong>
+            <span>{{ user.email }}</span>
+            <span class="role-badge {{ user.role }}">{{ user.role }}</span>
+          </aside>
+
+          <section class="account-card">
+            <div class="account-card__header">
+              <span class="section-kicker">Credenciais</span>
+              <h2>Dados de acesso</h2>
             </div>
-            <div class="field">
-              <label for="account-email">Login</label>
-              <input type="email" id="account-email" value="{{ user.email }}" required />
-            </div>
-            <div class="field">
-              <label for="account-current-password">Senha atual</label>
-              <input
-                type="password"
-                id="account-current-password"
-                autocomplete="current-password"
-                placeholder="Obrigatória para trocar login ou senha"
-              />
-            </div>
-            <div class="field">
-              <label for="account-password">Nova senha</label>
-              <input
-                type="password"
-                id="account-password"
-                autocomplete="new-password"
-                placeholder="Deixe em branco para manter"
-              />
-            </div>
-            <button type="submit" id="account-save-btn" class="create-btn">Salvar alterações</button>
-          </form>
+            <form id="account-form" class="account-form" autocomplete="off">
+              <div class="field">
+                <label for="account-name">Nome</label>
+                <input type="text" id="account-name" value="{{ user.name }}" required />
+              </div>
+              <div class="field">
+                <label for="account-email">Login</label>
+                <input type="email" id="account-email" value="{{ user.email }}" required />
+              </div>
+              <div class="field">
+                <label for="account-current-password">Senha atual</label>
+                <input
+                  type="password"
+                  id="account-current-password"
+                  autocomplete="current-password"
+                  placeholder="Exigida para trocar login ou senha"
+                />
+              </div>
+              <div class="field">
+                <label for="account-password">Nova senha</label>
+                <input
+                  type="password"
+                  id="account-password"
+                  autocomplete="new-password"
+                  placeholder="Deixe em branco para manter"
+                />
+              </div>
+              <div class="form-actions">
+                <button type="submit" id="account-save-btn" class="create-btn">Salvar alterações</button>
+              </div>
+            </form>
+          </section>
         </section>
       </div>
     </main>

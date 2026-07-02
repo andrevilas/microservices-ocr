@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "Fluxo OCR"
     app_env: str = "development"
-    static_asset_version: str = "20260702-account-update"
+    static_asset_version: str = "20260702-account-polish"
     max_upload_size_mb: int = 80
     job_worker_concurrency: int = 2
     ocr_tmp_dir: Path = Path("/tmp/ocr-recognizer")
