@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models import JobResponse, JobStatus
 from app.services.storage_service import JobRecord, JobStore, get_job_store
@@ -33,13 +33,20 @@ class ApplicationError(Exception):
         self.status, self.code, self.message = status, code, message
 
 
+class ValidationDetail(BaseModel):
+    location: list[str | int]
+    code: str
+
+
 class ErrorBody(BaseModel):
     code: str
     message: str
+    details: list[ValidationDetail] = Field(default_factory=list)
 
 
 class ErrorResponse(BaseModel):
     error: ErrorBody
+    request_id: str = Field(pattern=r"^[0-9a-f]{32}$")
 
 
 class IdentityResponse(BaseModel):

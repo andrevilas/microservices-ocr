@@ -1,5 +1,7 @@
 # API e MCP — fundação e identidades
 
+Contrato HTTP versionado, exemplos e códigos: [HTTP v1](http-contract.md).
+
 Rastreabilidade: OCR-AM-02 / LPM `AEHQJUb02uohT4MlVf8U`, projeto OCR Recognizer
 `POzf83SdXU3HWL9KX9i2`. Plano completo e revisão na atividade
 `lv2qAWLSJajcLawyvMdE`, com 18 atividades e 29 capacidades planejadas.

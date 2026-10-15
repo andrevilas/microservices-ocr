@@ -1,0 +1,4118 @@
+{
+  "components": {
+    "schemas": {
+      "ArtifactResponse": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "download_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Url"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "media_type": {
+            "default": "application/pdf",
+            "title": "Media Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "available"
+        ],
+        "title": "ArtifactResponse",
+        "type": "object"
+      },
+      "CredentialInput": {
+        "additionalProperties": false,
+        "examples": [
+          {
+            "expires_in_seconds": 2592000,
+            "name": "Local reader",
+            "scopes": [
+              "jobs:read",
+              "artifacts:read"
+            ]
+          }
+        ],
+        "properties": {
+          "expires_in_seconds": {
+            "default": 2592000,
+            "maximum": 31536000.0,
+            "minimum": 60.0,
+            "title": "Expires In Seconds",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "enum": [
+                "jobs:read",
+                "artifacts:read",
+                "jobs:submit",
+                "jobs:cancel"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "scopes"
+        ],
+        "title": "CredentialInput",
+        "type": "object"
+      },
+      "CredentialResponse": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "number"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "number"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "principal_id": {
+            "title": "Principal Id",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "principal_id",
+          "name",
+          "scopes",
+          "created_at",
+          "created_by",
+          "expires_at",
+          "revoked_at",
+          "last_used_at"
+        ],
+        "title": "CredentialResponse",
+        "type": "object"
+      },
+      "ErrorBody": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "details": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationDetail"
+            },
+            "title": "Details",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorBody",
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          },
+          "request_id": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "request_id"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
+      "IdentityResponse": {
+        "properties": {
+          "kind": {
+            "default": "user",
+            "enum": [
+              "user",
+              "service",
+              "legacy"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "scopes"
+        ],
+        "title": "IdentityResponse",
+        "type": "object"
+      },
+      "IssuedCredential": {
+        "properties": {
+          "credential": {
+            "$ref": "#/components/schemas/CredentialResponse"
+          },
+          "token": {
+            "description": "Returned once. Store securely; never pass to an MCP tool.",
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential",
+          "token"
+        ],
+        "title": "IssuedCredential",
+        "type": "object"
+      },
+      "JobPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/JobResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "JobPage",
+        "type": "object"
+      },
+      "JobResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "download_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Url"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "progress_percent": {
+            "default": 0,
+            "title": "Progress Percent",
+            "type": "integer"
+          },
+          "quality": {
+            "anyOf": [
+              {
+                "enum": [
+                  "HIGH",
+                  "LOW"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "processing",
+              "completed",
+              "failed",
+              "canceled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "filename",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "JobResponse",
+        "type": "object"
+      },
+      "MetricsResponse": {
+        "properties": {
+          "by_status": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Status",
+            "type": "object"
+          },
+          "total_jobs": {
+            "title": "Total Jobs",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_jobs",
+          "by_status"
+        ],
+        "title": "MetricsResponse",
+        "type": "object"
+      },
+      "ServiceInput": {
+        "additionalProperties": false,
+        "examples": [
+          {
+            "name": "Local importer"
+          }
+        ],
+        "properties": {
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ServiceInput",
+        "type": "object"
+      },
+      "ServiceResponse": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "number"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "disabled_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disabled At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "created_by",
+          "disabled_at"
+        ],
+        "title": "ServiceResponse",
+        "type": "object"
+      },
+      "ValidationDetail": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "location": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          }
+        },
+        "required": [
+          "location",
+          "code"
+        ],
+        "title": "ValidationDetail",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "PrincipalBearer": {
+        "description": "User JWT or individual opaque service credential. Not the legacy global API key.",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "OCR HTTP API. Versioned operations use Bearer user or individual service credentials; legacy routes retain separate contracts.",
+    "title": "Fluxo OCR",
+    "version": "1.0.0",
+    "x-api-version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/jobs": {
+      "get": {
+        "description": "List caller-owned jobs in creation order; pass next_cursor unchanged to continue.\n\nLimit is 1–100 (default 50). Results are live; concurrent inserts can appear on later pages.",
+        "operationId": "ocr_list_jobs",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "queued",
+                    "processing",
+                    "completed",
+                    "failed",
+                    "canceled"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "created_at": "2026-10-15T12:00:00Z",
+                      "download_url": null,
+                      "error": null,
+                      "filename": "example.pdf",
+                      "job_id": "00000000000000000000000000000001",
+                      "progress_percent": 0,
+                      "quality": null,
+                      "status": "queued",
+                      "updated_at": "2026-10-15T12:00:00Z"
+                    }
+                  ],
+                  "next_cursor": null
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/JobPage"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "artifact_unavailable",
+                    "details": [],
+                    "message": "Artifact is not available."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact is not available.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "List Jobs",
+        "tags": [
+          "API v1"
+        ],
+        "x-human-admin-required": false,
+        "x-required-scopes": [
+          "jobs:read"
+        ]
+      }
+    },
+    "/api/v1/jobs/{job_id}": {
+      "get": {
+        "description": "Read a caller-owned job. Unknown and inaccessible IDs both return job_not_found.",
+        "operationId": "ocr_get_job",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "created_at": "2026-10-15T12:00:00Z",
+                  "download_url": null,
+                  "error": null,
+                  "filename": "example.pdf",
+                  "job_id": "00000000000000000000000000000001",
+                  "progress_percent": 0,
+                  "quality": null,
+                  "status": "queued",
+                  "updated_at": "2026-10-15T12:00:00Z"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "artifact_unavailable",
+                    "details": [],
+                    "message": "Artifact is not available."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact is not available.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "Get Job",
+        "tags": [
+          "API v1"
+        ],
+        "x-human-admin-required": false,
+        "x-required-scopes": [
+          "jobs:read"
+        ]
+      }
+    },
+    "/api/v1/jobs/{job_id}/artifact": {
+      "get": {
+        "description": "Return availability and a relative authenticated download URL, without PDF bytes.",
+        "operationId": "ocr_get_artifact",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "available": false,
+                  "download_url": null,
+                  "job_id": "00000000000000000000000000000001",
+                  "media_type": "application/pdf"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "artifact_unavailable",
+                    "details": [],
+                    "message": "Artifact is not available."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact is not available.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "Artifact",
+        "tags": [
+          "API v1"
+        ],
+        "x-human-admin-required": false,
+        "x-required-scopes": [
+          "jobs:read",
+          "artifacts:read"
+        ]
+      }
+    },
+    "/api/v1/jobs/{job_id}/artifact/content": {
+      "get": {
+        "description": "Download the caller-owned PDF; supports Range. Returns 409 if the output is unavailable.",
+        "operationId": "ocr_download_artifact",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "206": {
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Partial Content",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_request",
+                    "details": [],
+                    "message": "Invalid request."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "artifact_unavailable",
+                    "details": [],
+                    "message": "Artifact is not available."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact is not available.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "416": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_range",
+                    "details": [],
+                    "message": "Requested range is not satisfiable."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Requested range is not satisfiable.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "Artifact Content",
+        "tags": [
+          "API v1"
+        ],
+        "x-human-admin-required": false,
+        "x-required-scopes": [
+          "jobs:read",
+          "artifacts:read"
+        ]
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "description": "Return the authenticated identity and effective scopes, never its credential.",
+        "operationId": "ocr_whoami",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "kind": "user",
+                  "scopes": [
+                    "jobs:read",
+                    "artifacts:read"
+                  ],
+                  "subject": "user:1"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "artifact_unavailable",
+                    "details": [],
+                    "message": "Artifact is not available."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact is not available.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "Whoami",
+        "tags": [
+          "API v1"
+        ],
+        "x-human-admin-required": false,
+        "x-required-scopes": []
+      }
+    },
+    "/api/v1/metrics": {
+      "get": {
+        "description": "Count only caller-owned jobs by processing state.",
+        "operationId": "ocr_get_metrics",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "by_status": {
+                    "queued": 1
+                  },
+                  "total_jobs": 1
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/MetricsResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "artifact_unavailable",
+                    "details": [],
+                    "message": "Artifact is not available."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact is not available.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "Metrics",
+        "tags": [
+          "API v1"
+        ],
+        "x-human-admin-required": false,
+        "x-required-scopes": [
+          "jobs:read"
+        ]
+      }
+    },
+    "/api/v1/service-principals": {
+      "get": {
+        "description": "List metadata in ID order, at most 100; use the last ID as after. Never returns secrets.",
+        "operationId": "ocr_list_service_principals",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 40,
+              "title": "After",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "created_at": 1792065600.0,
+                    "created_by": "user:1",
+                    "disabled_at": null,
+                    "id": "service:00000000000000000000000000000001",
+                    "name": "Local importer"
+                  }
+                ],
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ServiceResponse"
+                  },
+                  "title": "Response Ocr List Service Principals",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "List Services",
+        "tags": [
+          "Service identities"
+        ],
+        "x-human-admin-required": true,
+        "x-required-scopes": []
+      },
+      "post": {
+        "description": "Create an independent service owner. Requires a human administrator Bearer JWT.",
+        "operationId": "ocr_create_service_principal",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServiceInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "created_at": 1792065600.0,
+                  "created_by": "user:1",
+                  "disabled_at": null,
+                  "id": "service:00000000000000000000000000000001",
+                  "name": "Local importer"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "Create Service",
+        "tags": [
+          "Service identities"
+        ],
+        "x-human-admin-required": true,
+        "x-required-scopes": []
+      }
+    },
+    "/api/v1/service-principals/{principal_id}/credentials": {
+      "get": {
+        "description": "List credential metadata in ID order; use last ID as after. Secrets and hashes are excluded.",
+        "operationId": "ocr_list_service_credentials",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "principal_id",
+            "required": true,
+            "schema": {
+              "title": "Principal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 32,
+              "title": "After",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "created_at": 1792065600.0,
+                    "created_by": "user:1",
+                    "expires_at": 1794657600.0,
+                    "id": "00000000000000000000000000000002",
+                    "last_used_at": null,
+                    "name": "Local reader",
+                    "principal_id": "service:00000000000000000000000000000001",
+                    "revoked_at": null,
+                    "scopes": [
+                      "artifacts:read",
+                      "jobs:read"
+                    ]
+                  }
+                ],
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CredentialResponse"
+                  },
+                  "title": "Response Ocr List Service Credentials",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "List Credentials",
+        "tags": [
+          "Service identities"
+        ],
+        "x-human-admin-required": true,
+        "x-required-scopes": []
+      },
+      "post": {
+        "description": "Issue a credential with explicit scopes and expiry. Store the returned token securely; it cannot be retrieved again.",
+        "operationId": "ocr_issue_service_credential",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "principal_id",
+            "required": true,
+            "schema": {
+              "title": "Principal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "credential": {
+                    "created_at": 1792065600.0,
+                    "created_by": "user:1",
+                    "expires_at": 1794657600.0,
+                    "id": "00000000000000000000000000000002",
+                    "last_used_at": null,
+                    "name": "Local reader",
+                    "principal_id": "service:00000000000000000000000000000001",
+                    "revoked_at": null,
+                    "scopes": [
+                      "artifacts:read",
+                      "jobs:read"
+                    ]
+                  },
+                  "token": "<returned-once>"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedCredential"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "Issue Credential",
+        "tags": [
+          "Service identities"
+        ],
+        "x-human-admin-required": true,
+        "x-required-scopes": []
+      }
+    },
+    "/api/v1/service-principals/{principal_id}/credentials/{credential_id}": {
+      "delete": {
+        "description": "Revoke a credential idempotently. The next HTTP or MCP request is denied; in-flight work is not interrupted.",
+        "operationId": "ocr_revoke_service_credential",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "principal_id",
+            "required": true,
+            "schema": {
+              "title": "Principal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "title": "Credential Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "created_at": 1792065600.0,
+                  "created_by": "user:1",
+                  "expires_at": 1794657600.0,
+                  "id": "00000000000000000000000000000002",
+                  "last_used_at": null,
+                  "name": "Local reader",
+                  "principal_id": "service:00000000000000000000000000000001",
+                  "revoked_at": 1792065700.0,
+                  "scopes": [
+                    "artifacts:read",
+                    "jobs:read"
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "Revoke Credential",
+        "tags": [
+          "Service identities"
+        ],
+        "x-human-admin-required": true,
+        "x-required-scopes": []
+      }
+    },
+    "/api/v1/service-principals/{principal_id}/disable": {
+      "post": {
+        "description": "Permanently disable all service credentials. Idempotent; does not delete documents.",
+        "operationId": "ocr_disable_service_principal",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "principal_id",
+            "required": true,
+            "schema": {
+              "title": "Principal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "created_at": 1792065600.0,
+                  "created_by": "user:1",
+                  "disabled_at": 1792065700.0,
+                  "id": "service:00000000000000000000000000000001",
+                  "name": "Local importer"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "Disable Service",
+        "tags": [
+          "Service identities"
+        ],
+        "x-human-admin-required": true,
+        "x-required-scopes": []
+      }
+    }
+  }
+}
