@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import sqlite3
 from dataclasses import dataclass, field, fields as dc_fields, replace
@@ -27,7 +28,7 @@ _JOB_RECORD_FIELDS: frozenset[str] | None = None
 def _allowed_update_fields() -> frozenset[str]:
     global _JOB_RECORD_FIELDS
     if _JOB_RECORD_FIELDS is None:
-        _JOB_RECORD_FIELDS = frozenset(f.name for f in dc_fields(JobRecord)) - {"job_id", "created_at", "owner_user_id"}
+        _JOB_RECORD_FIELDS = frozenset(f.name for f in dc_fields(JobRecord)) - {"job_id", "created_at", "owner_user_id", "owner_principal_id"}
     return _JOB_RECORD_FIELDS
 
 
@@ -45,6 +46,11 @@ class JobRecord:
     output_pdf_path: Path | None = None
     quality: QualityLabel | None = None
     error: str | None = None
+    owner_principal_id: str | None = None
+
+    @property
+    def effective_owner(self) -> str | None:
+        return self.owner_principal_id or (f"user:{self.owner_user_id}" if self.owner_user_id is not None else None)
 
     def to_response(self) -> JobResponse:
         download_url = f"/api/jobs/{self.job_id}/download" if self.status == "completed" and self.output_pdf_path else None
@@ -119,6 +125,10 @@ class JobStore:
             conn.execute("ALTER TABLE jobs ADD COLUMN owner_user_id INTEGER")
         if "progress_percent" not in columns:
             conn.execute("ALTER TABLE jobs ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0")
+        if "owner_principal_id" not in columns:
+            conn.execute("ALTER TABLE jobs ADD COLUMN owner_principal_id TEXT")
+        # Only known human ownership can be mapped; orphan records remain restricted.
+        conn.execute("UPDATE jobs SET owner_principal_id='user:' || owner_user_id WHERE owner_principal_id IS NULL AND owner_user_id IS NOT NULL")
         conn.commit()
 
     def _load_from_db(self) -> None:
@@ -152,6 +162,7 @@ class JobStore:
             output_pdf_path=Path(data["output_pdf_path"]) if data.get("output_pdf_path") else None,
             quality=data.get("quality"),
             error=data.get("error"),
+            owner_principal_id=data.get("owner_principal_id"),
         )
 
     def _persist(self, job: JobRecord) -> None:
@@ -160,8 +171,8 @@ class JobStore:
             """
             INSERT OR REPLACE INTO jobs
                 (job_id, filename, working_dir, status, owner_user_id, progress_percent, created_at, updated_at,
-                 input_pdf_path, output_pdf_path, quality, error)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 input_pdf_path, output_pdf_path, quality, error, owner_principal_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.job_id,
@@ -176,13 +187,24 @@ class JobStore:
                 str(job.output_pdf_path) if job.output_pdf_path else None,
                 job.quality,
                 job.error,
+                job.owner_principal_id,
             ),
         )
         conn.commit()
 
     # -- public API (same semantics) -----------------------------------------
 
-    def create(self, filename: str, payload: bytes, owner_user_id: int | None = None) -> JobRecord:
+    def create(self, filename: str, payload: bytes, owner_user_id: int | None = None,
+               *, owner_principal_id: str | None = None) -> JobRecord:
+        if owner_user_id is not None:
+            expected = f"user:{owner_user_id}"
+            if owner_principal_id not in (None, expected):
+                raise ValueError("Conflicting job owners.")
+            owner_principal_id = expected
+        elif owner_principal_id and owner_principal_id.startswith("user:"):
+            raise ValueError("Human principal requires owner_user_id.")
+        if owner_principal_id is not None and not re.fullmatch(r"(?:user:[1-9][0-9]*|service:[0-9a-f]{32}|legacy:api-key)", owner_principal_id):
+            raise ValueError("Invalid owner principal.")
         job_id = uuid4().hex
         working_dir = self.root_dir / job_id
         working_dir.mkdir(parents=True, exist_ok=True)
@@ -199,6 +221,7 @@ class JobStore:
             created_at=now,
             updated_at=now,
             input_pdf_path=input_pdf_path,
+            owner_principal_id=owner_principal_id,
         )
         with self._lock:
             self.jobs[job_id] = job

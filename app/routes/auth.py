@@ -11,6 +11,8 @@ from fastapi.templating import Jinja2Templates
 from app.config import settings
 from app.services import auth_service
 from app.services.user_store import get_user_store
+from app.security import authenticate_bearer
+from app.application import ApplicationError
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +66,10 @@ def get_current_user(request: Request) -> dict | None:
 
     # 1. Prefer explicit API credentials when present.
     auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
+    if auth_header:
+        scheme, _, token = auth_header.partition(" ")
+        if scheme.lower() != "bearer" or not token:
+            return None
 
     # 2. Fall back to the browser session cookie.
     if not token:
@@ -74,16 +78,14 @@ def get_current_user(request: Request) -> dict | None:
     if not token:
         return None
 
-    payload = auth_service.decode_token(token, settings.jwt_secret)
-    if payload is None:
+    if token.startswith("ocr_svc_"):
         return None
-
-    user_id = payload.get("sub")
-    if user_id is None:
+    try:
+        principal = authenticate_bearer(token)
+    except ApplicationError:
         return None
-
     store = get_user_store()
-    return store.get_user_by_id(int(user_id))
+    return store.get_user_by_id(principal.user_id)
 
 
 # ---------------------------------------------------------------------------

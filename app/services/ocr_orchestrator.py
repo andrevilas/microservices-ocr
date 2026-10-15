@@ -32,8 +32,10 @@ class OcrOrchestrator:
         self.fallback_ocr = fallback_ocr or FallbackOcrService()
         self.pdf_builder = pdf_builder or PdfBuilder()
 
-    def create_job(self, filename: str, payload: bytes, owner_user_id: int | None = None) -> JobRecord:
-        return self.job_store.create(filename=filename, payload=payload, owner_user_id=owner_user_id)
+    def create_job(self, filename: str, payload: bytes, owner_user_id: int | None = None,
+                   *, owner_principal_id: str | None = None) -> JobRecord:
+        return self.job_store.create(filename=filename, payload=payload, owner_user_id=owner_user_id,
+                                     owner_principal_id=owner_principal_id)
 
     def process_job(self, job_id: str) -> OCRResult | None:
         job = self.job_store.update(job_id, status="processing", progress_percent=5, error=None)

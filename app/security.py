@@ -9,14 +9,22 @@ from app.application import ApplicationError, Principal
 from app.config import settings
 from app.services.auth_service import decode_token
 from app.services.user_store import get_user_store
+from app.services.identity_store import get_identity_store
 
-bearer = HTTPBearer(auto_error=False, scheme_name="UserBearer")
+bearer = HTTPBearer(auto_error=False, scheme_name="PrincipalBearer",
+                    description="User JWT or individual opaque service credential. Not the legacy global API key.")
 
 
 def authenticate_bearer(token: str | None) -> Principal:
     denied = ApplicationError(401, "authentication_required", "A valid Bearer token is required.")
     if not token:
         raise denied
+    if token.startswith("ocr_svc_"):
+        identity = get_identity_store().authenticate(token)
+        if identity is None:
+            raise denied
+        return Principal(subject=identity["subject"], user_id=None, scopes=frozenset(identity["scopes"]),
+                         kind="service", credential_id=identity["credential_id"])
     payload = decode_token(token, settings.jwt_secret)
     if not isinstance(payload, dict):
         raise denied
@@ -29,11 +37,19 @@ def authenticate_bearer(token: str | None) -> Principal:
         user_id = int(subject)
     except (ValueError, TypeError):
         raise denied from None
-    if user_id <= 0 or get_user_store().get_user_by_id(user_id) is None:
+    user = get_user_store().get_user_by_id(user_id) if 0 < user_id <= 9223372036854775807 else None
+    if user is None:
         raise denied
     return Principal(subject=f"user:{user_id}", user_id=user_id,
-                     scopes=frozenset({"jobs:read", "artifacts:read"}))
+                     scopes=frozenset({"jobs:read", "artifacts:read", "jobs:submit", "jobs:cancel"}),
+                     is_admin=user.get("role") == "admin")
 
 
 def require_principal(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> Principal:
     return authenticate_bearer(credentials.credentials if credentials else None)
+
+
+def require_identity_admin(principal: Principal = Depends(require_principal)) -> Principal:
+    if principal.kind != "user" or not principal.is_admin:
+        raise ApplicationError(403, "admin_required", "A human administrator identity is required.")
+    return principal

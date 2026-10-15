@@ -97,7 +97,10 @@ class JobQueueProcessor:
             self._queued_ids.add(job_id)
         self._queue.put(job_id)
 
-    def clear_pending_jobs(self, owner_user_id: int | None = None) -> tuple[int, int]:
+    def clear_pending_jobs(self, owner_user_id: int | None = None, *, owner_principal_id: str | None = None) -> tuple[int, int]:
+        owner = owner_principal_id or (f"user:{owner_user_id}" if owner_user_id is not None else None)
+        if owner is None:
+            raise ValueError("Queue cancellation requires an explicit owner.")
         cleared_count = 0
         retained: list[str] = []
         while True:
@@ -106,7 +109,7 @@ class JobQueueProcessor:
             except Empty:
                 break
             job = self.job_store.get(job_id)
-            if job and job.status == "queued" and (owner_user_id is None or job.owner_user_id == owner_user_id):
+            if job and job.status == "queued" and job.effective_owner == owner:
                 self.job_store.update(
                     job_id,
                     status="canceled",
@@ -125,8 +128,8 @@ class JobQueueProcessor:
 
         processing_count = sum(
             1
-            for job in self.job_store.list_for_owner(owner_user_id)
-            if job.status == "processing"
+            for job in self.job_store.snapshot()
+            if job.status == "processing" and job.effective_owner == owner
         )
         return cleared_count, processing_count
 

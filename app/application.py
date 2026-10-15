@@ -18,6 +18,9 @@ class Principal:
     subject: str
     user_id: int | None
     scopes: frozenset[str]
+    kind: Literal["user", "service", "legacy"] = "user"
+    credential_id: str | None = None
+    is_admin: bool = False
 
     def require(self, scope: str) -> None:
         if scope not in self.scopes:
@@ -41,7 +44,7 @@ class ErrorResponse(BaseModel):
 
 class IdentityResponse(BaseModel):
     subject: str
-    kind: Literal["user"] = "user"
+    kind: Literal["user", "service", "legacy"] = "user"
     scopes: list[str]
 
 
@@ -67,12 +70,12 @@ class JobApplication:
         self.store = store
 
     def whoami(self, principal: Principal) -> IdentityResponse:
-        return IdentityResponse(subject=principal.subject, scopes=sorted(principal.scopes))
+        return IdentityResponse(subject=principal.subject, kind=principal.kind, scopes=sorted(principal.scopes))
 
     @staticmethod
     def _owned(principal: Principal, job: JobRecord) -> bool:
         # None never grants wildcard access; no administrator bypass for documents.
-        return principal.user_id is not None and job.owner_user_id == principal.user_id
+        return job.effective_owner is not None and job.effective_owner == principal.subject
 
     def _record(self, principal: Principal, job_id: str) -> JobRecord:
         principal.require("jobs:read")

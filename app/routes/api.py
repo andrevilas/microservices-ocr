@@ -1,4 +1,5 @@
 import time
+import secrets
 from collections import defaultdict
 from dataclasses import dataclass
 from io import BytesIO
@@ -12,6 +13,8 @@ from fastapi.templating import Jinja2Templates
 from pypdf import PdfReader
 
 from app.config import settings
+from app.application import Principal, ApplicationError
+from app.security import authenticate_bearer
 from app.models import BatchUploadJob, BatchUploadResponse, JobResponse, QueueClearResponse, UploadResponse
 from app.services.job_queue import JobQueueProcessor, get_job_queue_processor
 from app.services.ocr_orchestrator import OcrOrchestrator
@@ -33,12 +36,25 @@ _rate_buckets: dict[str, list[float]] = defaultdict(list)
 class AuthContext:
     user: dict | None
     via_api_key: bool = False
+    principal: Principal | None = None
 
     @property
     def owner_user_id(self) -> int | None:
+        if self.principal:
+            return self.principal.user_id
         if self.user is None:
             return None
         return int(self.user["id"])
+
+    @property
+    def owner_principal_id(self) -> str:
+        if self.principal:
+            return self.principal.subject
+        return "legacy:api-key" if self.via_api_key else f"user:{self.owner_user_id}"
+
+    def require(self, scope: str):
+        if self.principal:
+            self.principal.require(scope)
 
 
 def _check_rate_limit(request: Request) -> None:
@@ -69,16 +85,26 @@ def _check_rate_limit(request: Request) -> None:
 
 
 def _require_auth_or_api_key(request: Request) -> AuthContext:
-    """Allow access if valid API key OR valid JWT token is present."""
-    # API key takes priority for automation clients
+    """Resolve a scoped Bearer identity, a human cookie, or the isolated legacy key."""
+    # Explicit Bearer identity takes precedence; an invalid token never falls
+    # back to a cookie or the privileged legacy credential.
+    authorization = request.headers.get("Authorization")
+    if authorization:
+        scheme, _, token = authorization.partition(" ")
+        principal = authenticate_bearer(token if scheme.lower() == "bearer" else None)
+        return AuthContext(user=None, principal=principal)
     if settings.api_key:
         provided = request.headers.get("X-API-Key", "")
-        if provided == settings.api_key:
+        if secrets.compare_digest(provided.encode(), settings.api_key.encode()):
             return AuthContext(user=None, via_api_key=True)
     # Fall back to JWT authentication
-    user = get_current_user(request)
-    if user is not None:
-        return AuthContext(user=user, via_api_key=False)
+    cookie = request.cookies.get("access_token")
+    if cookie:
+        # Browser cookies remain human-only on the legacy UI.
+        principal = authenticate_bearer(cookie)
+        if principal.kind == "user":
+            return AuthContext(user=None, principal=principal)
+        raise ApplicationError(401, "authentication_required", "A human session cookie is required.")
     # If API key is configured but not provided, and no JWT
     if settings.api_key:
         raise HTTPException(
@@ -101,14 +127,11 @@ def get_orchestrator(job_store: JobStore = Depends(get_job_store)) -> OcrOrchest
 
 
 def _can_access_job(auth: AuthContext, job) -> bool:
-    if auth.via_api_key:
-        return True
-    if job.owner_user_id is None:
-        return True
-    return job.owner_user_id == auth.owner_user_id
+    return job.effective_owner is not None and job.effective_owner == auth.owner_principal_id
 
 
 def _get_authorized_job(job_store: JobStore, job_id: str, auth: AuthContext):
+    auth.require("jobs:read")
     job = job_store.get(job_id)
     if job is None or not _can_access_job(auth, job):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
@@ -175,8 +198,10 @@ def _schedule_job(
     filename: str,
     payload: bytes,
     owner_user_id: int | None,
+    owner_principal_id: str,
 ) -> UploadResponse:
-    job = orchestrator.create_job(filename=filename, payload=payload, owner_user_id=owner_user_id)
+    job = orchestrator.create_job(filename=filename, payload=payload, owner_user_id=owner_user_id,
+                                   owner_principal_id=owner_principal_id)
     response = UploadResponse(job_id=job.job_id, status=job.status, progress_percent=job.progress_percent)
     processor.enqueue(job.job_id)
     return response
@@ -214,7 +239,8 @@ async def metrics(
     job_store: JobStore = Depends(get_job_store),
 ) -> dict:
     """Lightweight JSON metrics: job counts by status and queue size."""
-    jobs = job_store.list_all() if auth.via_api_key else job_store.list_for_owner(auth.owner_user_id)
+    auth.require("jobs:read")
+    jobs = [job for job in job_store.snapshot() if _can_access_job(auth, job)]
     counts: dict[str, int] = {}
     for job in jobs:
         counts[job.status] = counts.get(job.status, 0) + 1
@@ -261,8 +287,9 @@ async def create_job(
     processor: JobQueueProcessor = Depends(get_job_queue_processor),
     orchestrator: OcrOrchestrator = Depends(get_orchestrator),
 ) -> UploadResponse:
+    auth.require("jobs:submit")
     filename, payload = await _validate_pdf_upload(file)
-    return _schedule_job(processor, orchestrator, filename, payload, auth.owner_user_id)
+    return _schedule_job(processor, orchestrator, filename, payload, auth.owner_user_id, auth.owner_principal_id)
 
 
 @router.post("/api/jobs/batch", response_model=BatchUploadResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -273,6 +300,7 @@ async def create_batch_jobs(
     processor: JobQueueProcessor = Depends(get_job_queue_processor),
     orchestrator: OcrOrchestrator = Depends(get_orchestrator),
 ) -> BatchUploadResponse:
+    auth.require("jobs:submit")
     if not files:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one PDF is required.")
 
@@ -285,7 +313,7 @@ async def create_batch_jobs(
     jobs: list[BatchUploadJob] = []
     for file in files:
         filename, payload = await _validate_pdf_upload(file)
-        scheduled = _schedule_job(processor, orchestrator, filename, payload, auth.owner_user_id)
+        scheduled = _schedule_job(processor, orchestrator, filename, payload, auth.owner_user_id, auth.owner_principal_id)
         jobs.append(
             BatchUploadJob(
                 job_id=scheduled.job_id,
@@ -304,6 +332,8 @@ async def download_batch_results(
     auth: AuthContext = Depends(_require_auth_or_api_key),
     job_store: JobStore = Depends(get_job_store),
 ) -> Response:
+    auth.require("jobs:read")
+    auth.require("artifacts:read")
     if not job_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one job_id is required.")
 
@@ -331,7 +361,8 @@ async def clear_queue(
     auth: AuthContext = Depends(_require_auth_or_api_key),
     processor: JobQueueProcessor = Depends(get_job_queue_processor),
 ) -> QueueClearResponse:
-    cleared_count, processing_count = processor.clear_pending_jobs(None if auth.via_api_key else auth.owner_user_id)
+    auth.require("jobs:cancel")
+    cleared_count, processing_count = processor.clear_pending_jobs(owner_principal_id=auth.owner_principal_id)
     return QueueClearResponse(cleared_count=cleared_count, processing_count=processing_count)
 
 
@@ -351,6 +382,7 @@ async def download_result(
     auth: AuthContext = Depends(_require_auth_or_api_key),
     job_store: JobStore = Depends(get_job_store),
 ) -> Response:
+    auth.require("artifacts:read")
     job = _get_authorized_job(job_store, job_id, auth)
     if job.status != "completed" or not job.output_pdf_path:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job is not ready for download.")

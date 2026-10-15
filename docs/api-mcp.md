@@ -1,12 +1,12 @@
-# API e MCP — primeiro incremento
+# API e MCP — fundação e identidades
 
 Rastreabilidade: OCR-AM-02 / LPM `AEHQJUb02uohT4MlVf8U`, projeto OCR Recognizer
 `POzf83SdXU3HWL9KX9i2`. Plano completo e revisão na atividade
 `lv2qAWLSJajcLawyvMdE`, com 18 atividades e 29 capacidades planejadas.
 
-Este incremento entrega a fundação e consultas autenticadas. Uploads separados,
+Estes incrementos entregam a fundação, identidades de serviço e consultas autenticadas. Uploads separados,
 criação idempotente, texto por página, lotes, exportação, cancelamento ativo,
-credenciais de serviço, OAuth remoto e migração do painel continuam no backlog.
+OAuth remoto e migração do painel continuam no backlog.
 Não é a entrega do fluxo vertical completo OCR-AM-08.
 
 ## Operações disponíveis
@@ -27,21 +27,25 @@ no JSON das ferramentas. As cinco ferramentas são de leitura.
 
 ## Autenticação e compatibilidade
 
-O piloto usa Bearer JWT de usuário emitido por `POST /auth/login`, enviado
+O piloto usa Bearer JWT de usuário emitido por `POST /auth/login` ou credencial
+individual de serviço, enviado
 explicitamente em `Authorization`. A identidade é validada no banco a cada
 requisição. Expiração ausente, expirada ou inválida é rejeitada. As permissões
-atuais do usuário no novo serviço são `jobs:read` e `artifacts:read`.
+atuais do usuário são `jobs:read`, `artifacts:read`, `jobs:submit` e `jobs:cancel`.
+Serviços recebem apenas os escopos explícitos da credencial.
 
 Não há emissão de credenciais, login ou senha como ferramenta MCP. Tokens não
 devem ser colocados em argumentos de ferramentas, URLs, logs ou exemplos
-versionados. Credenciais de serviço distintas serão entregues na OCR-AM-03.
+versionados. Provisionamento, rotação, revogação e escopos estão em
+[Identidades de serviço](service-identities.md), entrega OCR-AM-03.
 
 Cookies e a antiga chave global `X-API-Key` não autenticam API v1/MCP. As rotas
-legadas continuam com seus contratos anteriores, inclusive a semântica de sua
-chave global; esta entrega **não** conclui o endurecimento do legado.
+legadas preservam seus formatos, mas agora isolam proprietários em consultas,
+downloads, ZIP, métricas e limpeza da fila. A chave global fica limitada ao
+domínio reservado legacy:api-key; a AM-03 documenta essas mudanças de acesso.
 
-Só o dono acessa cada job e artefato na superfície nova; até administradores
-ficam sujeitos a essa regra. Jobs sem `owner_user_id` não são públicos e não
+Só o dono acessa cada job e artefato; até administradores
+ficam sujeitos a essa regra. Jobs antigos sem dono não são públicos e não
 recebem dono automaticamente. Objetos alheios, órfãos e inexistentes retornam
 o mesmo 404 / `job_not_found`. Contagens também são restritas ao dono.
 

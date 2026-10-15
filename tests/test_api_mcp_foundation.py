@@ -124,15 +124,15 @@ def test_cursor_filter_limits_and_scopes(fixture):
 
 def test_openapi_declares_identity_and_unique_operations():
     schema = app.openapi()
-    assert schema["components"]["securitySchemes"]["UserBearer"]["scheme"] == "bearer"
+    assert schema["components"]["securitySchemes"]["PrincipalBearer"]["scheme"] == "bearer"
     ids = []
     for path, methods in schema["paths"].items():
         if not path.startswith("/api/v1/"):
             continue
         for operation in methods.values():
-            assert operation["security"] == [{"UserBearer": []}]
+            assert operation["security"] == [{"PrincipalBearer": []}]
             ids.append(operation["operationId"])
-    assert len(ids) == len(set(ids)) == 6
+    assert len(ids) == len(set(ids)) == 12
 
 
 def test_read_snapshot_and_sanitized_error(fixture):

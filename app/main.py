@@ -11,6 +11,7 @@ from app.mcp_server import build_mcp_server
 from app.routes.api import router
 from app.routes.auth import auth_router
 from app.routes.v1 import router as v1_router
+from app.routes.service_identities import router as identity_router
 from app.services.job_queue import get_job_queue_processor
 from app.services.runtime_lease import RuntimeLease
 from app.services.user_store import get_user_store
@@ -43,6 +44,7 @@ def create_app(service_provider=get_job_application) -> FastAPI:
     application.include_router(router)
     application.include_router(auth_router)
     application.include_router(v1_router)
+    application.include_router(identity_router)
     if service_provider is not get_job_application:
         application.dependency_overrides[get_job_application] = service_provider
     application.mount("/", mcp_app)
