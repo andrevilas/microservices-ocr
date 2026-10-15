@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from app.options import EffectiveOptions, ProcessingOptions
 
 
-JobStatus = Literal["queued", "processing", "completed", "failed", "canceled"]
+JobStatus = Literal["queued", "processing", "cancel_requested", "completed", "failed", "canceled"]
 QualityLabel = Literal["HIGH", "LOW"]
 
 
@@ -46,6 +46,7 @@ class JobResponse(BaseModel):
     error_code: str | None = None
     options_requested: ProcessingOptions | None = None
     options_effective: EffectiveOptions | None = None
+    parent_job_id: str | None = None
 
 
 class OCRResult(BaseModel):

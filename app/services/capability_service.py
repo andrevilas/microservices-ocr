@@ -16,8 +16,12 @@ from app.results import MAX_PAGE_CHARS, MAX_TOTAL_CHARS, package_version
 
 def command_output(args, timeout=5):
     try:
-        result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False,
-                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        from app.services.cancellation import active, run_process
+        if active():
+            result = run_process(args, timeout=timeout, check=False)
+        else:
+            result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False,
+                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         if result.returncode != 0:
             return None
         return (result.stdout + result.stderr)[:65536]
@@ -61,6 +65,7 @@ class CapabilityService:
             "upload_ttl_seconds": settings.upload_ttl_seconds,
             "pending_jobs_per_owner": settings.job_owner_max_pending,
             "batch_max_items": min(settings.max_batch_files, 25),
+            "cancel_max_items": 25,
             "batch_max_total_bytes": settings.batch_max_total_mb * 1024 * 1024,
             "export_max_items": 25,
             "export_max_total_bytes": settings.export_max_total_mb * 1024 * 1024,

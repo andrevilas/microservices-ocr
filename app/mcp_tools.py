@@ -12,6 +12,7 @@ from app.api_models import ArtifactResponse, IdentityResponse, JobPage, MetricsR
 from app.models import JobResponse, JobStatus, QualityLabel
 from app.results import JobReport, TextChunk
 from app.options import Capabilities, ProcessingOptions
+from app.control_models import CancelInput, CancelPage, CancelResult, RetryInput, RetryReceipt
 from app.upload_models import UploadReceipt, JobAdmission
 from app.bulk_models import BatchInput, BatchInputItem, BatchPage, BatchReceipt, BatchView, ExportInput, ExportReceipt, ResourceId
 
@@ -46,6 +47,27 @@ class OcrMCPServer(MCPServer):
 
 
 def register_tools(server, invoke):
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
+    async def ocr_cancel_job(ctx: Context, job_id: ResourceId) -> CancelResult:
+        """Cancel owned queued/running work. Requires jobs:cancel. Running work returns cancel_requested; poll for canceled. Completed/failed jobs stay terminal. Disconnect alone never cancels a job."""
+        return await invoke(ctx, "cancel", job_id)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
+    async def ocr_cancel_jobs(ctx: Context, job_ids: Annotated[list[ResourceId], Field(min_length=1, max_length=25)]) -> CancelPage:
+        """Cancel explicit owned IDs with per-item results. Foreign/missing IDs both return not_found. No global cancellation. Requires jobs:cancel."""
+        try:
+            body = CancelInput(job_ids=job_ids)
+        except ValidationError:
+            raise ToolError("validation_error: job_ids must be unique.") from None
+        return await invoke(ctx, "cancel_many", body)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+    async def ocr_retry_job(ctx: Context, job_id: ResourceId,
+                            idempotency_key: Annotated[str, Field(pattern="^[A-Za-z0-9._:-]{8,128}$")],
+                            options: ProcessingOptions | None = None) -> RetryReceipt:
+        """Create a new derived job from a terminal original's retained input. Requires jobs:submit. Preserve the key/payload for replay. Omitted options inherit; legacy jobs require explicit options. Original job stays unchanged."""
+        return await invoke(ctx, "retry", job_id, RetryInput(options=options), idempotency_key)
+
     annotations = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
     @server.tool(annotations=annotations)
     async def ocr_get_capabilities(ctx: Context) -> Capabilities:

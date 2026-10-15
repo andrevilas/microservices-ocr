@@ -19,6 +19,7 @@ from app.services.ocrmypdf_service import OcrmypdfService
 from app.services.pdf_builder import PdfBuilder
 from app.services.storage_service import JobRecord, JobStore
 from app.services.tesseract_service import PrimaryOcrService
+from app.services.cancellation import cancellation_scope, checkpoint, JobCancelled, ProcessTerminationError
 from app.utils.quality_evaluator import QualityEvaluation, evaluate_quality
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,22 @@ class OcrOrchestrator:
                                      owner_principal_id=owner_principal_id)
 
     def process_job(self, job_id: str) -> OCRResult | None:
-        job = self.job_store.update(job_id, status="processing", progress_percent=5, error=None, error_code=None)
+        job = self.job_store.claim(job_id)
+        if job is None:
+            return None
+        try:
+            with cancellation_scope(lambda: self.job_store.cancellation_requested(job_id)):
+                return self._process_claimed(job)
+        except JobCancelled:
+            self.job_store.finish_cancellation(job_id)
+            return None
+        except ProcessTerminationError:
+            # Never claim cancellation/completion while a process may still be alive.
+            self.job_store.update(job_id, status="cancel_requested", error_code="process_termination_failed")
+            raise
+
+    def _process_claimed(self, job) -> OCRResult | None:
+        job_id = job.job_id
         _start_ms = time.monotonic()
         primary_output = job.working_dir / "primary-searchable.pdf"
         draft_output = job.working_dir / "final-draft.pdf"
@@ -57,6 +73,7 @@ class OcrOrchestrator:
             quality_min_text = options.quality_min_text if options else settings.quality_min_text
             quality_ratio = options.quality_valid_ratio_threshold if options else settings.quality_valid_ratio_threshold
             fallback_enabled = options.fallback_policy == "if_low_quality" if options else True
+            checkpoint()
             stages = []
             warnings = ["quality_is_heuristic_not_accuracy", "pdfa_conformance_not_validated"]
             primary_available = options.processing_mode != "extract_text" if options else self.ocrmypdf_service.is_available()
@@ -77,7 +94,7 @@ class OcrOrchestrator:
                      if options else self.primary_ocr.process_pages(job.input_pdf_path, primary_output))
             stages.append(StageReport(name="primary", duration_ms=int((time.monotonic() - stage_start) * 1000)))
             primary_text = "\n".join(pages)
-            self.job_store.update(job_id, progress_percent=35)
+            self.job_store.worker_update(job_id, progress_percent=35)
             evaluation = evaluate_quality(
                 primary_text,
                 min_text=quality_min_text,
@@ -96,14 +113,14 @@ class OcrOrchestrator:
                 if not capabilities:
                     warnings.append("poppler_version_not_captured")
                 logger.info("Job %s: primary quality LOW, trying fallback", job_id)
-                self.job_store.update(job_id, progress_percent=45)
+                self.job_store.worker_update(job_id, progress_percent=45)
                 stage_start = time.monotonic()
                 fallback_pages = self.fallback_ocr.process_pages(job.input_pdf_path)
                 if len(fallback_pages) != len(pages):
                     raise ValueError("Fallback page count mismatch.")
                 fallback_text = "\n".join(fallback_pages)
                 stages.append(StageReport(name="fallback", duration_ms=int((time.monotonic() - stage_start) * 1000)))
-                self.job_store.update(job_id, progress_percent=60)
+                self.job_store.worker_update(job_id, progress_percent=60)
                 fallback_eval = evaluate_quality(
                     fallback_text,
                     min_text=quality_min_text,
@@ -133,9 +150,10 @@ class OcrOrchestrator:
             if used_fallback:
                 warnings.append("overlay_geometry_approximate_text_may_be_clipped")
                 engines["reportlab"] = package_version("reportlab")
+            checkpoint()
             page_info = persist_pages(job.working_dir, pages, source)
 
-            self.job_store.update(job_id, progress_percent=72)
+            self.job_store.worker_update(job_id, progress_percent=72)
             stage_start = time.monotonic()
             self.pdf_builder.build(
                 original_pdf_path=job.input_pdf_path,
@@ -145,7 +163,7 @@ class OcrOrchestrator:
                 page_texts=pages,
             )
             stages.append(StageReport(name="build", duration_ms=int((time.monotonic() - stage_start) * 1000)))
-            self.job_store.update(job_id, progress_percent=88)
+            self.job_store.worker_update(job_id, progress_percent=88)
             stage_start = time.monotonic()
             self._finalize_output(draft_output, final_output, options=options)
             stages.append(StageReport(name="finalize", duration_ms=int((time.monotonic() - stage_start) * 1000)))
@@ -167,14 +185,15 @@ class OcrOrchestrator:
                 output_validation=OutputValidation(requested_format=options.output_format if options else settings.final_output_type,
                                                    pdf_readable=True, page_count_matches=True),
             )
+            checkpoint()
             persist_report(job.working_dir, report)
-            self.job_store.update(job_id, progress_percent=96)
+            self.job_store.worker_update(job_id, progress_percent=96)
             _elapsed_ms = int((time.monotonic() - _start_ms) * 1000)
             logger.info(
                 "Job %s completed in %d ms (fallback=%s, quality=%s)",
                 job_id, _elapsed_ms, used_fallback, evaluation.label,
             )
-            self.job_store.update(
+            self.job_store.worker_update(
                 job_id,
                 status="completed",
                 progress_percent=100,
@@ -189,11 +208,13 @@ class OcrOrchestrator:
                 output_pdf_path=str(final_output),
                 used_fallback=used_fallback,
             )
+        except (JobCancelled, ProcessTerminationError):
+            raise
         except Exception as exc:  # pragma: no cover - final safety net for background work
             _elapsed_ms = int((time.monotonic() - _start_ms) * 1000)
             logger.error("Job %s failed after %d ms (%s)", job_id, _elapsed_ms, type(exc).__name__)
             code = exc.code if isinstance(exc, ApplicationError) else "processing_failed"
-            self.job_store.update(job_id, status="failed", progress_percent=100, error=str(exc), error_code=code)
+            self.job_store.worker_update(job_id, status="failed", progress_percent=100, error=str(exc), error_code=code)
             return None
 
     def _finalize_output(self, draft_output: Path, final_output: Path, options=None) -> None:

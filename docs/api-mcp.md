@@ -10,8 +10,8 @@ Estes incrementos entregam a fundação, identidades de serviço, consultas aute
 [uploads persistentes e criação idempotente por HTTP](uploads.md),
 [texto por página e relatórios persistentes](results.md),
 [opções por job e capacidades verificadas](capabilities.md) e
-[lotes/exportação assíncrona](batches-exports.md). Cancelamento ativo,
-OAuth remoto e migração do painel continuam no backlog.
+[lotes/exportação assíncrona](batches-exports.md) e
+[cancelamento/reprocessamento](job-control.md). OAuth remoto e migração do painel continuam no backlog.
 O [fluxo vertical MCP e cliente stdio](mcp-workflow.md), entrega OCR-AM-08,
 permite preparar upload, submeter uma referência e recuperar texto e artefato.
 
@@ -19,6 +19,9 @@ permite preparar upload, submeter uma referência e recuperar texto e artefato.
 
 | HTTP | Ferramenta MCP | Permissão |
 |---|---|---|
+| POST /api/v1/jobs/{id}/cancel | ocr_cancel_job | jobs:cancel |
+| POST /api/v1/jobs/cancel-batch | ocr_cancel_jobs | jobs:cancel |
+| POST /api/v1/jobs/{id}/retry | ocr_retry_job | jobs:submit |
 | GET /api/v1/me | ocr_whoami | Identidade autenticada |
 | GET /api/v1/capabilities | ocr_get_capabilities | Identidade autenticada |
 | POST /api/v1/upload-sessions | ocr_prepare_upload | jobs:submit |
@@ -42,7 +45,7 @@ As duas interfaces chamam `JobApplication`, passando um `Principal` imutável.
 O SDK MCP oficial está fixado em 2.3.0. `/openapi.json` declara Bearer, schemas,
 operationId e erros da API v1. O download usa HTTP autenticado; PDFs não entram
 no JSON das ferramentas. Doze ferramentas são de leitura; preparação de upload,
-submissão, criação de lote e exportação são mutações. Admissão e encaminhamento à fila usam o mesmo serviço
+submissão, criação de lote, exportação, retry e os dois cancelamentos são mutações. Admissão e encaminhamento à fila usam o mesmo serviço
 em HTTP e MCP.
 
 ## Autenticação e compatibilidade

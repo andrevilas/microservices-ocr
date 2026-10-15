@@ -1,11 +1,10 @@
 # Contrato HTTP v1
 
 Entrega OCR-AM-04, atividade LPM `hkKLY54xl4fHElZsRNdK`. O contrato atual tem
-26 operações sob `/api/v1`, versão de contrato `1.4.0`, após a AM-05 de
+29 operações sob `/api/v1`, versão de contrato `1.5.0`, após a AM-05 de
 [uploads persistentes e admissão idempotente](uploads.md) e a AM-06 de
 [texto por página e relatórios](results.md) e AM-07 de
-[opções e capacidades](capabilities.md) e AM-09 de [lotes/exportação](batches-exports.md). Cancelamento individual e administração ampla serão
-acrescentados nas respectivas atividades; não estão anunciados como disponíveis.
+[opções e capacidades](capabilities.md) e AM-09 de [lotes/exportação](batches-exports.md). A AM-10 acrescenta [cancelamento e reprocessamento](job-control.md). Administração ampla continua no backlog.
 
 [openapi-v1.json](openapi-v1.json) inclui apenas operações v1 e seus schemas.
 `/openapi.json` e `/docs` também contêm as rotas legadas, com contratos separados.

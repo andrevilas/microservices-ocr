@@ -215,7 +215,7 @@ class UploadService:
                 if row["state"] != "ready":
                     raise ApplicationError(409, "upload_not_ready", "Upload is not ready.")
                 self._capacity(principal.subject, row["size_bytes"])
-                if sum(j.effective_owner == principal.subject and j.status in ("queued", "processing") for j in self.jobs.jobs.values()) >= settings.job_owner_max_pending:
+                if sum(j.effective_owner == principal.subject and j.status in ("queued", "processing", "cancel_requested") for j in self.jobs.jobs.values()) >= settings.job_owner_max_pending:
                     raise ApplicationError(429, "job_quota_exceeded", "Pending job limit reached.")
                 job_id = uuid4().hex
                 directory = self.admissions / job_id

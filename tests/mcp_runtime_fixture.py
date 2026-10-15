@@ -22,4 +22,20 @@ if os.environ.get("OCR_TEST_EXPORT_PAUSE") == "1":
 
     ExportService._build = paused_export
 
+if os.environ.get("OCR_TEST_CONTROL_PAUSE") == "1":
+    import sys
+    from app.services.tesseract_service import PrimaryOcrService
+    from app.services.cancellation import run_process
+    original_pages = PrimaryOcrService.process_pages
+
+    def pause_once(self, *args, **kwargs):
+        marker = Path(os.environ["OCR_TEST_MARKER"] + "-control")
+        if not marker.exists():
+            run_process([sys.executable, "-c",
+                         "import os,time;from pathlib import Path;Path(" + repr(str(marker)) + ").write_text(str(os.getpid()));time.sleep(60)"],
+                        timeout=90)
+        return original_pages(self, *args, **kwargs)
+
+    PrimaryOcrService.process_pages = pause_once
+
 from app.main import app  # noqa: E402

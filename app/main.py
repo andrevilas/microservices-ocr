@@ -15,6 +15,8 @@ from app.routes.v1 import router as v1_router
 from app.routes.service_identities import router as identity_router
 from app.routes.uploads import router as upload_router
 from app.routes.bulk import router as bulk_router
+from app.routes.control import router as control_router
+from app.services.control_service import get_control_service
 from app.services.batch_service import get_batch_service
 from app.services.export_service import get_export_service
 from app.services.job_queue import get_job_queue_processor
@@ -39,7 +41,10 @@ def create_app(service_provider=get_job_application) -> FastAPI:
     def exports():
         return application.dependency_overrides.get(get_export_service, get_export_service)()
 
-    mcp_server, mcp_app = build_mcp_server(service_provider, uploads, queue, batches, exports)
+    def controls():
+        return application.dependency_overrides.get(get_control_service, get_control_service)()
+
+    mcp_server, mcp_app = build_mcp_server(service_provider, uploads, queue, batches, exports, controls)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
@@ -53,6 +58,7 @@ def create_app(service_provider=get_job_application) -> FastAPI:
             user_store.ensure_admin(name=settings.admin_name, email=settings.admin_email, password=settings.admin_password)
             get_upload_service()
             get_batch_service()
+            get_control_service()
             export_processor = get_export_service()
             processor = get_job_queue_processor()
             processor.start()
@@ -73,7 +79,7 @@ def create_app(service_provider=get_job_application) -> FastAPI:
     application.include_router(router)
     application.include_router(auth_router)
     versioned_routes = []
-    for versioned_router in (v1_router, identity_router, upload_router, bulk_router):
+    for versioned_router in (v1_router, identity_router, upload_router, bulk_router, control_router):
         application.include_router(versioned_router)
         versioned_routes.extend(versioned_router.routes)
     if service_provider is not get_job_application:

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.config import settings
 from app.options import EffectiveOptions
+from app.services.cancellation import active, run_process
 
 
 class OcrmypdfService:
@@ -65,6 +66,10 @@ class OcrmypdfService:
 
     def _run(self, args: list[str], *, timeout: int | None = None) -> None:
         try:
+            if active():
+                run_process([sys.executable, "-m", "ocrmypdf", *args],
+                            timeout=timeout if timeout is not None else settings.ocr_subprocess_timeout_seconds)
+                return
             subprocess.run(
                 [sys.executable, "-m", "ocrmypdf", *args],
                 check=True,

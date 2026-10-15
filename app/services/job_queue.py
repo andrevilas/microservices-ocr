@@ -37,6 +37,13 @@ class JobQueueProcessor:
             except Exception:
                 logger.exception("Startup cleanup failed, continuing")
 
+            for job in self.job_store.snapshot():
+                if job.status == "cancel_requested":
+                    # A previous runtime may have left descendants alive after a
+                    # hard kill. Do not claim termination that this runtime did not
+                    # observe and never recover this job into processing.
+                    self.job_store.update(job.job_id, error_code="cancellation_recovery_required")
+
             # --- Recovery: reset processing -> queued ----------------------
             for job in self.job_store.get_processing_jobs():
                 logger.info("Recovery: job %s was processing, resetting to queued", job.job_id)
@@ -107,35 +114,15 @@ class JobQueueProcessor:
         if owner is None:
             raise ValueError("Queue cancellation requires an explicit owner.")
         cleared_count = 0
-        retained: list[str] = []
-        while True:
-            try:
-                job_id = self._queue.get_nowait()
-            except Empty:
-                break
-            job = self.job_store.get(job_id)
-            if job and job.status == "queued" and job.effective_owner == owner:
-                self.job_store.update(
-                    job_id,
-                    status="canceled",
-                    progress_percent=0,
-                    error="Job removido da fila pelo operador.",
-                )
-                with self._lock:
-                    self._queued_ids.discard(job_id)
-                cleared_count += 1
-            else:
-                retained.append(job_id)
-            self._queue.task_done()
-
-        for job_id in retained:
-            self._queue.put(job_id)
-
-        processing_count = sum(
-            1
-            for job in self.job_store.snapshot()
-            if job.status == "processing" and job.effective_owner == owner
-        )
+        # Never drain/requeue concurrently with consumers. The claim and this CAS
+        # share the store lock; stale queue entries are harmless and get consumed.
+        for job in self.job_store.snapshot():
+            if job.effective_owner == owner and job.status == "queued":
+                result = self.job_store.request_cancel(job.job_id, owner, queued_only=True)
+                if result and result.status == "canceled":
+                    cleared_count += 1
+        processing_count = sum(j.status in ("processing", "cancel_requested") and j.effective_owner == owner
+                               for j in self.job_store.snapshot())
         return cleared_count, processing_count
 
     def _worker_loop(self) -> None:
@@ -149,6 +136,8 @@ class JobQueueProcessor:
                 if job and job.status == "canceled":
                     continue
                 self.orchestrator.process_job(job_id)
+            except Exception:
+                logger.exception("Worker could not finish job %s; inspect persisted status", job_id)
             finally:
                 with self._lock:
                     self._queued_ids.discard(job_id)

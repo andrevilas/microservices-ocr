@@ -29,7 +29,7 @@ _JOB_RECORD_FIELDS: frozenset[str] | None = None
 def _allowed_update_fields() -> frozenset[str]:
     global _JOB_RECORD_FIELDS
     if _JOB_RECORD_FIELDS is None:
-        _JOB_RECORD_FIELDS = frozenset(f.name for f in dc_fields(JobRecord)) - {"job_id", "created_at", "owner_user_id", "owner_principal_id", "options_requested", "options_effective"}
+        _JOB_RECORD_FIELDS = frozenset(f.name for f in dc_fields(JobRecord)) - {"job_id", "created_at", "owner_user_id", "owner_principal_id", "options_requested", "options_effective", "parent_job_id"}
     return _JOB_RECORD_FIELDS
 
 
@@ -51,6 +51,7 @@ class JobRecord:
     options_requested: ProcessingOptions | None = None
     options_effective: EffectiveOptions | None = None
     error_code: str | None = None
+    parent_job_id: str | None = None
 
     @property
     def effective_owner(self) -> str | None:
@@ -71,6 +72,7 @@ class JobRecord:
             error_code=self.error_code,
             options_requested=self.options_requested,
             options_effective=self.options_effective,
+            parent_job_id=self.parent_job_id,
         )
 
 
@@ -134,7 +136,7 @@ class JobStore:
             conn.execute("ALTER TABLE jobs ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0")
         if "owner_principal_id" not in columns:
             conn.execute("ALTER TABLE jobs ADD COLUMN owner_principal_id TEXT")
-        for column in ("options_requested", "options_effective", "error_code"):
+        for column in ("options_requested", "options_effective", "error_code", "parent_job_id"):
             if column not in columns:
                 conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} TEXT")
         # Only known human ownership can be mapped; orphan records remain restricted.
@@ -176,6 +178,7 @@ class JobStore:
             options_requested=ProcessingOptions.model_validate_json(data["options_requested"]) if data.get("options_requested") else None,
             options_effective=EffectiveOptions.model_validate_json(data["options_effective"]) if data.get("options_effective") else None,
             error_code=data.get("error_code"),
+            parent_job_id=data.get("parent_job_id"),
         )
 
     def _persist(self, job: JobRecord, *, commit: bool = True) -> None:
@@ -184,8 +187,8 @@ class JobStore:
             """
             INSERT OR REPLACE INTO jobs
                 (job_id, filename, working_dir, status, owner_user_id, progress_percent, created_at, updated_at,
-                 input_pdf_path, output_pdf_path, quality, error, owner_principal_id, options_requested, options_effective, error_code)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 input_pdf_path, output_pdf_path, quality, error, owner_principal_id, options_requested, options_effective, error_code, parent_job_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.job_id,
@@ -204,6 +207,7 @@ class JobStore:
                 job.options_requested.model_dump_json() if job.options_requested else None,
                 job.options_effective.model_dump_json() if job.options_effective else None,
                 job.error_code,
+                job.parent_job_id,
             ),
         )
         if commit:
@@ -293,6 +297,60 @@ class JobStore:
             job.updated_at = datetime.now(timezone.utc)
             self._persist(job)
             return job
+
+    def _transition_locked(self, job, **changes):
+        record = replace(job, updated_at=datetime.now(timezone.utc), **changes)
+        try:
+            self._persist(record)
+        except BaseException:
+            self._get_conn().rollback()
+            raise
+        # Preserve legacy live references, publishing them only after durable commit.
+        for name in (*changes, "updated_at"):
+            setattr(job, name, getattr(record, name))
+        return replace(record)
+
+    def claim(self, job_id):
+        """Compare-and-set shared with cancel; a terminal job can never be claimed."""
+        with self._lock:
+            job = self.jobs.get(job_id)
+            if job is None or job.status != "queued":
+                return None
+            return self._transition_locked(job, status="processing", progress_percent=5, error=None, error_code=None)
+
+    def cancellation_requested(self, job_id):
+        with self._lock:
+            return self.jobs[job_id].status in ("cancel_requested", "canceled")
+
+    def worker_update(self, job_id, **changes):
+        from app.services.cancellation import JobCancelled
+        with self._lock:
+            job = self.jobs[job_id]
+            if job.status != "processing":
+                raise JobCancelled()
+            return self._transition_locked(job, **changes)
+
+    def request_cancel(self, job_id, owner, *, queued_only=False):
+        """Owner check and state decision happen under the same lock as claim/finish."""
+        with self._lock:
+            job = self.jobs.get(job_id)
+            if job is None or job.effective_owner != owner:
+                return None
+            if queued_only and job.status != "queued":
+                return None
+            if job.status == "queued":
+                return self._transition_locked(job, status="canceled", error_code="job_canceled", error=None)
+            if job.status == "processing" and not queued_only:
+                return self._transition_locked(job, status="cancel_requested", error_code=None, error=None)
+            return replace(job)
+
+    def finish_cancellation(self, job_id):
+        with self._lock:
+            job = self.jobs[job_id]
+            if job.status == "cancel_requested":
+                return self._transition_locked(job, status="canceled", output_pdf_path=None,
+                                               quality=None, error=None, error_code="job_canceled")
+            return replace(job)
 
     def cleanup(self, job_id: str) -> None:
         # Export snapshots hold this lock while copying source artifacts.

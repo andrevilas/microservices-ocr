@@ -61,6 +61,14 @@ class ApiClient:
                 path += "/" + operation
             if operation == "text":
                 query = dict(zip(("page", "offset", "max_chars"), args[1:]))
+        elif operation in ("cancel", "retry"):
+            if not re.fullmatch(r"[0-9a-f]{32}", args[0]):
+                raise ToolError("job_not_found: Resource not found.")
+            method, path = "POST", "/jobs/" + args[0] + "/" + operation
+            if operation == "retry":
+                body, headers = args[1].model_dump(mode="json"), {"Idempotency-Key": args[2]}
+        elif operation == "cancel_many":
+            method, path, body = "POST", "/jobs/cancel-batch", args[0].model_dump(mode="json")
         elif operation == "prepare_upload":
             method, path = "POST", "/upload-sessions"
             body = dict(zip(("filename", "size_bytes", "sha256"), args))
@@ -110,7 +118,7 @@ async def run():
     async with httpx2.AsyncClient(headers={"Authorization": "Bearer " + token},
                                  follow_redirects=False, trust_env=False,
                                  timeout=120, limits=httpx2.Limits(max_connections=8)) as http:
-        server = OcrMCPServer("OCR Recognizer", version="0.3.0", instructions=INSTRUCTIONS, log_level="WARNING")
+        server = OcrMCPServer("OCR Recognizer", version="0.4.0", instructions=INSTRUCTIONS, log_level="WARNING")
         register_tools(server, ApiClient(origin, http).invoke)
         await server.run_stdio_async()
 

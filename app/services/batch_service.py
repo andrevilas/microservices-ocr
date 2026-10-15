@@ -78,7 +78,7 @@ class BatchService:
             raise ApplicationError(422, "batch_limit_exceeded", "Batch item count exceeds the configured limit.")
         if sum(row["size"] for row in rows) > settings.batch_max_total_mb * MIB:
             raise ApplicationError(413, "batch_too_large", "Aggregate input size exceeds the batch limit.")
-        pending = sum(j.effective_owner == principal.subject and j.status in ("queued", "processing") for j in self.jobs.jobs.values())
+        pending = sum(j.effective_owner == principal.subject and j.status in ("queued", "processing", "cancel_requested") for j in self.jobs.jobs.values())
         if pending + len(rows) > settings.job_owner_max_pending:
             raise ApplicationError(429, "job_quota_exceeded", "The complete batch would exceed the pending job limit.")
 

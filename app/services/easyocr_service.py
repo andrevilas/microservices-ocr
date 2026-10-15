@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import threading
+import importlib.util
+import json
+import sys
 from pathlib import Path
 
 from app.utils.image_preprocessing import preprocess_image
@@ -14,11 +17,9 @@ class FallbackOcrService:
     @staticmethod
     def is_available() -> bool:
         try:
-            import easyocr  # noqa: F401
-            from pdf2image import convert_from_path  # noqa: F401
-        except ImportError:
+            return all(importlib.util.find_spec(name) is not None for name in ("easyocr", "pdf2image"))
+        except (ImportError, ValueError):
             return False
-        return True
 
     def _get_reader(self):
         """Lazy, thread-safe singleton Reader per instance."""
@@ -33,6 +34,17 @@ class FallbackOcrService:
         return "\n".join(self.process_pages(input_pdf_path)).strip()
 
     def process_pages(self, input_pdf_path: Path) -> list[str]:
+        from app.services.cancellation import active, run_process, checkpoint
+        if active():
+            from app.config import settings
+            destination = input_pdf_path.parent / "fallback-pages.json"
+            try:
+                run_process([sys.executable, "-m", "app.fallback_worker", str(input_pdf_path), str(destination)],
+                            timeout=settings.ocr_subprocess_timeout_seconds)
+                checkpoint()
+                return json.loads(destination.read_text(encoding="utf-8"))
+            finally:
+                destination.unlink(missing_ok=True)
         if not self.is_available():
             raise RuntimeError("Fallback OCR unavailable.")
 

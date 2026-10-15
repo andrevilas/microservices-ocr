@@ -1,7 +1,7 @@
 # Fluxo vertical MCP e transporte local
 
 Entrega OCR-AM-08, atividade LPM `AGSM6EEjt7GVvdCdQ6hb`.
-As dezesseis ferramentas, incluindo [lotes/exportação da AM-09](batches-exports.md), têm contratos de entrada/saída comuns nos transportes
+As dezenove ferramentas, incluindo [lotes/exportação da AM-09](batches-exports.md) e [controle da AM-10](job-control.md), têm contratos de entrada/saída comuns nos transportes
 Streamable HTTP e stdio. A API v1 continua sendo a autoridade para identidade,
 permissões, uploads, idempotência, fila e resultados.
 
@@ -86,8 +86,9 @@ allowlist de Host/Origin limitado a loopback. O servidor ASGI mantém um único
 runtime owner por diretório, compartilhado por HTTP e MCP. Use uma réplica,
 `uvicorn --workers 1`; concorrência OCR usa os workers internos.
 
-Preparação de upload, submissão, lote e exportação são mutações aditivas;
-as três últimas exigem chave e são idempotentes. As demais doze ferramentas são de leitura. As anotações
+Preparação de upload, submissão, lote, exportação e retry são mutações aditivas;
+as quatro últimas exigem chave e são idempotentes. Cancelamento individual e em
+lote são mutações destrutivas idempotentes sem chave. As demais doze ferramentas são de leitura. As anotações
 informam o cliente, mas autorização e validação são aplicadas pelo servidor,
 conforme a [especificação de ferramentas MCP](https://modelcontextprotocol.io/specification/2026-07-28/server/tools).
 

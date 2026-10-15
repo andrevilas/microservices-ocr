@@ -1,7 +1,8 @@
 # Lotes e exportação assíncrona
 
-Entrega OCR-AM-09, LPM `B6WE9dwgmEvlxm9JzbCO`. Contrato HTTP 1.4.0,
-26 operações HTTP e 16 ferramentas MCP (12 de leitura e quatro mutações).
+Entrega OCR-AM-09, LPM `B6WE9dwgmEvlxm9JzbCO`. Contrato atual HTTP 1.5.0,
+29 operações HTTP e 19 ferramentas MCP (12 de leitura e sete mutações),
+incluindo [controle de jobs da AM-10](job-control.md).
 
 | HTTP | MCP | Escopos |
 |---|---|---|
