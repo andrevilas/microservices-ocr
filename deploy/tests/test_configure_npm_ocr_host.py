@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import importlib.util
 import sqlite3
 import sys
@@ -54,7 +55,7 @@ class ConfigureNpmOcrHostTest(unittest.TestCase):
         self.db = root / "database.sqlite"
         self.nginx_dir = root / "nginx" / "proxy_host"
         self.nginx_dir.mkdir(parents=True)
-        with sqlite3.connect(self.db) as conn:
+        with closing(sqlite3.connect(self.db)) as conn, conn:
             conn.execute(SCHEMA)
         self.originals = {
             "DOMAIN": npm.DOMAIN,
@@ -76,7 +77,7 @@ class ConfigureNpmOcrHostTest(unittest.TestCase):
     def test_configure_db_inserts_proxy_host(self) -> None:
         host_id = npm.configure_db()
 
-        with sqlite3.connect(self.db) as conn:
+        with closing(sqlite3.connect(self.db)) as conn, conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute("select * from proxy_host where id=?", (host_id,)).fetchone()
 
@@ -89,7 +90,7 @@ class ConfigureNpmOcrHostTest(unittest.TestCase):
         self.assertEqual(row["enabled"], 1)
 
     def test_configure_db_updates_existing_proxy_host_with_spaced_json(self) -> None:
-        with sqlite3.connect(self.db) as conn:
+        with closing(sqlite3.connect(self.db)) as conn, conn:
             conn.execute(
                 """
                 insert into proxy_host
@@ -103,7 +104,7 @@ class ConfigureNpmOcrHostTest(unittest.TestCase):
 
         host_id = npm.configure_db()
 
-        with sqlite3.connect(self.db) as conn:
+        with closing(sqlite3.connect(self.db)) as conn, conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute("select * from proxy_host where id=42").fetchone()
             count = conn.execute("select count(*) from proxy_host").fetchone()[0]

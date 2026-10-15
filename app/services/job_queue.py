@@ -70,6 +70,9 @@ class JobQueueProcessor:
             self._stop_event.set()
         for thread in self._threads:
             thread.join(timeout=timeout)
+        if any(thread.is_alive() for thread in self._threads):
+            # Keep ownership until process exit if a worker can still write a result.
+            raise RuntimeError("OCR workers did not stop before the shutdown deadline.")
         # Mark any jobs still processing as failed (shutdown)
         for job in self.job_store.get_processing_jobs():
             logger.warning("Shutdown: job %s still processing, marking as failed", job.job_id)
@@ -144,8 +147,13 @@ class JobQueueProcessor:
                 self._queue.task_done()
 
 
-_job_queue_processor = JobQueueProcessor(job_store=get_job_store())
+_job_queue_processor: JobQueueProcessor | None = None
+_processor_init_lock = Lock()
 
 
 def get_job_queue_processor() -> JobQueueProcessor:
+    global _job_queue_processor
+    with _processor_init_lock:
+        if _job_queue_processor is None:
+            _job_queue_processor = JobQueueProcessor(job_store=get_job_store())
     return _job_queue_processor

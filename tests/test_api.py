@@ -467,10 +467,10 @@ def test_readiness_endpoint() -> None:
     assert data["status"] == "ready"
 
 
-def test_readiness_returns_503_when_tmp_unavailable(monkeypatch) -> None:
-    from pathlib import Path
-    monkeypatch.setattr(settings, "ocr_tmp_dir", Path("/nonexistent/impossible/path/xyz"))
+def test_readiness_returns_503_when_tmp_unavailable(monkeypatch, tmp_path) -> None:
+    unavailable = tmp_path / "not-a-directory"
+    unavailable.write_text("occupied", encoding="utf-8")
+    monkeypatch.setattr(settings, "ocr_tmp_dir", unavailable / "child")
     response = client.get("/readiness")
     assert response.status_code == 503
     assert "not available" in response.json()["detail"].lower()
-    monkeypatch.setattr(settings, "ocr_tmp_dir", Path("/tmp/ocr-recognizer"))

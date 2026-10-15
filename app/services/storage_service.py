@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import shutil
 import sqlite3
-from dataclasses import dataclass, field, fields as dc_fields
+from dataclasses import dataclass, field, fields as dc_fields, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
@@ -209,9 +209,19 @@ class JobStore:
         with self._lock:
             return self.jobs.get(job_id)
 
+    def get_snapshot(self, job_id: str) -> JobRecord | None:
+        with self._lock:
+            record = self.jobs.get(job_id)
+            return replace(record) if record else None
+
     def list_all(self) -> list[JobRecord]:
         with self._lock:
             return list(self.jobs.values())
+
+    def snapshot(self) -> list[JobRecord]:
+        """Copy records while locked so transport serialization sees a stable view."""
+        with self._lock:
+            return [replace(job) for job in self.jobs.values()]
 
     def list_for_owner(self, owner_user_id: int | None) -> list[JobRecord]:
         if owner_user_id is None:
@@ -303,8 +313,13 @@ class JobStore:
             return False
 
 
-_job_store = JobStore()
+_job_store: JobStore | None = None
+_store_init_lock = Lock()
 
 
 def get_job_store() -> JobStore:
+    global _job_store
+    with _store_init_lock:
+        if _job_store is None:
+            _job_store = JobStore()
     return _job_store

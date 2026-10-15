@@ -7,8 +7,9 @@ name = "ocr-recognizer"
 version = "0.1.0"
 description = "OCR Recognizer MVP with FastAPI, primary OCR, fallback, and a simple web UI."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
+  "mcp==2.3.0",
   "fastapi>=0.115.0,<1.0.0",
   "uvicorn>=0.30.0,<1.0.0",
   "python-multipart>=0.0.9,<1.0.0",

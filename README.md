@@ -13,6 +13,11 @@ MVP da sprint inicial para processamento OCR de PDFs com:
 
 ## Execucao local
 
+Requer Python 3.11 ou posterior. A API versionada e o piloto MCP de leitura
+estão documentados em [API e MCP](docs/api-mcp.md). Execute uma única instância
+ASGI por diretório de dados; a concorrência de OCR é controlada por
+`JOB_WORKER_CONCURRENCY`.
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate

@@ -271,11 +271,13 @@ class UserStore:
 # ---------------------------------------------------------------------------
 
 _user_store: UserStore | None = None
+_store_init_lock = Lock()
 
 
 def get_user_store() -> UserStore:
     """Return the singleton UserStore instance (lazily created)."""
     global _user_store
-    if _user_store is None:
-        _user_store = UserStore()
+    with _store_init_lock:
+        if _user_store is None:
+            _user_store = UserStore()
     return _user_store
