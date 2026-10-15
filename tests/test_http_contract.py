@@ -50,7 +50,7 @@ def validate_response(app, response, path, method="get"):
 def test_all_published_examples_and_security(contract):
     app, _, _, _ = contract
     schema = v1_schema(app)
-    assert schema["info"]["x-api-version"] == "1.0.0"
+    assert schema["info"]["x-api-version"] == "1.1.0"
     assert list(schema["components"]["securitySchemes"]) == ["PrincipalBearer"]
     operations = []
     for path, methods in schema["paths"].items():
@@ -70,11 +70,13 @@ def test_all_published_examples_and_security(contract):
                         assert "example" in content, (path, status)
                         Draft202012Validator({"components": schema["components"], **content["schema"]}).validate(content["example"])
             if "requestBody" in operation:
+                if "application/json" not in operation["requestBody"]["content"]:
+                    continue  # Binary exchanges are covered by upload integration tests.
                 body = operation["requestBody"]["content"]["application/json"]["schema"]
-                model = schema["components"]["schemas"][body["$ref"].rsplit("/", 1)[1]]
+                model = schema["components"]["schemas"][body["$ref"].rsplit("/", 1)[1]] if "$ref" in body else body
                 for example in model["examples"]:
                     Draft202012Validator({"components": schema["components"], **model}).validate(example)
-    assert len(operations) == len(set(operations)) == 12
+    assert len(operations) == len(set(operations)) == 17
 
 
 def test_real_success_exchanges_match_openapi(contract):
@@ -145,7 +147,7 @@ def test_routing_errors_are_consistent(contract, method, path, status, code):
     body = validate_response(app, response, "/api/v1/jobs")
     assert body["error"]["code"] == code
     if status == 405:
-        assert response.headers["allow"] == "GET"
+        assert response.headers["allow"] == ("GET, POST" if path == "/api/v1/jobs" else "GET")
 
 
 def test_validation_omits_values_and_unknown_field_names(contract):

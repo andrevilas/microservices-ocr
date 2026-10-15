@@ -1,4 +1,5 @@
 from pathlib import Path
+from pydantic import Field
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -7,7 +8,19 @@ class Settings(BaseSettings):
     app_name: str = "Fluxo OCR"
     app_env: str = "development"
     static_asset_version: str = "20260702-navbar-workspace"
-    max_upload_size_mb: int = 80
+    max_upload_size_mb: int = Field(default=80, ge=1)
+    upload_ttl_seconds: int = Field(default=3600, ge=60)
+    upload_storage_limit_mb: int = Field(default=2048, ge=1)
+    upload_owner_limit_mb: int = Field(default=512, ge=1)
+    upload_min_free_mb: int = Field(default=256, ge=0)
+    upload_concurrency: int = Field(default=2, ge=1, le=16)
+    upload_owner_max_reservations: int = Field(default=32, ge=1)
+    upload_timeout_seconds: int = Field(default=300, ge=1)
+    upload_max_pages: int = Field(default=300, ge=1)
+    upload_max_page_pixels: int = Field(default=50000000, ge=1)
+    upload_validation_memory_mb: int = Field(default=256, ge=64)
+    upload_validation_timeout_seconds: int = Field(default=15, ge=1)
+    job_owner_max_pending: int = Field(default=20, ge=1)
     job_worker_concurrency: int = 2
     ocr_tmp_dir: Path = Path("/tmp/ocr-recognizer")
     ocr_subprocess_timeout_seconds: int = 300

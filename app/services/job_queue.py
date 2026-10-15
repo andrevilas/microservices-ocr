@@ -94,6 +94,11 @@ class JobQueueProcessor:
         with self._lock:
             if job_id in self._queued_ids:
                 return
+            # A replay may have observed queued just before the worker completed.
+            # Recheck under the queue lock so a stale admission cannot rerun it.
+            job = self.job_store.get_snapshot(job_id)
+            if job is None or job.status != "queued":
+                return
             self._queued_ids.add(job_id)
         self._queue.put(job_id)
 

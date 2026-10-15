@@ -1,5 +1,6 @@
 """HTTP v1 error boundary, correlation and public contract metadata."""
 import logging
+import sqlite3
 from copy import deepcopy
 from uuid import uuid4
 
@@ -11,7 +12,7 @@ from starlette.routing import Match
 from app.application import ErrorResponse
 
 logger = logging.getLogger(__name__)
-API_VERSION = "1.0.0"
+API_VERSION = "1.1.0"
 
 
 def is_v1(path: str) -> bool:
@@ -81,6 +82,8 @@ class V1Boundary:
                 raise
             # No exception text/body/path/credential in the public error or log.
             logger.error("HTTP request %s failed (%s)", scope["state"]["request_id"], type(error).__name__)
+            if isinstance(error, (OSError, sqlite3.Error)):
+                return await error_response(request, 503, "storage_unavailable", "Storage is unavailable.", headers={"Retry-After": "5"})(scope, receive, contract_send)
             await error_response(request, 500, "internal_error", "An internal error occurred.")(scope, receive, contract_send)
 
 
@@ -90,10 +93,16 @@ ERRORS = {
     403: ("insufficient_scope", "Required permission is missing."),
     404: ("job_not_found", "Job not found."),
     405: ("method_not_allowed", "Method not allowed."),
+    408: ("upload_timeout", "Upload deadline exceeded."),
     409: ("artifact_unavailable", "Artifact is not available."),
+    410: ("upload_expired", "Upload has expired."),
+    413: ("file_too_large", "Upload exceeds the accepted size."),
+    415: ("unsupported_media_type", "Unsupported content type."),
     416: ("invalid_range", "Requested range is not satisfiable."),
     422: ("validation_error", "Invalid request parameters."),
+    429: ("storage_quota_exceeded", "Input quota is exhausted."),
     500: ("internal_error", "An internal error occurred."),
+    503: ("storage_unavailable", "Storage is unavailable."),
 }
 
 

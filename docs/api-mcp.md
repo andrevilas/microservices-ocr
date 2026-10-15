@@ -6,8 +6,8 @@ Rastreabilidade: OCR-AM-02 / LPM `AEHQJUb02uohT4MlVf8U`, projeto OCR Recognizer
 `POzf83SdXU3HWL9KX9i2`. Plano completo e revisão na atividade
 `lv2qAWLSJajcLawyvMdE`, com 18 atividades e 29 capacidades planejadas.
 
-Estes incrementos entregam a fundação, identidades de serviço e consultas autenticadas. Uploads separados,
-criação idempotente, texto por página, lotes, exportação, cancelamento ativo,
+Estes incrementos entregam a fundação, identidades de serviço, consultas autenticadas,
+[uploads persistentes e criação idempotente por HTTP](uploads.md). Texto por página, lotes, exportação, cancelamento ativo,
 OAuth remoto e migração do painel continuam no backlog.
 Não é a entrega do fluxo vertical completo OCR-AM-08.
 
@@ -71,9 +71,10 @@ Paginação: ordem ascendente por criação e ID, limite de 1 a 100, cursor opac
 Alterar o status de jobs durante a paginação pode mudar a composição do filtro;
 o cursor não representa um snapshot transacional de todo o catálogo.
 
-Erros v1 usam `{"error":{"code":"...","message":"..."}}`, inclusive validação.
+Erros v1 usam error.code, error.message, error.details e request_id, inclusive validação.
 401 inclui `WWW-Authenticate: Bearer`; 403 indica falta de escopo; 409 indica
-artefato indisponível. O ciclo de retenção/tombstones/410 será tratado na AM-11.
+artefato indisponível ou conflito de admissão. Upload expirado retorna 410; o ciclo
+completo de retenção de jobs/artefatos e tombstones será tratado na AM-11.
 
 ## MCP local
 

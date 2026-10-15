@@ -1,8 +1,9 @@
 # Contrato HTTP v1
 
 Entrega OCR-AM-04, atividade LPM `hkKLY54xl4fHElZsRNdK`. O contrato atual tem
-12 operações sob `/api/v1`, versão de contrato `1.0.0`. Upload persistente,
-cancelamento individual, texto por página e administração ampla serão
+17 operações sob `/api/v1`, versão de contrato `1.1.0`, após a AM-05 de
+[uploads persistentes e admissão idempotente](uploads.md). Cancelamento individual,
+texto por página e administração ampla serão
 acrescentados nas respectivas atividades; não estão anunciados como disponíveis.
 
 [openapi-v1.json](openapi-v1.json) inclui apenas operações v1 e seus schemas.
@@ -84,7 +85,9 @@ As rotas legadas mantêm seu próprio formato.
 ## Validação
 
 `tests/test_http_contract.py` valida respostas reais e exemplos contra schemas
-JSON do OpenAPI nas 12 operações. Cobre 401/403/404/405/409/422/500, PDF inteiro,
+JSON do OpenAPI; as 12 operações iniciais têm testes de troca HTTP neste módulo,
+e as cinco operações de upload/admissão em `tests/test_upload_admission.py`.
+Cobre 401/403/404/405/409/422/500, PDF inteiro,
 Range 206/400/416, ausência de valores privados, request_id, cache e export sem
 runtime. A suíte de identidades mantém a autorização real HTTP/MCP.
 

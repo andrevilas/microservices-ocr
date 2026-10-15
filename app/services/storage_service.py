@@ -165,7 +165,7 @@ class JobStore:
             owner_principal_id=data.get("owner_principal_id"),
         )
 
-    def _persist(self, job: JobRecord) -> None:
+    def _persist(self, job: JobRecord, *, commit: bool = True) -> None:
         conn = self._get_conn()
         conn.execute(
             """
@@ -190,7 +190,8 @@ class JobStore:
                 job.owner_principal_id,
             ),
         )
-        conn.commit()
+        if commit:
+            conn.commit()
 
     # -- public API (same semantics) -----------------------------------------
 

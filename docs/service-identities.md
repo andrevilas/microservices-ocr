@@ -83,9 +83,9 @@ escopos para seus próprios dados. Não há curinga, escopo administrativo deleg
 ou leitura automática de documentos alheios. Um token só de submissão pode
 receber o ID criado, mas precisa de jobs:read para consultá-lo.
 
-As mutações novas `/api/v1/uploads` e `/api/v1/jobs` e as ferramentas MCP de
-submissão serão implementadas nas AM-05/08. Até lá, serviços usam o upload
-multipart existente e acompanham o resultado por API v1/MCP.
+As mutações `/api/v1/uploads` e `/api/v1/jobs` foram entregues na AM-05;
+consulte [uploads persistentes](uploads.md). Ferramentas MCP de submissão
+permanecem na AM-08. Serviços já podem enviar por HTTP v1 e acompanhar por MCP.
 
 ## Armazenamento e revogação
 
