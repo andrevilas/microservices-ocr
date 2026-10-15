@@ -128,7 +128,7 @@ def test_four_principals_are_isolated_on_http_and_legacy(system, monkeypatch):
         response = client.get("/api/jobs/download-batch", params=[("job_ids", j.job_id) for j in jobs], headers=headers)
         assert response.status_code == 200
         with ZipFile(BytesIO(response.content)) as archive:
-            assert archive.namelist() == [f"owner-{index}-searchable.pdf"]
+            assert archive.namelist() == [f"owner-{index}-searchable.pdf", "manifest.json"]
     # Administrating identities does not grant automatic document access.
     for job in jobs + [orphan]:
         assert client.get(f"/api/v1/jobs/{job.job_id}", headers=system["admin"]).status_code == 404

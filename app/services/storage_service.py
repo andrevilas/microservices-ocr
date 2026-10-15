@@ -295,10 +295,11 @@ class JobStore:
             return job
 
     def cleanup(self, job_id: str) -> None:
-        job = self.get(job_id)
-        if job:
-            shutil.rmtree(job.working_dir, ignore_errors=True)
-            with self._lock:
+        # Export snapshots hold this lock while copying source artifacts.
+        with self._lock:
+            job = self.jobs.get(job_id)
+            if job:
+                shutil.rmtree(job.working_dir, ignore_errors=True)
                 if job.output_pdf_path is not None:
                     job.output_pdf_path = None
                     self._persist(job)

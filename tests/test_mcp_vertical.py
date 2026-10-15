@@ -52,11 +52,11 @@ print(json.dumps(tokens))
         assert setup.returncode == 0, "Synthetic identity setup failed"
         self.tokens = json.loads(setup.stdout)
 
-    def start(self, pause=False):
+    def start(self, pause=False, export_pause=False):
         self.log = (self.root / "runtime.log").open("ab")
         self.process = subprocess.Popen([sys.executable, "-m", "uvicorn", "mcp_runtime_fixture:app",
                                          "--host", "127.0.0.1", "--port", str(self.port), "--log-level", "warning"],
-                                        cwd=ROOT, env={**self.env, "OCR_TEST_PAUSE": "1" if pause else "0"},
+                                        cwd=ROOT, env={**self.env, "OCR_TEST_PAUSE": "1" if pause else "0", "OCR_TEST_EXPORT_PAUSE": "1" if export_pause else "0"},
                                         stdout=self.log, stderr=self.log,
                                         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         deadline = time.monotonic() + 20
@@ -128,7 +128,7 @@ def test_real_clients_upload_submit_poll_text_pdf_and_isolation(runtime, transpo
         async with connected(runtime, transport, mode) as client:
             listing = await client.list_tools()
             tools = {t.name: t for t in listing.tools}
-            assert len(tools) == 11
+            assert len(tools) == 16
             assert not tools["ocr_prepare_upload"].annotations.idempotent_hint
             assert tools["ocr_submit_job"].annotations.idempotent_hint
             assert all(t.output_schema for t in tools.values())

@@ -24,6 +24,8 @@ class BatchUploadJob(BaseModel):
 
 class BatchUploadResponse(BaseModel):
     jobs: list[BatchUploadJob]
+    batch_id: str | None = None
+    dispatch_pending: bool = False
 
 
 class QueueClearResponse(BaseModel):

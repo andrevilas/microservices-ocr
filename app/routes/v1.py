@@ -42,13 +42,14 @@ def whoami(principal: Principal = Depends(require_principal), service: JobApplic
 def list_jobs(limit: int = Query(50, ge=1, le=100), cursor: str | None = Query(None, max_length=256),
               status: JobStatus | None = None, created_from: datetime | None = None,
               created_to: datetime | None = None, filename: str | None = Query(None, min_length=1, max_length=255),
-              quality: QualityLabel | None = None, principal: Principal = Depends(require_principal),
+              quality: QualityLabel | None = None, batch_id: str | None = Query(None, pattern="^[0-9a-f]{32}$"),
+              principal: Principal = Depends(require_principal),
               service: JobApplication = Depends(get_job_application)):
     """List caller-owned jobs in creation order; pass next_cursor unchanged to continue.
 
     Limit is 1–100 (default 50). Results are live; concurrent inserts can appear on later pages.
     """
-    return service.list_jobs(principal, limit, cursor, status, created_from, created_to, filename, quality)
+    return service.list_jobs(principal, limit, cursor, status, created_from, created_to, filename, quality, batch_id)
 
 
 @router.get("/jobs/{job_id}/text", response_model=TextChunk, operation_id="ocr_get_text",

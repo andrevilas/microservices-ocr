@@ -1,6 +1,6 @@
 # Opções e capacidades — OCR-AM-07
 
-Contrato HTTP 1.3.0. `GET /api/v1/capabilities` e `ocr_get_capabilities` exigem
+Contrato HTTP 1.4.0. `GET /api/v1/capabilities` e `ocr_get_capabilities` exigem
 Bearer válido, sem escopo adicional. Não retornam documentos, credenciais,
 caminhos de instalação ou stderr. O catálogo informa motores/versões, motivos
 de indisponibilidade, idiomas suportados instalados, perfis, defaults e limites.

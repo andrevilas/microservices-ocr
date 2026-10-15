@@ -47,16 +47,16 @@ class ApiClient:
         if operation in ("whoami", "capabilities", "metrics"):
             path = {"whoami": "/me", "capabilities": "/capabilities", "metrics": "/metrics"}[operation]
         elif operation == "list_jobs":
-            keys = ("limit", "cursor", "status", "created_from", "created_to", "filename", "quality")
+            keys = ("limit", "cursor", "status", "created_from", "created_to", "filename", "quality", "batch_id")
             query = {key: value.isoformat() if isinstance(value, datetime) else value
                      for key, value in zip(keys, args) if value is not None}
             path = "/jobs"
-        elif operation in ("get_job", "report", "text", "artifact", "get_upload"):
+        elif operation in ("get_job", "report", "text", "artifact", "get_upload", "get_batch", "get_export"):
             # IDs are a single path segment, never a client-provided URL.
             if not re.fullmatch(r"[0-9a-f]{32}", args[0]):
-                code = "upload_not_found" if operation == "get_upload" else "job_not_found"
+                code = {"get_upload": "upload_not_found", "get_batch": "batch_not_found", "get_export": "export_not_found"}.get(operation, "job_not_found")
                 raise ToolError(f"{code}: Resource not found.")
-            path = ("/uploads/" if operation == "get_upload" else "/jobs/") + quote(args[0], safe="")
+            path = {"get_upload": "/uploads/", "get_batch": "/batches/", "get_export": "/exports/"}.get(operation, "/jobs/") + quote(args[0], safe="")
             if operation in ("report", "text", "artifact"):
                 path += "/" + operation
             if operation == "text":
@@ -68,6 +68,12 @@ class ApiClient:
             method, path = "POST", "/jobs"
             body = {"upload_id": args[0], "options": args[2].model_dump(mode="json")}
             headers = {"Idempotency-Key": args[1]}
+        elif operation in ("create_batch", "create_export"):
+            method, path = "POST", "/batches" if operation == "create_batch" else "/exports"
+            body, headers = args[0].model_dump(mode="json"), {"Idempotency-Key": args[1]}
+        elif operation == "list_batches":
+            path = "/batches"
+            query = {key: value for key, value in zip(("limit", "cursor"), args) if value is not None}
         else:
             raise ToolError("unknown_operation: Operation is not supported.")
         try:
@@ -104,7 +110,7 @@ async def run():
     async with httpx2.AsyncClient(headers={"Authorization": "Bearer " + token},
                                  follow_redirects=False, trust_env=False,
                                  timeout=120, limits=httpx2.Limits(max_connections=8)) as http:
-        server = OcrMCPServer("OCR Recognizer", version="0.2.0", instructions=INSTRUCTIONS, log_level="WARNING")
+        server = OcrMCPServer("OCR Recognizer", version="0.3.0", instructions=INSTRUCTIONS, log_level="WARNING")
         register_tools(server, ApiClient(origin, http).invoke)
         await server.run_stdio_async()
 

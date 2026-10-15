@@ -43,7 +43,7 @@ use a reserva explícita para recuperação após perda da resposta.
 
 Bytes não entram em JSON ou argumentos MCP. Os serviços de reserva e admissão
 são independentes do transporte. As ferramentas MCP de mutação e o auxiliar
-local serão acrescentados na AM-08; neste incremento o envio/criação usa HTTP.
+local estão disponíveis desde a [AM-08](mcp-workflow.md); os bytes continuam em HTTP.
 
 ## Garantia de idempotência e recuperação
 

@@ -90,7 +90,7 @@ class JobApplication:
     def list_jobs(self, principal: Principal, limit: int = 50, cursor: str | None = None,
                   status: JobStatus | None = None, created_from: datetime | None = None,
                   created_to: datetime | None = None, filename: str | None = None,
-                  quality: QualityLabel | None = None) -> JobPage:
+                  quality: QualityLabel | None = None, batch_id: str | None = None) -> JobPage:
         principal.require("jobs:read")
         if not 1 <= limit <= 100:
             raise ApplicationError(422, "invalid_limit", "Limit must be between 1 and 100.")
@@ -99,9 +99,18 @@ class JobApplication:
             raise ApplicationError(422, "invalid_period", "Supply an ordered period with timezone offsets.")
         if filename is not None and not 1 <= len(filename) <= 255:
             raise ApplicationError(422, "invalid_filename_filter", "Filename filter must contain 1 to 255 characters.")
+        batch_jobs = None
+        if batch_id is not None:
+            with self.store._lock:
+                conn = self.store._get_conn()
+                row = (conn.execute("SELECT receipt FROM batches WHERE batch_id=? AND owner=?", (batch_id, principal.subject)).fetchone()
+                       if conn.execute("SELECT 1 FROM sqlite_master WHERE name='batches' AND type='table'").fetchone() else None)
+            if row is None:
+                raise ApplicationError(404, "batch_not_found", "Batch not found.")
+            batch_jobs = {item["job_id"] for item in json.loads(row[0])["items"]}
         binding = hashlib.sha256(json.dumps([principal.subject, status,
             created_from.isoformat() if created_from else None,
-            created_to.isoformat() if created_to else None, filename, quality]).encode()).hexdigest()
+            created_to.isoformat() if created_to else None, filename, quality, batch_id]).encode()).hexdigest()
         after = None
         if cursor:
             try:
@@ -117,6 +126,7 @@ class JobApplication:
             except (ValueError, TypeError, UnicodeDecodeError):
                 raise ApplicationError(422, "invalid_cursor", "Invalid pagination cursor.") from None
         jobs = sorted((j for j in self.store.snapshot() if self._owned(principal, j)
+                       and (batch_jobs is None or j.job_id in batch_jobs)
                        and (status is None or j.status == status)
                        and (quality is None or j.quality == quality)
                        and (created_from is None or j.created_at >= created_from)

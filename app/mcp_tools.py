@@ -13,6 +13,7 @@ from app.models import JobResponse, JobStatus, QualityLabel
 from app.results import JobReport, TextChunk
 from app.options import Capabilities, ProcessingOptions
 from app.upload_models import UploadReceipt, JobAdmission
+from app.bulk_models import BatchInput, BatchInputItem, BatchPage, BatchReceipt, BatchView, ExportInput, ExportReceipt, ResourceId
 
 INSTRUCTIONS = (
     "Process caller-owned PDF uploads asynchronously. Prepare an upload, transfer bytes by "
@@ -60,9 +61,9 @@ def register_tools(server, invoke):
     async def ocr_list_jobs(ctx: Context, limit: int = 50, cursor: str | None = None,
                       status: JobStatus | None = None, created_from: datetime | None = None,
                       created_to: datetime | None = None, filename: str | None = None,
-                      quality: QualityLabel | None = None) -> JobPage:
+                      quality: QualityLabel | None = None, batch_id: ResourceId | None = None) -> JobPage:
         """List only the caller's jobs in creation order, at most 100 per page."""
-        return await invoke(ctx, "list_jobs", limit, cursor, status, created_from, created_to, filename, quality)
+        return await invoke(ctx, "list_jobs", limit, cursor, status, created_from, created_to, filename, quality, batch_id)
 
     @server.tool(annotations=annotations)
     async def ocr_get_text(ctx: Context, job_id: str, page: int = 1, offset: int = 0,
@@ -108,3 +109,38 @@ def register_tools(server, invoke):
                              options: ProcessingOptions | None = None) -> JobAdmission:
         """Submit an owned ready upload. Reuse the same key AND options on retry; changed payload conflicts. Returns the original queued receipt, not live status. Poll ocr_get_job every poll_after_seconds. Disconnect does not cancel processing."""
         return await invoke(ctx, "submit_job", upload_id, idempotency_key, options or ProcessingOptions())
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+    async def ocr_create_batch(ctx: Context, items: Annotated[list[BatchInputItem], Field(min_length=1, max_length=25)],
+                               idempotency_key: Annotated[str, Field(pattern="^[A-Za-z0-9._:-]{8,128}$")]) -> BatchReceipt:
+        """Atomically admit owned ready uploads with unique client_item_id. Invalid items admit no jobs. Reuse key and payload after timeout; poll ocr_get_batch for independent item results."""
+        try:
+            body = BatchInput(items=items)
+        except ValidationError:
+            raise ToolError("validation_error: client_item_id must be unique within the batch.") from None
+        return await invoke(ctx, "create_batch", body, idempotency_key)
+
+    @server.tool(annotations=annotations)
+    async def ocr_list_batches(ctx: Context, limit: int = 50, cursor: str | None = None) -> BatchPage:
+        """List caller-owned batches with live item statuses, at most 100 per page."""
+        return await invoke(ctx, "list_batches", limit, cursor)
+
+    @server.tool(annotations=annotations)
+    async def ocr_get_batch(ctx: Context, batch_id: ResourceId) -> BatchView:
+        """Read live batch counts, progress and item manifest; terminal may include failed/canceled items."""
+        return await invoke(ctx, "get_batch", batch_id)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+    async def ocr_create_export(ctx: Context, job_ids: Annotated[list[ResourceId], Field(min_length=1, max_length=25)],
+                                idempotency_key: Annotated[str, Field(pattern="^[A-Za-z0-9._:-]{8,128}$")]) -> ExportReceipt:
+        """Admit an asynchronous ZIP export of explicit owned jobs. Poll ocr_get_export every poll_after_seconds until ready/failed. The worker snapshots included/excluded items; missing/foreign jobs reject admission. Stable key replays the original queued receipt. Download via authenticated HTTP; no ZIP bytes in MCP."""
+        try:
+            body = ExportInput(job_ids=job_ids)
+        except ValidationError:
+            raise ToolError("validation_error: job_ids must be unique.") from None
+        return await invoke(ctx, "create_export", body, idempotency_key)
+
+    @server.tool(annotations=annotations)
+    async def ocr_get_export(ctx: Context, export_id: ResourceId) -> ExportReceipt:
+        """Read an owned export snapshot, manifest, hash and authenticated URL. Expired exports return export_expired."""
+        return await invoke(ctx, "get_export", export_id)

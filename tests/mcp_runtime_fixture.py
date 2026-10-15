@@ -13,4 +13,13 @@ if os.environ.get("OCR_TEST_PAUSE") == "1":
 
     OcrOrchestrator.process_job = paused
 
+if os.environ.get("OCR_TEST_EXPORT_PAUSE") == "1":
+    from app.services.export_service import ExportService
+
+    def paused_export(self, *args):
+        Path(os.environ["OCR_TEST_MARKER"] + "-export").write_text("processing")
+        Event().wait(120)
+
+    ExportService._build = paused_export
+
 from app.main import app  # noqa: E402

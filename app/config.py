@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     ocr_subprocess_timeout_seconds: int = Field(default=300, ge=1)
     ocr_engine_jobs: int = Field(default=1, ge=1, le=8)
     max_batch_files: int = 25
+    batch_max_total_mb: int = Field(default=256, ge=1, le=2048)
+    export_max_total_mb: int = Field(default=256, ge=1, le=2048)
+    export_storage_limit_mb: int = Field(default=2048, ge=1)
+    export_owner_limit_mb: int = Field(default=512, ge=1)
+    export_ttl_seconds: int = Field(default=3600, ge=60)
+    export_owner_max_pending: int = Field(default=4, ge=1, le=32)
+    export_max_pending: int = Field(default=32, ge=1, le=256)
     api_key: str | None = None
     upload_rate_limit_per_minute: int = 0
     quality_min_text: int = Field(default=40, ge=0)

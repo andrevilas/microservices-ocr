@@ -221,7 +221,7 @@ def test_downloads_completed_jobs_as_zip() -> None:
     assert download_response.status_code == 200
     assert download_response.headers["content-type"] == "application/zip"
     with ZipFile(BytesIO(download_response.content)) as archive:
-        assert sorted(archive.namelist()) == ["first-searchable.pdf", "second-searchable.pdf"]
+        assert sorted(archive.namelist()) == ["first-searchable.pdf", "manifest.json", "second-searchable.pdf"]
 
 
 def test_clears_pending_jobs_from_queue() -> None:

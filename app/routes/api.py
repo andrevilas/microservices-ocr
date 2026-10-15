@@ -1,11 +1,17 @@
 import time
 import secrets
+import hashlib
+import json
+import re
+import tempfile
+import shutil
 from collections import defaultdict
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from threading import Lock
-from zipfile import ZIP_DEFLATED, ZipFile
+from threading import BoundedSemaphore, Lock
+from zipfile import ZIP_STORED, ZipFile
+from starlette.concurrency import run_in_threadpool
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
@@ -20,6 +26,8 @@ from app.services.job_queue import JobQueueProcessor, get_job_queue_processor
 from app.services.ocr_orchestrator import OcrOrchestrator
 from app.routes.auth import get_current_user
 from app.services.storage_service import JobStore, get_job_store
+from app.services.batch_service import BatchService
+from app.services.upload_service import CHUNK, MIB
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -30,6 +38,7 @@ templates = Jinja2Templates(directory="app/templates")
 
 _rate_lock = Lock()
 _rate_buckets: dict[str, list[float]] = defaultdict(list)
+_legacy_zip_slots = BoundedSemaphore(2)
 
 
 @dataclass(frozen=True)
@@ -143,6 +152,8 @@ async def _validate_pdf_upload(file: UploadFile) -> tuple[str, bytes]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only PDF uploads are supported.")
 
     filename = file.filename or "document.pdf"
+    if len(filename) > 255:
+        raise HTTPException(400, "Filename exceeds 255 characters.")
     if not filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file must have a .pdf extension.")
 
@@ -310,20 +321,31 @@ async def create_batch_jobs(
             detail=f"Batch upload limited to {settings.max_batch_files} files.",
         )
 
-    jobs: list[BatchUploadJob] = []
-    for file in files:
-        filename, payload = await _validate_pdf_upload(file)
-        scheduled = _schedule_job(processor, orchestrator, filename, payload, auth.owner_user_id, auth.owner_principal_id)
-        jobs.append(
-            BatchUploadJob(
-                job_id=scheduled.job_id,
-                filename=filename,
-                status=scheduled.status,
-                progress_percent=scheduled.progress_percent,
-            )
-        )
+    principal = auth.principal or Principal(auth.owner_principal_id, auth.owner_user_id,
+                                           frozenset({"jobs:submit", "jobs:read", "artifacts:read"}))
+    store = orchestrator.job_store
+    with tempfile.TemporaryDirectory(prefix="legacy-batch-", dir=store.root_dir) as staging:
+        prepared, total = [], 0
+        for index, file in enumerate(files):
+            filename, payload = await _validate_pdf_upload(file)
+            total += len(payload)
+            if total > settings.batch_max_total_mb * MIB:
+                raise HTTPException(413, "Aggregate batch size exceeds the configured limit.")
+            path = Path(staging) / f"{index}.pdf"
+            path.write_bytes(payload)
+            del payload
+            prepared.append((filename, path))
+        receipt = await run_in_threadpool(lambda: BatchService(store).create_legacy(principal, prepared))
+    pending = False
+    for item in receipt.items:
+        try:
+            await run_in_threadpool(processor.enqueue, item.job_id)
+        except Exception:
+            pending = True  # Every admitted ID remains visible; startup recovery can dispatch it.
+    return BatchUploadResponse(batch_id=receipt.batch_id, dispatch_pending=pending,
+                               jobs=[BatchUploadJob(job_id=i.job_id, filename=i.filename, status=i.status,
+                                                    progress_percent=i.progress_percent) for i in receipt.items])
 
-    return BatchUploadResponse(jobs=jobs)
 
 
 @router.get("/api/jobs/download-batch")
@@ -337,23 +359,74 @@ async def download_batch_results(
     if not job_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one job_id is required.")
 
-    completed_jobs = []
-    for job_id in job_ids:
-        job = job_store.get(job_id)
-        if job and _can_access_job(auth, job) and job.status == "completed" and job.output_pdf_path:
-            completed_jobs.append(job)
+    if len(job_ids) > 25:
+        raise HTTPException(422, "At most 25 job IDs are allowed.")
 
-    if not completed_jobs:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No completed jobs are available for batch download.")
+    def build_archive():
+        if not _legacy_zip_slots.acquire(blocking=False):
+            raise HTTPException(429, "Concurrent legacy ZIP limit reached.", headers={"Retry-After": "5"})
+        archive_file = None
+        try:
+            archive_file = tempfile.TemporaryFile(dir=job_store.root_dir)
+            with job_store._lock:
+                jobs = [j for job_id in dict.fromkeys(job_ids) if (j := job_store.jobs.get(job_id)) and _can_access_job(auth, j)]
+                completed = [j for j in jobs if j.status == "completed" and j.output_pdf_path and j.output_pdf_path.is_file()]
+                if not completed:
+                    raise HTTPException(409, "No completed jobs are available for batch download.")
+                limit = settings.export_max_total_mb * MIB
+                total_size = sum(j.output_pdf_path.stat().st_size for j in completed)
+                if total_size > limit:
+                    raise HTTPException(413, "Aggregate export size exceeds the configured limit.")
+                if shutil.disk_usage(job_store.root_dir).free < total_size + 65536 + settings.upload_min_free_mb * MIB:
+                    raise HTTPException(503, "Insufficient free disk space for the export.")
+                names, manifest, total = set(), [], 0
+                with ZipFile(archive_file, mode="w", compression=ZIP_STORED) as archive:
+                    for index, job in enumerate(jobs, 1):
+                        item = {"job_id": job.job_id, "filename": job.filename, "included": False}
+                        if job not in completed:
+                            item["reason"] = "artifact_unavailable"
+                        else:
+                            stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(job.filename).stem)[:100] or "document"
+                            name = stem + "-searchable.pdf"
+                            suffix = 0
+                            while name.casefold() in names:
+                                suffix += 1
+                                name = f"{index:03}-{job.job_id}-{suffix}-searchable.pdf"
+                            names.add(name.casefold())
+                            digest, size = hashlib.sha256(), 0
+                            with job.output_pdf_path.open("rb") as source, archive.open(name, "w", force_zip64=True) as output:
+                                while chunk := source.read(CHUNK):
+                                    total += len(chunk)
+                                    size += len(chunk)
+                                    if total > limit:
+                                        raise HTTPException(413, "Aggregate export size exceeds the configured limit.")
+                                    output.write(chunk)
+                                    digest.update(chunk)
+                            item.update(included=True, archive_name=name, size_bytes=size, sha256=digest.hexdigest())
+                        manifest.append(item)
+                    archive.writestr("manifest.json", json.dumps({"schema_version": "1.0", "items": manifest}))
+            archive_file.seek(0)
+            return archive_file
+        except BaseException:
+            if archive_file is not None:
+                archive_file.close()
+            _legacy_zip_slots.release()
+            raise
 
-    archive_buffer = BytesIO()
-    with ZipFile(archive_buffer, mode="w", compression=ZIP_DEFLATED) as archive:
-        for job in completed_jobs:
-            archive.write(job.output_pdf_path, arcname=f"{Path(job.filename).stem}-searchable.pdf")
-    archive_buffer.seek(0)
+    archive_file = await run_in_threadpool(build_archive)
+    class TemporaryZipResponse(StreamingResponse):
+        async def __call__(self, scope, receive, send):
+            try:
+                await super().__call__(scope, receive, send)
+            finally:
+                archive_file.close()
+                _legacy_zip_slots.release()
+    def chunks():
+        while chunk := archive_file.read(CHUNK):
+            yield chunk
+    return TemporaryZipResponse(chunks(), media_type="application/zip",
+                                headers={"Content-Disposition": 'attachment; filename="ocr-results-batch.zip"'})
 
-    headers = {"Content-Disposition": 'attachment; filename="ocr-results-batch.zip"'}
-    return StreamingResponse(archive_buffer, media_type="application/zip", headers=headers)
 
 
 @router.post("/api/jobs/clear-queue", response_model=QueueClearResponse)

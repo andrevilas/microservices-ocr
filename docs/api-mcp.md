@@ -9,7 +9,8 @@ Rastreabilidade: OCR-AM-02 / LPM `AEHQJUb02uohT4MlVf8U`, projeto OCR Recognizer
 Estes incrementos entregam a fundação, identidades de serviço, consultas autenticadas,
 [uploads persistentes e criação idempotente por HTTP](uploads.md),
 [texto por página e relatórios persistentes](results.md),
-[opções por job e capacidades verificadas](capabilities.md). Lotes, exportação, cancelamento ativo,
+[opções por job e capacidades verificadas](capabilities.md) e
+[lotes/exportação assíncrona](batches-exports.md). Cancelamento ativo,
 OAuth remoto e migração do painel continuam no backlog.
 O [fluxo vertical MCP e cliente stdio](mcp-workflow.md), entrega OCR-AM-08,
 permite preparar upload, submeter uma referência e recuperar texto e artefato.
@@ -23,6 +24,12 @@ permite preparar upload, submeter uma referência e recuperar texto e artefato.
 | POST /api/v1/upload-sessions | ocr_prepare_upload | jobs:submit |
 | GET /api/v1/uploads/{upload_id} | ocr_get_upload | jobs:submit |
 | POST /api/v1/jobs | ocr_submit_job | jobs:submit |
+| POST /api/v1/batches | ocr_create_batch | jobs:submit |
+| GET /api/v1/batches | ocr_list_batches | jobs:read |
+| GET /api/v1/batches/{id} | ocr_get_batch | jobs:read |
+| POST /api/v1/exports | ocr_create_export | jobs:read e artifacts:read |
+| GET /api/v1/exports/{id} | ocr_get_export | jobs:read e artifacts:read |
+| GET /api/v1/exports/{id}/content | URL retornada por ocr_get_export | jobs:read e artifacts:read |
 | GET /api/v1/jobs | ocr_list_jobs | jobs:read |
 | GET /api/v1/jobs/{job_id} | ocr_get_job | jobs:read |
 | GET /api/v1/metrics | ocr_get_metrics | jobs:read |
@@ -34,8 +41,8 @@ permite preparar upload, submeter uma referência e recuperar texto e artefato.
 As duas interfaces chamam `JobApplication`, passando um `Principal` imutável.
 O SDK MCP oficial está fixado em 2.3.0. `/openapi.json` declara Bearer, schemas,
 operationId e erros da API v1. O download usa HTTP autenticado; PDFs não entram
-no JSON das ferramentas. Nove ferramentas são de leitura; preparação de upload
-e submissão são mutações. Admissão e encaminhamento à fila usam o mesmo serviço
+no JSON das ferramentas. Doze ferramentas são de leitura; preparação de upload,
+submissão, criação de lote e exportação são mutações. Admissão e encaminhamento à fila usam o mesmo serviço
 em HTTP e MCP.
 
 ## Autenticação e compatibilidade

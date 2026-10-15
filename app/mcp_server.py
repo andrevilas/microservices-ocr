@@ -14,6 +14,8 @@ from app.security import authenticate_bearer
 from app.services.admission_service import submit_and_enqueue
 from app.services.job_queue import get_job_queue_processor
 from app.services.upload_service import get_upload_service
+from app.services.batch_service import dispatch_batch, get_batch_service
+from app.services.export_service import get_export_service
 
 
 class BearerAuth:
@@ -40,8 +42,9 @@ class BearerAuth:
 
 
 def build_mcp_server(service_provider=get_job_application, upload_provider=get_upload_service,
-                     queue_provider=get_job_queue_processor):
-    server = OcrMCPServer("OCR Recognizer", version="0.2.0", instructions=INSTRUCTIONS)
+                     queue_provider=get_job_queue_processor, batch_provider=get_batch_service,
+                     export_provider=get_export_service):
+    server = OcrMCPServer("OCR Recognizer", version="0.3.0", instructions=INSTRUCTIONS)
 
     async def invoke(ctx: Context, operation: str, *args):
         request = ctx.request_context.request
@@ -50,6 +53,14 @@ def build_mcp_server(service_provider=get_job_application, upload_provider=get_u
             raise ToolError("authentication_required: A valid Bearer token is required.")
 
         def execute():
+            if operation == "create_batch":
+                return dispatch_batch(batch_provider(), queue_provider(), principal, *args)[0]
+            if operation in ("get_batch", "list_batches"):
+                return getattr(batch_provider(), "get" if operation == "get_batch" else "list")(principal, *args)
+            if operation == "create_export":
+                return export_provider().create(principal, *args)[0]
+            if operation == "get_export":
+                return export_provider().get(principal, *args)
             if operation == "prepare_upload":
                 return upload_provider().reserve(principal, *args)
             if operation == "get_upload":
