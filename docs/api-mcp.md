@@ -11,7 +11,7 @@ Estes incrementos entregam a fundação, identidades de serviço, consultas aute
 [texto por página e relatórios persistentes](results.md),
 [opções por job e capacidades verificadas](capabilities.md) e
 [lotes/exportação assíncrona](batches-exports.md) e
-[cancelamento/reprocessamento](job-control.md). OAuth remoto e migração do painel continuam no backlog.
+[cancelamento/reprocessamento](job-control.md) e [retenção/exclusão](retention.md). OAuth remoto e migração do painel continuam no backlog.
 O [fluxo vertical MCP e cliente stdio](mcp-workflow.md), entrega OCR-AM-08,
 permite preparar upload, submeter uma referência e recuperar texto e artefato.
 
@@ -19,6 +19,7 @@ permite preparar upload, submeter uma referência e recuperar texto e artefato.
 
 | HTTP | Ferramenta MCP | Permissão |
 |---|---|---|
+| DELETE /api/v1/jobs/{id}/artifacts | ocr_delete_job_artifacts | artifacts:delete |
 | POST /api/v1/jobs/{id}/cancel | ocr_cancel_job | jobs:cancel |
 | POST /api/v1/jobs/cancel-batch | ocr_cancel_jobs | jobs:cancel |
 | POST /api/v1/jobs/{id}/retry | ocr_retry_job | jobs:submit |
@@ -45,7 +46,7 @@ As duas interfaces chamam `JobApplication`, passando um `Principal` imutável.
 O SDK MCP oficial está fixado em 2.3.0. `/openapi.json` declara Bearer, schemas,
 operationId e erros da API v1. O download usa HTTP autenticado; PDFs não entram
 no JSON das ferramentas. Doze ferramentas são de leitura; preparação de upload,
-submissão, criação de lote, exportação, retry e os dois cancelamentos são mutações. Admissão e encaminhamento à fila usam o mesmo serviço
+submissão, criação de lote, exportação, retry, exclusão de arquivos e os dois cancelamentos são mutações. Admissão e encaminhamento à fila usam o mesmo serviço
 em HTTP e MCP.
 
 ## Autenticação e compatibilidade
@@ -54,7 +55,7 @@ O piloto usa Bearer JWT de usuário emitido por `POST /auth/login` ou credencial
 individual de serviço, enviado
 explicitamente em `Authorization`. A identidade é validada no banco a cada
 requisição. Expiração ausente, expirada ou inválida é rejeitada. As permissões
-atuais do usuário são `jobs:read`, `artifacts:read`, `jobs:submit` e `jobs:cancel`.
+atuais do usuário são `jobs:read`, `artifacts:read`, `jobs:submit`, `jobs:cancel` e `artifacts:delete`.
 Serviços recebem apenas os escopos explícitos da credencial.
 
 Não há emissão de credenciais, login ou senha como ferramenta MCP. Tokens não
@@ -94,8 +95,8 @@ o cursor não representa um snapshot transacional de todo o catálogo.
 
 Erros v1 usam error.code, error.message, error.details e request_id, inclusive validação.
 401 inclui `WWW-Authenticate: Bearer`; 403 indica falta de escopo; 409 indica
-artefato indisponível ou conflito de admissão. Upload expirado retorna 410; o ciclo
-completo de retenção de jobs/artefatos e tombstones será tratado na AM-11.
+artefato não produzido ou conflito de admissão. Upload expirado retorna 410;
+arquivos expirados/excluídos de jobs também retornam 410, com tombstone persistido.
 
 ## MCP local
 
@@ -132,7 +133,8 @@ O subprocesso stdio apenas chama a API autenticada; não abre banco ou inicia fi
 
 Importar `app.main` ou os módulos de serviços não cria banco, diretório de
 dados ou threads OCR. A inicialização preguiçosa é protegida por locks. O
-lifespan da aplicação inicia uma fila e o gerenciador MCP e encerra ambos.
+lifespan da aplicação inicia fila, worker de exportação, coletor de retenção
+e gerenciador MCP e os encerra no shutdown.
 `create_app()` cria uma nova aplicação e um novo gerenciador MCP para testes;
 o gerenciador do SDK não permite reiniciar a mesma instância.
 
@@ -144,7 +146,7 @@ Não use essa estratégia em volumes de rede com semântica de locking não vali
 
 Se um worker ultrapassar o prazo de shutdown, o servidor acusa erro e mantém
 a trava até o processo sair; não declara esse worker encerrado nem inicia
-recuperação concorrente. Interrupção real dos subprocessos é parte da AM-10.
+recuperação concorrente. A [AM-10](job-control.md) controla a interrupção dos subprocessos.
 
 ## Validação e limites
 

@@ -3,6 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 from app.options import EffectiveOptions, ProcessingOptions
+from app.retention_models import RetentionInfo
 
 
 JobStatus = Literal["queued", "processing", "cancel_requested", "completed", "failed", "canceled"]
@@ -47,6 +48,7 @@ class JobResponse(BaseModel):
     options_requested: ProcessingOptions | None = None
     options_effective: EffectiveOptions | None = None
     parent_job_id: str | None = None
+    retention: RetentionInfo | None = None
 
 
 class OCRResult(BaseModel):

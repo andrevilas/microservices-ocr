@@ -14,7 +14,7 @@ from zipfile import ZIP_STORED, ZipFile
 from starlette.concurrency import run_in_threadpool
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pypdf import PdfReader
 
@@ -28,6 +28,8 @@ from app.routes.auth import get_current_user
 from app.services.storage_service import JobStore, get_job_store
 from app.services.batch_service import BatchService
 from app.services.upload_service import CHUNK, MIB
+from app.retention_models import retention_info
+from app.leased_response import LeasedFileResponse
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -370,7 +372,7 @@ async def download_batch_results(
             archive_file = tempfile.TemporaryFile(dir=job_store.root_dir)
             with job_store._lock:
                 jobs = [j for job_id in dict.fromkeys(job_ids) if (j := job_store.jobs.get(job_id)) and _can_access_job(auth, j)]
-                completed = [j for j in jobs if j.status == "completed" and j.output_pdf_path and j.output_pdf_path.is_file()]
+                completed = [j for j in jobs if retention_info(j).state == "retained" and j.status == "completed" and j.output_pdf_path and j.output_pdf_path.is_file()]
                 if not completed:
                     raise HTTPException(409, "No completed jobs are available for batch download.")
                 limit = settings.export_max_total_mb * MIB
@@ -457,6 +459,5 @@ async def download_result(
 ) -> Response:
     auth.require("artifacts:read")
     job = _get_authorized_job(job_store, job_id, auth)
-    if job.status != "completed" or not job.output_pdf_path:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job is not ready for download.")
-    return FileResponse(job.output_pdf_path, filename=f"{Path(job.filename).stem}-searchable.pdf", media_type="application/pdf")
+    return LeasedFileResponse(job_store, job_id, auth.owner_principal_id,
+                              filename=f"{Path(job.filename).stem}-searchable.pdf")

@@ -1,7 +1,7 @@
 # Cancelamento e reprocessamento
 
-Entrega OCR-AM-10, LPM `qwslcnBIlzvnmeDgeTjy`. API 1.5.0: 29 operações;
-MCP 0.4.0: 19 ferramentas (12 leituras, sete mutações).
+Entrega OCR-AM-10, LPM `qwslcnBIlzvnmeDgeTjy`. Contrato atual API 1.6.0:
+30 operações; MCP 0.5.0: 20 ferramentas (12 leituras, oito mutações).
 
 | HTTP | MCP | Escopo |
 |---|---|---|
@@ -82,6 +82,8 @@ Omissão e fornecimento explícito de opções são pedidos distintos.
 
 Só originais completed/failed/canceled podem ser reprocessados.
 Entrada original ausente retorna 410 `input_expired`: faça novo upload.
+Retenção vencida/exclusão registrada retorna 410 `artifacts_expired` ou
+`artifacts_deleted`, mesmo se o purge físico ainda aguarda uma leitura ativa.
 A admissão revalida capacidades e quotas atuais e copia a entrada para diretório
 novo. Grava job derivado com `parent_job_id` e recibo na mesma transação.
 O original e seus resultados não mudam; o novo job também aparece no histórico.
@@ -91,7 +93,7 @@ A associação do lote original não se transfere ao derivado.
 Replay devolve o recibo inicial, mesmo após conclusão ou expiração da entrada
 original; consulte o job para estado atual. Falha no despacho mantém o derivado
 persistido e retorna queue_unavailable: repita a chave/payload.
-Chaves e vínculo persistem; retenção de metadados pertence à AM-11.
+Chaves e vínculo persistem sem TTL; veja a [política de retenção](retention.md).
 
 ## Evidência
 

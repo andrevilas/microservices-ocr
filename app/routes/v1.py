@@ -8,11 +8,12 @@ from app.application import (ArtifactResponse, IdentityResponse, JobApplication,
 from app.models import JobResponse, JobStatus, QualityLabel
 from app.results import JobReport, TextChunk
 from app.options import Capabilities, ProcessingOptions
+from app.retention_models import DeletionReceipt
 from app.security import require_principal
 from app.http_contract import error_responses, example, operation
 
 router = APIRouter(prefix="/api/v1", tags=["API v1"],
-                   responses=error_responses(401, 403, 404, 405, 409, 422, 500, 503))
+                   responses=error_responses(401, 403, 404, 405, 409, 410, 422, 500, 503))
 JOB_EXAMPLE = {"job_id": "00000000000000000000000000000001", "filename": "example.pdf",
                "status": "queued", "progress_percent": 0, "created_at": "2026-10-15T12:00:00Z",
                "updated_at": "2026-10-15T12:00:00Z", "quality": None, "download_url": None, "error": None}
@@ -120,5 +121,15 @@ def artifact(job_id: str, principal: Principal = Depends(require_principal), ser
             responses={**error_responses(400, 416), **{status: {"content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}}}
                                                       for status in (200, 206)}})
 def artifact_content(job_id: str, principal: Principal = Depends(require_principal), service: JobApplication = Depends(get_job_application)):
-    """Download the caller-owned PDF; supports Range. Returns 409 if the output is unavailable."""
-    return FileResponse(service.artifact_file(principal, job_id), filename=f"{job_id}-searchable.pdf", media_type="application/pdf")
+    """Download the caller-owned PDF; supports Range. Returns 410 after retention ends, 409 when no output exists."""
+    return service.artifact_download(principal, job_id)
+
+
+@router.delete("/jobs/{job_id}/artifacts", response_model=DeletionReceipt, operation_id="ocr_delete_job_artifacts",
+               openapi_extra=operation("artifacts:delete"),
+               responses=example({"job_id": JOB_EXAMPLE["job_id"], "retention": {"state": "deleted", "expires_at": None,
+                                  "unavailable_at": "2026-10-15T12:00:00Z", "purged_at": None, "purge_pending": True}}))
+def delete_artifacts(job_id: str, principal: Principal = Depends(require_principal),
+                     service: JobApplication = Depends(get_job_application)):
+    """Idempotently remove all files of an owned terminal job. Preserve job history. Existing transfers finish; new content reads return 410. purge_pending reports deferred physical removal. Requires artifacts:delete."""
+    return service.delete_artifacts(principal, job_id)

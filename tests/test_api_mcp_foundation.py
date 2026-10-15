@@ -132,7 +132,7 @@ def test_openapi_declares_identity_and_unique_operations():
         for operation in methods.values():
             assert operation["security"] == [{"PrincipalBearer": []}]
             ids.append(operation["operationId"])
-    assert len(ids) == len(set(ids)) == 29
+    assert len(ids) == len(set(ids)) == 30
 
 
 def test_read_snapshot_and_sanitized_error(fixture):
@@ -232,8 +232,8 @@ def test_real_sdk_http_parity_and_cross_user_denial(fixture, mode):
                                           headers={"Authorization": f"Bearer {tokens[0]}"}) as http:
                 async with Client(streamable_http_client("http://localhost/mcp", http_client=http), mode=mode) as client:
                     tools = await client.list_tools()
-                    assert {t.name for t in tools.tools} == {"ocr_whoami", "ocr_list_jobs", "ocr_get_job", "ocr_get_metrics", "ocr_get_artifact", "ocr_get_text", "ocr_get_report", "ocr_get_capabilities", "ocr_prepare_upload", "ocr_get_upload", "ocr_submit_job", "ocr_create_batch", "ocr_list_batches", "ocr_get_batch", "ocr_create_export", "ocr_get_export", "ocr_cancel_job", "ocr_cancel_jobs", "ocr_retry_job"}
-                    assert all(t.annotations.read_only_hint == (t.name not in {"ocr_prepare_upload", "ocr_submit_job", "ocr_create_batch", "ocr_create_export", "ocr_cancel_job", "ocr_cancel_jobs", "ocr_retry_job"}) for t in tools.tools)
+                    assert {t.name for t in tools.tools} == {"ocr_whoami", "ocr_list_jobs", "ocr_get_job", "ocr_get_metrics", "ocr_get_artifact", "ocr_get_text", "ocr_get_report", "ocr_get_capabilities", "ocr_prepare_upload", "ocr_get_upload", "ocr_submit_job", "ocr_create_batch", "ocr_list_batches", "ocr_get_batch", "ocr_create_export", "ocr_get_export", "ocr_cancel_job", "ocr_cancel_jobs", "ocr_retry_job", "ocr_delete_job_artifacts"}
+                    assert all(t.annotations.read_only_hint == (t.name not in {"ocr_prepare_upload", "ocr_submit_job", "ocr_create_batch", "ocr_create_export", "ocr_cancel_job", "ocr_cancel_jobs", "ocr_retry_job", "ocr_delete_job_artifacts"}) for t in tools.tools)
                     for name, args, path in [
                         ("ocr_whoami", {}, "/api/v1/me"),
                         ("ocr_get_capabilities", {}, "/api/v1/capabilities"),

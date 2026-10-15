@@ -61,6 +61,10 @@ class ApiClient:
                 path += "/" + operation
             if operation == "text":
                 query = dict(zip(("page", "offset", "max_chars"), args[1:]))
+        elif operation == "delete_artifacts":
+            if not re.fullmatch(r"[0-9a-f]{32}", args[0]):
+                raise ToolError("job_not_found: Resource not found.")
+            method, path = "DELETE", "/jobs/" + args[0] + "/artifacts"
         elif operation in ("cancel", "retry"):
             if not re.fullmatch(r"[0-9a-f]{32}", args[0]):
                 raise ToolError("job_not_found: Resource not found.")
@@ -118,7 +122,7 @@ async def run():
     async with httpx2.AsyncClient(headers={"Authorization": "Bearer " + token},
                                  follow_redirects=False, trust_env=False,
                                  timeout=120, limits=httpx2.Limits(max_connections=8)) as http:
-        server = OcrMCPServer("OCR Recognizer", version="0.4.0", instructions=INSTRUCTIONS, log_level="WARNING")
+        server = OcrMCPServer("OCR Recognizer", version="0.5.0", instructions=INSTRUCTIONS, log_level="WARNING")
         register_tools(server, ApiClient(origin, http).invoke)
         await server.run_stdio_async()
 

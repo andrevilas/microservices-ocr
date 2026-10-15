@@ -430,6 +430,7 @@ class TestJobStoreCleanup:
         store = _make_store(tmp_path)
         job = _create_dummy_job(store)
         assert job.working_dir.exists()
+        store.update(job.job_id, status="completed")
         store.cleanup(job.job_id)
         assert not job.working_dir.exists()
 

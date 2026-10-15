@@ -16,6 +16,7 @@ from app.config import settings
 from app.services.batch_service import request_identity
 from app.services.storage_service import get_job_store
 from app.services.upload_service import CHUNK, MIB
+from app.retention_models import retention_info
 
 
 def file_digest(path):
@@ -52,9 +53,17 @@ class ExportService:
             self._expire()
 
     def _expire(self):
-        for (export_id,) in self.jobs._get_conn().execute("SELECT export_id FROM exports WHERE expires_at<=?", (time.time(),)):
-            if not self.leases.get(export_id):
+        for export_id, expires_at, receipt in self.jobs._get_conn().execute("SELECT export_id,expires_at,receipt FROM exports"):
+            if (expires_at <= time.time() or self._source_removed(receipt)) and not self.leases.get(export_id):
                 (self.root / f"{export_id}.zip").unlink(missing_ok=True)
+
+    def _source_removed(self, receipt):
+        for item in json.loads(receipt)["items"]:
+            if item["included"]:
+                job = self.jobs.jobs.get(item["job_id"])
+                if job is None or retention_info(job).state in ("expired", "deleted"):
+                    return True
+        return False
 
     def _owned(self, principal, export_id):
         row = self.jobs._get_conn().execute("SELECT receipt,expires_at FROM exports WHERE export_id=? AND owner=?", (export_id, principal.subject)).fetchone()
@@ -62,6 +71,8 @@ class ExportService:
             raise ApplicationError(404, "export_not_found", "Export not found.")
         if row[1] <= time.time():
             raise ApplicationError(410, "export_expired", "Export expired; use a new key to request a new snapshot.")
+        if self._source_removed(row[0]):
+            raise ApplicationError(410, "export_source_removed", "A source job is no longer retained.")
         if not (self.root / f"{export_id}.zip").is_file():
             raise ApplicationError(409, "export_unavailable", "Export artifact is unavailable.")
         return ExportReceipt.model_validate_json(row[0])
@@ -96,7 +107,7 @@ class ExportService:
             pending, own = conn.execute("SELECT COUNT(*),COALESCE(SUM(owner=?),0) FROM export_requests WHERE state IN ('queued','processing')", (principal.subject,)).fetchone()
             if pending >= settings.export_max_pending or own >= settings.export_owner_max_pending:
                 raise ApplicationError(429, "export_queue_full", "Pending export limit reached.")
-            size = sum(j.output_pdf_path.stat().st_size for j in jobs if j.status == "completed" and j.output_pdf_path and j.output_pdf_path.is_file())
+            size = sum(j.output_pdf_path.stat().st_size for j in jobs if retention_info(j).state == "retained" and j.status == "completed" and j.output_pdf_path and j.output_pdf_path.is_file())
             if size > settings.export_max_total_mb * MIB:
                 raise ApplicationError(413, "export_too_large", "Aggregate result size exceeds the export limit.")
             self._capacity(principal.subject, size + 65536)
@@ -174,7 +185,7 @@ class ExportService:
             if any(job is None or job.effective_owner != principal.subject for job in jobs):
                 raise ApplicationError(404, "job_not_found", "Job not found.")
             limit = settings.export_max_total_mb * MIB
-            total = sum(j.output_pdf_path.stat().st_size for j in jobs if j.status == "completed" and j.output_pdf_path and j.output_pdf_path.is_file())
+            total = sum(j.output_pdf_path.stat().st_size for j in jobs if retention_info(j).state == "retained" and j.status == "completed" and j.output_pdf_path and j.output_pdf_path.is_file())
             if total > limit:
                 raise ApplicationError(413, "export_too_large", "Aggregate result size exceeds the export limit.")
             # Stored PDFs avoid compression CPU spikes; reserve 64 KiB for manifest/ZIP metadata.
@@ -188,7 +199,7 @@ class ExportService:
                         item = ExportItem(job_id=job.job_id, filename=job.filename, status=job.status, included=False)
                         if job.status != "completed":
                             item.reason = "job_not_completed"
-                        elif not job.output_pdf_path or not job.output_pdf_path.is_file():
+                        elif retention_info(job).state in ("expired", "deleted") or not job.output_pdf_path or not job.output_pdf_path.is_file():
                             item.reason = "artifact_unavailable"
                         else:
                             item.archive_name = f"{index:03}-{job.job_id}.pdf"

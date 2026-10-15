@@ -1,7 +1,7 @@
 # Lotes e exportação assíncrona
 
-Entrega OCR-AM-09, LPM `B6WE9dwgmEvlxm9JzbCO`. Contrato atual HTTP 1.5.0,
-29 operações HTTP e 19 ferramentas MCP (12 de leitura e sete mutações),
+Entrega OCR-AM-09, LPM `B6WE9dwgmEvlxm9JzbCO`. Contrato atual HTTP 1.6.0,
+30 operações HTTP e 20 ferramentas MCP (12 de leitura e oito mutações),
 incluindo [controle de jobs da AM-10](job-control.md).
 
 | HTTP | MCP | Escopos |
@@ -91,7 +91,9 @@ atual pelo ID. Mudança de IDs ou de ordem conflita. Depois da expiração, a ch
 antiga não recria o ZIP: solicite um novo snapshot com chave nova. Uma exportação
 `failed` tem `error_code` sanitizado e pode ser novamente solicitada com outra chave
 depois de corrigida a causa. Não há retries automáticos infinitos de exportações
-que falharam. Registros e chaves persistem; retenção completa de metadados será AM-11.
+que falharam. Registros e chaves persistem sem TTL. Um job incluído cujo conteúdo
+foi removido/expirado invalida novas leituras do ZIP com 410 `export_source_removed`;
+transferências já abertas terminam. Veja [retenção](retention.md).
 
 ## Limites e execução
 
@@ -116,9 +118,9 @@ Somente um processo detém a trava do diretório; não execute múltiplos worker
 Uvicorn/réplicas sobre o mesmo SQLite. O worker de exportação é único por runtime.
 A cópia do snapshot segura a trava do store para não disputar com limpeza;
 exportações grandes podem atrasar consultas/atualizações, limitadas pelo tamanho
-configurado. Não há benchmark do NAS nesta entrega. A AM-11 amplia a política
-de retenção; hoje os ZIPs expirados sem downloads ativos são removidos no startup
-e na próxima verificação de capacidade. Arquivos incompletos/orfãos de exportação
+configurado. Não há benchmark do NAS nesta entrega. ZIPs expirados ou invalidados
+sem downloads ativos são removidos no startup, na verificação de capacidade e
+pelo coletor periódico da AM-11. Arquivos incompletos/orfãos de exportação
 são reconciliados no startup sob a trava de runtime.
 
 ## Compatibilidade legada

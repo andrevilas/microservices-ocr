@@ -56,7 +56,8 @@ Idempotency-Replayed informa true/false. Replays devolvem o recibo 202 original
 com status queued, mesmo se o job já terminou; use GET /jobs/{id} para estado
 atual. A garantia dura enquanto o registro de admissão existir: este incremento
 não expira essas chaves automaticamente. Expirar o upload não remove o recibo
-nem permite recriar o job pela mesma chave. Política de descarte vem na AM-11.
+nem permite recriar o job pela mesma chave. [Política de retenção da AM-11](retention.md):
+metadados e chaves permanecem sem TTL; os arquivos têm prazos independentes.
 
 O input é copiado com buffer limitado e fsync antes do commit. Falhas antes
 do commit fazem rollback; arquivos incompletos exclusivos da admissão são
@@ -112,9 +113,9 @@ Quotas/concurrência retornam 429 com Retry-After: 60; disco/fila indisponível,
 503 com Retry-After: 5. São sugestões de repetição, não garantia de liberação.
 Arquivo excessivo retorna 413, tipo inadequado 415, contrato/PDF inválido 422,
 conflitos 409, timeout 408. Upload expirado retorna 410 ao proprietário e 404
-a terceiros. Expiração limpa o upload ao iniciar, reservar ou consultar;
-a cópia de um job admitido é preservada. Limpeza periódica e política completa
-de retenção permanecem na AM-11.
+a terceiros. Expiração limpa o upload ao iniciar, reservar, consultar ou no
+coletor periódico da AM-11; uploads em recepção são preservados. A cópia de um
+job admitido segue seu próprio prazo, contado a partir da conclusão.
 
 ## Verificação
 

@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from app.config import settings
 
-SERVICE_SCOPES = frozenset({"jobs:read", "jobs:submit", "jobs:cancel", "artifacts:read"})
+SERVICE_SCOPES = frozenset({"jobs:read", "jobs:submit", "jobs:cancel", "artifacts:read", "artifacts:delete"})
 TOKEN_PATTERN = re.compile(r"ocr_svc_([0-9a-f]{32})\.[A-Za-z0-9_-]{43}\Z")
 
 

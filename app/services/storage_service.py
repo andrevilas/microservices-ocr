@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import logging
 import re
-import shutil
 import sqlite3
 from dataclasses import dataclass, field, fields as dc_fields, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Dict, get_args
@@ -14,6 +13,8 @@ from uuid import uuid4
 from app.config import settings
 from app.models import JobResponse, JobStatus, QualityLabel
 from app.options import EffectiveOptions, ProcessingOptions
+from app.retention_models import retention_info
+from app.services.artifact_retention import ArtifactRetentionMixin, TERMINAL
 
 _VALID_STATUSES: frozenset[str] = frozenset(get_args(JobStatus))
 _VALID_QUALITIES: frozenset[str] = frozenset(get_args(QualityLabel))
@@ -29,7 +30,7 @@ _JOB_RECORD_FIELDS: frozenset[str] | None = None
 def _allowed_update_fields() -> frozenset[str]:
     global _JOB_RECORD_FIELDS
     if _JOB_RECORD_FIELDS is None:
-        _JOB_RECORD_FIELDS = frozenset(f.name for f in dc_fields(JobRecord)) - {"job_id", "created_at", "owner_user_id", "owner_principal_id", "options_requested", "options_effective", "parent_job_id"}
+        _JOB_RECORD_FIELDS = frozenset(f.name for f in dc_fields(JobRecord)) - {"job_id", "created_at", "owner_user_id", "owner_principal_id", "options_requested", "options_effective", "parent_job_id", "artifacts_expires_at", "artifacts_removed_at", "artifacts_removal_reason", "artifacts_purged_at"}
     return _JOB_RECORD_FIELDS
 
 
@@ -52,13 +53,18 @@ class JobRecord:
     options_effective: EffectiveOptions | None = None
     error_code: str | None = None
     parent_job_id: str | None = None
+    artifacts_expires_at: datetime | None = None
+    artifacts_removed_at: datetime | None = None
+    artifacts_removal_reason: str | None = None
+    artifacts_purged_at: datetime | None = None
 
     @property
     def effective_owner(self) -> str | None:
         return self.owner_principal_id or (f"user:{self.owner_user_id}" if self.owner_user_id is not None else None)
 
     def to_response(self) -> JobResponse:
-        download_url = f"/api/jobs/{self.job_id}/download" if self.status == "completed" and self.output_pdf_path else None
+        retention = retention_info(self)
+        download_url = f"/api/jobs/{self.job_id}/download" if self.status == "completed" and self.output_pdf_path and retention.state == "retained" else None
         return JobResponse(
             job_id=self.job_id,
             filename=self.filename,
@@ -73,6 +79,7 @@ class JobRecord:
             options_requested=self.options_requested,
             options_effective=self.options_effective,
             parent_job_id=self.parent_job_id,
+            retention=retention,
         )
 
 
@@ -99,12 +106,13 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 
 @dataclass
-class JobStore:
+class JobStore(ArtifactRetentionMixin):
     root_dir: Path = field(default_factory=lambda: settings.ocr_tmp_dir)
     jobs: Dict[str, JobRecord] = field(default_factory=dict)
     _lock: Lock = field(default_factory=Lock)
     _db_path: Path | None = field(default=None, repr=False)
     _conn: sqlite3.Connection | None = field(default=None, repr=False)
+    _artifact_leases: dict[str, int] = field(default_factory=dict, repr=False)
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -136,9 +144,12 @@ class JobStore:
             conn.execute("ALTER TABLE jobs ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0")
         if "owner_principal_id" not in columns:
             conn.execute("ALTER TABLE jobs ADD COLUMN owner_principal_id TEXT")
-        for column in ("options_requested", "options_effective", "error_code", "parent_job_id"):
+        for column in ("options_requested", "options_effective", "error_code", "parent_job_id", "artifacts_expires_at", "artifacts_removed_at", "artifacts_removal_reason", "artifacts_purged_at"):
             if column not in columns:
                 conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} TEXT")
+        conn.execute("""CREATE TABLE IF NOT EXISTS artifact_audit (
+            job_id TEXT NOT NULL, event TEXT NOT NULL, actor TEXT NOT NULL,
+            reason TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY(job_id,event))""")
         # Only known human ownership can be mapped; orphan records remain restricted.
         conn.execute("UPDATE jobs SET owner_principal_id='user:' || owner_user_id WHERE owner_principal_id IS NULL AND owner_user_id IS NOT NULL")
         conn.commit()
@@ -157,6 +168,8 @@ class JobStore:
         for row in rows:
             data = dict(zip(col_names, row))
             record = self._row_to_record(data)
+            if record.status in TERMINAL and record.artifacts_expires_at is None:
+                self._persist(record)
             self.jobs[record.job_id] = record
 
     @staticmethod
@@ -179,16 +192,22 @@ class JobStore:
             options_effective=EffectiveOptions.model_validate_json(data["options_effective"]) if data.get("options_effective") else None,
             error_code=data.get("error_code"),
             parent_job_id=data.get("parent_job_id"),
+            artifacts_expires_at=datetime.fromisoformat(data["artifacts_expires_at"]) if data.get("artifacts_expires_at") else None,
+            artifacts_removed_at=datetime.fromisoformat(data["artifacts_removed_at"]) if data.get("artifacts_removed_at") else None,
+            artifacts_removal_reason=data.get("artifacts_removal_reason"),
+            artifacts_purged_at=datetime.fromisoformat(data["artifacts_purged_at"]) if data.get("artifacts_purged_at") else None,
         )
 
     def _persist(self, job: JobRecord, *, commit: bool = True) -> None:
+        if job.status in TERMINAL and job.artifacts_expires_at is None:
+            job.artifacts_expires_at = job.updated_at + timedelta(seconds=settings.job_retention_seconds)
         conn = self._get_conn()
         conn.execute(
             """
             INSERT OR REPLACE INTO jobs
                 (job_id, filename, working_dir, status, owner_user_id, progress_percent, created_at, updated_at,
-                 input_pdf_path, output_pdf_path, quality, error, owner_principal_id, options_requested, options_effective, error_code, parent_job_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 input_pdf_path, output_pdf_path, quality, error, owner_principal_id, options_requested, options_effective, error_code, parent_job_id, artifacts_expires_at, artifacts_removed_at, artifacts_removal_reason, artifacts_purged_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.job_id,
@@ -208,6 +227,10 @@ class JobStore:
                 job.options_effective.model_dump_json() if job.options_effective else None,
                 job.error_code,
                 job.parent_job_id,
+                job.artifacts_expires_at.isoformat() if job.artifacts_expires_at else None,
+                job.artifacts_removed_at.isoformat() if job.artifacts_removed_at else None,
+                job.artifacts_removal_reason,
+                job.artifacts_purged_at.isoformat() if job.artifacts_purged_at else None,
             ),
         )
         if commit:
@@ -306,7 +329,7 @@ class JobStore:
             self._get_conn().rollback()
             raise
         # Preserve legacy live references, publishing them only after durable commit.
-        for name in (*changes, "updated_at"):
+        for name in (*changes, "updated_at", "artifacts_expires_at"):
             setattr(job, name, getattr(record, name))
         return replace(record)
 
@@ -351,43 +374,6 @@ class JobStore:
                 return self._transition_locked(job, status="canceled", output_pdf_path=None,
                                                quality=None, error=None, error_code="job_canceled")
             return replace(job)
-
-    def cleanup(self, job_id: str) -> None:
-        # Export snapshots hold this lock while copying source artifacts.
-        with self._lock:
-            job = self.jobs.get(job_id)
-            if job:
-                shutil.rmtree(job.working_dir, ignore_errors=True)
-                if job.output_pdf_path is not None:
-                    job.output_pdf_path = None
-                    self._persist(job)
-
-    # -- TTL cleanup ---------------------------------------------------------
-
-    def cleanup_expired(self, retention_seconds: int | None = None) -> list[str]:
-        """Remove files for completed/failed/canceled jobs older than TTL.
-
-        Returns list of cleaned job_ids. DB records are preserved but
-        output_pdf_path is set to None when files are removed.
-        """
-        ttl = retention_seconds if retention_seconds is not None else settings.job_retention_seconds
-        now = datetime.now(timezone.utc)
-        cleaned: list[str] = []
-        with self._lock:
-            for job in list(self.jobs.values()):
-                if job.status not in ("completed", "failed", "canceled"):
-                    continue
-                age = (now - job.updated_at).total_seconds()
-                if age < ttl:
-                    continue
-                # Remove filesystem artifacts
-                if job.working_dir.exists():
-                    shutil.rmtree(job.working_dir, ignore_errors=True)
-                job.output_pdf_path = None
-                job.updated_at = now
-                self._persist(job)
-                cleaned.append(job.job_id)
-        return cleaned
 
     # -- recovery helpers ----------------------------------------------------
 

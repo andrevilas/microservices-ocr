@@ -45,7 +45,7 @@ class BearerAuth:
 def build_mcp_server(service_provider=get_job_application, upload_provider=get_upload_service,
                      queue_provider=get_job_queue_processor, batch_provider=get_batch_service,
                      export_provider=get_export_service, control_provider=get_control_service):
-    server = OcrMCPServer("OCR Recognizer", version="0.4.0", instructions=INSTRUCTIONS)
+    server = OcrMCPServer("OCR Recognizer", version="0.5.0", instructions=INSTRUCTIONS)
 
     async def invoke(ctx: Context, operation: str, *args):
         request = ctx.request_context.request

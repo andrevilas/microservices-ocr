@@ -13,6 +13,7 @@ from app.models import JobResponse, JobStatus, QualityLabel
 from app.results import JobReport, TextChunk
 from app.options import Capabilities, ProcessingOptions
 from app.control_models import CancelInput, CancelPage, CancelResult, RetryInput, RetryReceipt
+from app.retention_models import DeletionReceipt
 from app.upload_models import UploadReceipt, JobAdmission
 from app.bulk_models import BatchInput, BatchInputItem, BatchPage, BatchReceipt, BatchView, ExportInput, ExportReceipt, ResourceId
 
@@ -47,6 +48,11 @@ class OcrMCPServer(MCPServer):
 
 
 def register_tools(server, invoke):
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
+    async def ocr_delete_job_artifacts(ctx: Context, job_id: ResourceId) -> DeletionReceipt:
+        """Permanently remove all files of an owned terminal job, preserving its history/tombstone. Requires artifacts:delete. Existing transfers finish; new content access returns 410. purge_pending means physical cleanup is deferred. Idempotent; no implicit cancellation."""
+        return await invoke(ctx, "delete_artifacts", job_id)
+
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
     async def ocr_cancel_job(ctx: Context, job_id: ResourceId) -> CancelResult:
         """Cancel owned queued/running work. Requires jobs:cancel. Running work returns cancel_requested; poll for canceled. Completed/failed jobs stay terminal. Disconnect alone never cancels a job."""

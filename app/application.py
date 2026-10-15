@@ -1,4 +1,4 @@
-"""Transport-independent read operations. Mutations are introduced in later increments."""
+"""Owned job queries and artifact operations shared by HTTP and MCP."""
 from __future__ import annotations
 
 import base64
@@ -14,6 +14,7 @@ from app.api_models import ArtifactResponse, IdentityResponse, JobPage, MetricsR
 from app.models import JobResponse, JobStatus, QualityLabel
 from app.results import JobReport, TextChunk, read_page, read_report
 from app.services.storage_service import JobRecord, JobStore, get_job_store
+from app.retention_models import DeletionReceipt, retention_info
 
 
 @dataclass(frozen=True)
@@ -160,10 +161,19 @@ class JobApplication:
         return job, report
 
     def report(self, principal: Principal, job_id: str) -> JobReport:
-        return self._result(principal, job_id)[1]
+        principal.require("jobs:read")
+        principal.require("artifacts:read")
+        with self.store.artifact_lease(job_id, principal.subject):
+            return self._result(principal, job_id)[1]
 
     def text(self, principal: Principal, job_id: str, page: int = 1, offset: int = 0,
              max_chars: int = 8000) -> TextChunk:
+        principal.require("jobs:read")
+        principal.require("artifacts:read")
+        with self.store.artifact_lease(job_id, principal.subject):
+            return self._text(principal, job_id, page, offset, max_chars)
+
+    def _text(self, principal, job_id, page, offset, max_chars):
         job, report = self._result(principal, job_id)
         if not 1 <= page <= report.page_count or offset < 0 or not 1 <= max_chars <= 20000:
             raise ApplicationError(422, "invalid_text_range", "Invalid page, offset or character limit.")
@@ -197,13 +207,25 @@ class JobApplication:
     def artifact(self, principal: Principal, job_id: str) -> ArtifactResponse:
         principal.require("artifacts:read")
         job = self._record(principal, job_id)
-        available = job.status == "completed" and job.output_pdf_path is not None and job.output_pdf_path.is_file()
+        retention = retention_info(job)
+        available = retention.state == "retained" and job.status == "completed" and job.output_pdf_path is not None and job.output_pdf_path.is_file()
         return ArtifactResponse(job_id=job_id, available=available,
-                                download_url=f"/api/v1/jobs/{job_id}/artifact/content" if available else None)
+                                download_url=f"/api/v1/jobs/{job_id}/artifact/content" if available else None, retention=retention)
+
+    def delete_artifacts(self, principal, job_id) -> DeletionReceipt:
+        principal.require("artifacts:delete")
+        return DeletionReceipt(job_id=job_id, retention=self.store.remove_artifacts(job_id, principal.subject, principal.subject))
+
+    def artifact_download(self, principal, job_id):
+        from app.leased_response import LeasedFileResponse
+        principal.require("jobs:read")
+        principal.require("artifacts:read")
+        return LeasedFileResponse(self.store, job_id, principal.subject, filename=f"{job_id}-searchable.pdf")
 
     def artifact_file(self, principal: Principal, job_id: str):
         principal.require("artifacts:read")
         job = self._record(principal, job_id)
+        self.store.check_retained(job)
         if job.status != "completed" or job.output_pdf_path is None or not job.output_pdf_path.is_file():
             raise ApplicationError(409, "artifact_unavailable", "Artifact is not available.")
         return job.output_pdf_path

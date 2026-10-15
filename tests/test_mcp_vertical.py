@@ -46,7 +46,7 @@ s = get_identity_store()
 tokens=[]
 for n in range(2):
     identity=s.create_service('Synthetic MCP '+str(n), 'user:1')
-    tokens.append(s.issue_credential(identity['id'], 'Test', ['jobs:read','jobs:submit','artifacts:read','jobs:cancel'], 3600, 'user:1')[1])
+    tokens.append(s.issue_credential(identity['id'], 'Test', ['jobs:read','jobs:submit','artifacts:read','jobs:cancel','artifacts:delete'], 3600, 'user:1')[1])
 print(json.dumps(tokens))
 """], cwd=ROOT, env=self.env, capture_output=True, text=True, timeout=20)
         assert setup.returncode == 0, "Synthetic identity setup failed"
@@ -128,7 +128,7 @@ def test_real_clients_upload_submit_poll_text_pdf_and_isolation(runtime, transpo
         async with connected(runtime, transport, mode) as client:
             listing = await client.list_tools()
             tools = {t.name: t for t in listing.tools}
-            assert len(tools) == 19
+            assert len(tools) == 20
             assert not tools["ocr_prepare_upload"].annotations.idempotent_hint
             assert tools["ocr_submit_job"].annotations.idempotent_hint
             assert all(t.output_schema for t in tools.values())

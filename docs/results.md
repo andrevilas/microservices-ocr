@@ -80,14 +80,15 @@ A resposta de texto limita os caracteres e a leitura interna limita os bytes de
 uma página; extração/rasterização ainda pode consumir memória antes desses limites.
 São limites de resultados, não uma nova sandbox para os motores OCR.
 
-Jobs pendentes/falhos/cancelados retornam 409 `result_not_ready`.
-Histórico sem relatório ou resultado removido pela retenção retorna 409
-`result_unavailable`; não há reconstrução automática de proveniência antiga.
+Jobs pendentes/falhos/cancelados ainda retidos retornam 409 `result_not_ready`.
+Histórico sem relatório retorna 409 `result_unavailable`; não há reconstrução
+automática de proveniência antiga. Após retenção/exclusão, conteúdo retorna
+410 `artifacts_expired` ou `artifacts_deleted`.
 Texto com hash divergente ou relatório inválido retorna 503
 `result_integrity_error`, sem conteúdo interno no erro. O relatório não relê
 os PDFs para verificar os hashes a cada consulta; esses digests descrevem a conclusão.
-Retenção remove os artefatos junto com o diretório do job. Tombstones e distinção
-formal de expiração ficam na AM-11. Resultados de jobs falhos não são publicados.
+Retenção remove os artefatos junto com o diretório do job, preservando leituras
+em curso e o [tombstone da AM-11](retention.md). Resultados de jobs falhos não são publicados.
 
 ## Validação
 

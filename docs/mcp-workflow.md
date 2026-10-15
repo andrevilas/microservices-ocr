@@ -1,7 +1,7 @@
 # Fluxo vertical MCP e transporte local
 
 Entrega OCR-AM-08, atividade LPM `AGSM6EEjt7GVvdCdQ6hb`.
-As dezenove ferramentas, incluindo [lotes/exportação da AM-09](batches-exports.md) e [controle da AM-10](job-control.md), têm contratos de entrada/saída comuns nos transportes
+As vinte ferramentas, incluindo [lotes/exportação da AM-09](batches-exports.md), [controle da AM-10](job-control.md) e [exclusão da AM-11](retention.md), têm contratos de entrada/saída comuns nos transportes
 Streamable HTTP e stdio. A API v1 continua sendo a autoridade para identidade,
 permissões, uploads, idempotência, fila e resultados.
 
@@ -27,6 +27,9 @@ permissões, uploads, idempotência, fila e resultados.
    caracteres por resposta) e `ocr_get_report` (proveniência, opções e hashes).
 7. `ocr_get_artifact` retorna `download_url`. Baixe por HTTP autenticado,
    na mesma origem da API, e confira SHA-256 com `report.output.sha256`.
+8. Para excluir arquivos de um job terminal próprio, use `ocr_delete_job_artifacts`
+   com `job_id`. Exige `artifacts:delete`; repetições são idempotentes. Consulte
+   `retention.purge_pending` para distinguir bloqueio de acesso e remoção física.
 
 O host/agente cliente precisa de acesso HTTP e aos bytes do arquivo para o
 passo 3. Um cliente somente de chat pode processar uploads já preparados por

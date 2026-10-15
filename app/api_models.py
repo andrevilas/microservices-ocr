@@ -2,6 +2,7 @@
 from typing import Literal
 from pydantic import BaseModel
 from app.models import JobResponse
+from app.retention_models import RetentionInfo
 
 
 class IdentityResponse(BaseModel):
@@ -25,5 +26,6 @@ class ArtifactResponse(BaseModel):
     available: bool
     media_type: str = "application/pdf"
     download_url: str | None = None
+    retention: RetentionInfo | None = None
 
 

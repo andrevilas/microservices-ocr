@@ -1,10 +1,10 @@
 # Contrato HTTP v1
 
 Entrega OCR-AM-04, atividade LPM `hkKLY54xl4fHElZsRNdK`. O contrato atual tem
-29 operações sob `/api/v1`, versão de contrato `1.5.0`, após a AM-05 de
+30 operações sob `/api/v1`, versão de contrato `1.6.0`, após a AM-05 de
 [uploads persistentes e admissão idempotente](uploads.md) e a AM-06 de
 [texto por página e relatórios](results.md) e AM-07 de
-[opções e capacidades](capabilities.md) e AM-09 de [lotes/exportação](batches-exports.md). A AM-10 acrescenta [cancelamento e reprocessamento](job-control.md). Administração ampla continua no backlog.
+[opções e capacidades](capabilities.md) e AM-09 de [lotes/exportação](batches-exports.md). A AM-10 acrescenta [cancelamento e reprocessamento](job-control.md), e a AM-11 [retenção e exclusão](retention.md). Administração ampla continua no backlog.
 
 [openapi-v1.json](openapi-v1.json) inclui apenas operações v1 e seus schemas.
 `/openapi.json` e `/docs` também contêm as rotas legadas, com contratos separados.
@@ -67,12 +67,14 @@ Use status e `code` para controle do cliente, não o texto de `message`.
 | 404 | job_not_found, identity_not_found, route_not_found |
 | 405 | method_not_allowed; inclui Allow |
 | 409 | artifact_unavailable |
+| 410 | artifacts_expired, artifacts_deleted, export_source_removed |
 | 416 | invalid_range; preserva Content-Range |
 | 422 | validation_error, invalid_cursor, invalid_limit, invalid_identity_request |
 | 500 | internal_error: mensagem genérica, sem texto da exceção |
 
 Jobs inexistentes e não visíveis têm o mesmo 404. Artefato não pronto retorna
-metadado com `available: false`; download retorna 409. Downloads concluídos
+metadado com `available: false`; download retorna 409. Após expiração/exclusão,
+o metadado inclui `retention` e conteúdo retorna 410. Downloads concluídos
 retornam PDF binário com 200, ou 206 para Range. Erros continuam JSON. Falha
 de transporte após começar o arquivo encerra a conexão; bytes já enviados
 não podem ser substituídos por JSON.

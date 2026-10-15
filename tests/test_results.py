@@ -135,7 +135,7 @@ def test_nonexistent_results_are_not_fabricated(results, state):
         store.update(job.job_id, status="completed" if state == "historical" else state)
     for suffix in ("text", "report"):
         response = client.get(f"/api/v1/jobs/{job.job_id}/{suffix}")
-        assert response.status_code == 409
+        assert response.status_code == (410 if state == "expired" else 409)
         validate_response(app, response, "/api/v1/jobs/{job_id}/" + suffix)
 
 

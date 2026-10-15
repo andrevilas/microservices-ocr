@@ -65,6 +65,7 @@ class ControlService:
             parent = self._parent(principal, job_id)
             if parent.status not in ("completed", "failed", "canceled"):
                 raise ApplicationError(409, "job_not_terminal", "Wait for the original job to reach a terminal state.")
+            self.jobs.check_retained(parent)
             if not parent.input_pdf_path.is_file():
                 raise ApplicationError(410, "input_expired", "Original input is unavailable; submit a new upload.")
             if body.options is None and parent.options_requested is None:
@@ -83,6 +84,7 @@ class ControlService:
                 parent = self._parent(principal, job_id)
                 if parent.status not in ("completed", "failed", "canceled"):
                     raise ApplicationError(409, "job_not_terminal", "Wait for a terminal original job.")
+                self.jobs.check_retained(parent)
                 if not parent.input_pdf_path.is_file():
                     raise ApplicationError(410, "input_expired", "Original input is unavailable; submit a new upload.")
                 from app.config import settings

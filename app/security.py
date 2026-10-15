@@ -41,7 +41,7 @@ def authenticate_bearer(token: str | None) -> Principal:
     if user is None:
         raise denied
     return Principal(subject=f"user:{user_id}", user_id=user_id,
-                     scopes=frozenset({"jobs:read", "artifacts:read", "jobs:submit", "jobs:cancel"}),
+                     scopes=frozenset({"jobs:read", "artifacts:read", "jobs:submit", "jobs:cancel", "artifacts:delete"}),
                      is_admin=user.get("role") == "admin")
 
 

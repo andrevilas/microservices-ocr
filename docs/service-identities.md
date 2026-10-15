@@ -39,7 +39,10 @@ Corpo de emissão:
 }
 ```
 
-Os escopos são uma lista explícita sem duplicatas. A validade padrão é de
+Os escopos são uma lista explícita sem duplicatas: `jobs:read`, `jobs:submit`, `jobs:cancel`,
+`artifacts:read` e `artifacts:delete`. A exclusão de arquivos exige concessão
+explícita; credenciais existentes não recebem esse escopo automaticamente.
+A validade padrão é de
 30 dias; valores aceitos vão de 60 segundos a 365 dias. O segredo opaco é
 retornado **uma única vez**, junto dos metadados; a resposta usa `Cache-Control:
 no-store`. Guarde-o no gerenciador de segredos do consumidor. A API não oferece

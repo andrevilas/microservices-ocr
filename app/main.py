@@ -21,6 +21,7 @@ from app.services.batch_service import get_batch_service
 from app.services.export_service import get_export_service
 from app.services.job_queue import get_job_queue_processor
 from app.services.runtime_lease import RuntimeLease
+from app.services.retention_worker import RetentionWorker
 from app.services.user_store import get_user_store
 from app.services.upload_service import get_upload_service
 from app.http_contract import API_VERSION, ERRORS, V1Boundary, error_response, is_v1, install_openapi
@@ -53,6 +54,7 @@ def create_app(service_provider=get_job_application) -> FastAPI:
         application.state.runtime_lease = lease
         processor = None
         export_processor = None
+        retention_worker = None
         try:
             user_store = get_user_store()
             user_store.ensure_admin(name=settings.admin_name, email=settings.admin_email, password=settings.admin_password)
@@ -60,6 +62,8 @@ def create_app(service_provider=get_job_application) -> FastAPI:
             get_batch_service()
             get_control_service()
             export_processor = get_export_service()
+            retention_worker = RetentionWorker(get_upload_service(), export_processor)
+            retention_worker.start()
             processor = get_job_queue_processor()
             processor.start()
             export_processor.start()
@@ -67,6 +71,8 @@ def create_app(service_provider=get_job_application) -> FastAPI:
                 yield
         finally:
             # A timed-out worker keeps the lease until process exit.
+            if retention_worker is not None:
+                retention_worker.stop()
             if export_processor is not None:
                 export_processor.stop()
             if processor is not None:

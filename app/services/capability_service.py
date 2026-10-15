@@ -66,6 +66,8 @@ class CapabilityService:
             "pending_jobs_per_owner": settings.job_owner_max_pending,
             "batch_max_items": min(settings.max_batch_files, 25),
             "cancel_max_items": 25,
+            "job_retention_seconds": settings.job_retention_seconds,
+            "retention_interval_seconds": settings.retention_interval_seconds,
             "batch_max_total_bytes": settings.batch_max_total_mb * 1024 * 1024,
             "export_max_items": 25,
             "export_max_total_bytes": settings.export_max_total_mb * 1024 * 1024,

@@ -12,7 +12,7 @@ from starlette.routing import Match
 from app.application import ErrorResponse
 
 logger = logging.getLogger(__name__)
-API_VERSION = "1.5.0"
+API_VERSION = "1.6.0"
 
 
 def is_v1(path: str) -> bool:
