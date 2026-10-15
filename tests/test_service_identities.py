@@ -31,6 +31,30 @@ def bearer(token):
     return {"Authorization": "Bearer " + token}
 
 
+def test_results_four_principals_real_credentials(system):
+    from unittest.mock import Mock
+    from app.services.ocr_orchestrator import OcrOrchestrator
+    engine, fallback = Mock(), Mock()
+    engine.is_available.return_value = False
+    fallback.is_available.return_value = False
+    processor = OcrOrchestrator(system["jobs"], ocrmypdf_service=engine, fallback_ocr=fallback)
+    tokens = system["human_tokens"][1:] + system["service_tokens"]
+    jobs = []
+    for token in tokens:
+        principal = authenticate_bearer(token)
+        job = system["jobs"].create("result.pdf", pdf(), owner_user_id=principal.user_id,
+                                    owner_principal_id=principal.subject)
+        assert processor.process_job(job.job_id)
+        jobs.append(job)
+    for index, token in enumerate(tokens):
+        for position, job in enumerate(jobs):
+            for suffix in ("text", "report"):
+                response = system["client"].get(f"/api/v1/jobs/{job.job_id}/{suffix}", headers=bearer(token))
+                assert response.status_code == (200 if index == position else 404)
+    for job in jobs:
+        assert system["client"].get(f"/api/v1/jobs/{job.job_id}/text", headers=system["admin"]).status_code == 404
+
+
 def pdf():
     buffer = BytesIO()
     page = canvas.Canvas(buffer)

@@ -7,7 +7,8 @@ Rastreabilidade: OCR-AM-02 / LPM `AEHQJUb02uohT4MlVf8U`, projeto OCR Recognizer
 `lv2qAWLSJajcLawyvMdE`, com 18 atividades e 29 capacidades planejadas.
 
 Estes incrementos entregam a fundação, identidades de serviço, consultas autenticadas,
-[uploads persistentes e criação idempotente por HTTP](uploads.md). Texto por página, lotes, exportação, cancelamento ativo,
+[uploads persistentes e criação idempotente por HTTP](uploads.md),
+[texto por página e relatórios persistentes](results.md). Lotes, exportação, cancelamento ativo,
 OAuth remoto e migração do painel continuam no backlog.
 Não é a entrega do fluxo vertical completo OCR-AM-08.
 
@@ -20,12 +21,14 @@ Não é a entrega do fluxo vertical completo OCR-AM-08.
 | GET /api/v1/jobs/{job_id} | ocr_get_job | jobs:read |
 | GET /api/v1/metrics | ocr_get_metrics | jobs:read |
 | GET /api/v1/jobs/{job_id}/artifact | ocr_get_artifact | jobs:read e artifacts:read |
+| GET /api/v1/jobs/{job_id}/text | ocr_get_text | jobs:read e artifacts:read |
+| GET /api/v1/jobs/{job_id}/report | ocr_get_report | jobs:read e artifacts:read |
 | GET /api/v1/jobs/{job_id}/artifact/content | URL retornada por ocr_get_artifact | jobs:read e artifacts:read |
 
 As duas interfaces chamam `JobApplication`, passando um `Principal` imutável.
 O SDK MCP oficial está fixado em 2.3.0. `/openapi.json` declara Bearer, schemas,
 operationId e erros da API v1. O download usa HTTP autenticado; PDFs não entram
-no JSON das ferramentas. As cinco ferramentas são de leitura.
+no JSON das ferramentas. As sete ferramentas são de leitura.
 
 ## Autenticação e compatibilidade
 

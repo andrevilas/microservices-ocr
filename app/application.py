@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -9,7 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.models import JobResponse, JobStatus
+from app.models import JobResponse, JobStatus, QualityLabel
+from app.results import JobReport, TextChunk, read_page, read_report
 from app.services.storage_service import JobRecord, JobStore, get_job_store
 
 
@@ -104,17 +106,28 @@ class JobApplication:
         return self._response(self._record(principal, job_id))
 
     def list_jobs(self, principal: Principal, limit: int = 50, cursor: str | None = None,
-                  status: JobStatus | None = None) -> JobPage:
+                  status: JobStatus | None = None, created_from: datetime | None = None,
+                  created_to: datetime | None = None, filename: str | None = None,
+                  quality: QualityLabel | None = None) -> JobPage:
         principal.require("jobs:read")
         if not 1 <= limit <= 100:
             raise ApplicationError(422, "invalid_limit", "Limit must be between 1 and 100.")
+        if (any(t is not None and t.tzinfo is None for t in (created_from, created_to))
+                or (created_from is not None and created_to is not None and created_from > created_to)):
+            raise ApplicationError(422, "invalid_period", "Supply an ordered period with timezone offsets.")
+        if filename is not None and not 1 <= len(filename) <= 255:
+            raise ApplicationError(422, "invalid_filename_filter", "Filename filter must contain 1 to 255 characters.")
+        binding = hashlib.sha256(json.dumps([principal.subject, status,
+            created_from.isoformat() if created_from else None,
+            created_to.isoformat() if created_to else None, filename, quality]).encode()).hexdigest()
         after = None
         if cursor:
             try:
                 if len(cursor) > 256:
                     raise ValueError()
                 value = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
-                if not isinstance(value, list) or len(value) != 2 or not all(isinstance(x, str) for x in value):
+                if (not isinstance(value, list) or len(value) != 3
+                        or not all(isinstance(x, str) for x in value) or value[2] != binding):
                     raise ValueError()
                 after = (datetime.fromisoformat(value[0]), value[1])
                 if after[0].tzinfo is None:
@@ -122,15 +135,64 @@ class JobApplication:
             except (ValueError, TypeError, UnicodeDecodeError):
                 raise ApplicationError(422, "invalid_cursor", "Invalid pagination cursor.") from None
         jobs = sorted((j for j in self.store.snapshot() if self._owned(principal, j)
-                       and (status is None or j.status == status)), key=lambda j: (j.created_at, j.job_id))
+                       and (status is None or j.status == status)
+                       and (quality is None or j.quality == quality)
+                       and (created_from is None or j.created_at >= created_from)
+                       and (created_to is None or j.created_at <= created_to)
+                       and (filename is None or filename.casefold() in j.filename.casefold())),
+                      key=lambda j: (j.created_at, j.job_id))
         if after:
             jobs = [j for j in jobs if (j.created_at, j.job_id) > after]
         page = jobs[:limit]
         next_cursor = None
         if len(jobs) > limit:
             last = page[-1]
-            next_cursor = base64.urlsafe_b64encode(json.dumps([last.created_at.isoformat(), last.job_id]).encode()).decode()
+            next_cursor = base64.urlsafe_b64encode(json.dumps([last.created_at.isoformat(), last.job_id, binding]).encode()).decode()
         return JobPage(items=[self._response(j) for j in page], next_cursor=next_cursor)
+
+    def _result(self, principal: Principal, job_id: str) -> tuple[JobRecord, JobReport]:
+        principal.require("artifacts:read")
+        job = self._record(principal, job_id)
+        if job.status != "completed":
+            raise ApplicationError(409, "result_not_ready", "Result is not ready.")
+        try:
+            report = read_report(job.working_dir)
+            if report.job_id != job.job_id:
+                raise ValueError("Result job mismatch.")
+        except FileNotFoundError:
+            raise ApplicationError(409, "result_unavailable", "Result was not recorded or is no longer retained.") from None
+        except (ValueError, UnicodeError):
+            raise ApplicationError(503, "result_integrity_error", "Stored result failed validation.") from None
+        except OSError:
+            raise ApplicationError(503, "storage_unavailable", "Result storage is unavailable.") from None
+        return job, report
+
+    def report(self, principal: Principal, job_id: str) -> JobReport:
+        return self._result(principal, job_id)[1]
+
+    def text(self, principal: Principal, job_id: str, page: int = 1, offset: int = 0,
+             max_chars: int = 8000) -> TextChunk:
+        job, report = self._result(principal, job_id)
+        if not 1 <= page <= report.page_count or offset < 0 or not 1 <= max_chars <= 20000:
+            raise ApplicationError(422, "invalid_text_range", "Invalid page, offset or character limit.")
+        info = report.pages[page - 1]
+        if offset > info.character_count:
+            raise ApplicationError(422, "invalid_text_range", "Offset exceeds page length.")
+        try:
+            text = read_page(job.working_dir, info)
+        except FileNotFoundError:
+            raise ApplicationError(409, "result_unavailable", "Result was not recorded or is no longer retained.") from None
+        except (ValueError, UnicodeError):
+            raise ApplicationError(503, "result_integrity_error", "Stored result failed validation.") from None
+        except OSError:
+            raise ApplicationError(503, "storage_unavailable", "Result storage is unavailable.") from None
+        chunk = text[offset:offset + max_chars]
+        truncated = offset + len(chunk) < len(text)
+        next_page = page if truncated else (page + 1 if page < report.page_count else None)
+        next_offset = offset + len(chunk) if truncated else (0 if next_page else None)
+        return TextChunk(job_id=job_id, page=page, page_count=report.page_count, source=info.source,
+                         offset=offset, text=chunk, page_character_count=len(text), truncated=truncated,
+                         next_page=next_page, next_offset=next_offset)
 
     def metrics(self, principal: Principal) -> MetricsResponse:
         principal.require("jobs:read")

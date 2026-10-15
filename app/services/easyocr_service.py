@@ -30,8 +30,11 @@ class FallbackOcrService:
         return self._reader
 
     def process(self, input_pdf_path: Path) -> str:
+        return "\n".join(self.process_pages(input_pdf_path)).strip()
+
+    def process_pages(self, input_pdf_path: Path) -> list[str]:
         if not self.is_available():
-            return ""
+            raise RuntimeError("Fallback OCR unavailable.")
 
         from pdf2image import convert_from_path
 
@@ -48,5 +51,5 @@ class FallbackOcrService:
             # Single readtext call per page: prefer preprocessed image
             ocr_input = str(processed_path) if processed_path.exists() else image
             results = reader.readtext(ocr_input)
-            chunks.extend(item[1] for item in results if len(item) > 1)
-        return "\n".join(chunks).strip()
+            chunks.append("\n".join(item[1] for item in results if len(item) > 1).strip())
+        return chunks

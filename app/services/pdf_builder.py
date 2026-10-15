@@ -15,6 +15,7 @@ class PdfBuilder:
         output_pdf_path: Path,
         text: str,
         base_pdf_path: Path | None = None,
+        page_texts: list[str] | None = None,
     ) -> Path:
         if base_pdf_path and base_pdf_path.exists():
             shutil.copyfile(base_pdf_path, output_pdf_path)
@@ -22,10 +23,11 @@ class PdfBuilder:
 
         # Fallback path: overlay extracted text onto the original PDF pages
         # so the visual appearance and page count are preserved.
-        return self._overlay_text_on_original(original_pdf_path, output_pdf_path, text)
+        return self._overlay_text_on_original(original_pdf_path, output_pdf_path, text, page_texts)
 
     def _overlay_text_on_original(
-        self, original_pdf_path: Path, output_pdf_path: Path, text: str
+        self, original_pdf_path: Path, output_pdf_path: Path, text: str,
+        page_texts: list[str] | None = None,
     ) -> Path:
         reader = PdfReader(str(original_pdf_path))
         writer = PdfWriter()
@@ -33,7 +35,10 @@ class PdfBuilder:
 
         # Split text roughly across pages
         lines = text.splitlines() if text.strip() else []
-        chunks = self._split_lines_across_pages(lines, num_pages)
+        if page_texts is not None and len(page_texts) != num_pages:
+            raise ValueError("Extracted page count differs from input PDF.")
+        chunks = ([value.splitlines() for value in page_texts] if page_texts is not None
+                  else self._split_lines_across_pages(lines, num_pages))
 
         for page_index, page in enumerate(reader.pages):
             page_text = chunks[page_index] if page_index < len(chunks) else []
