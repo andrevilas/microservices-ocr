@@ -12,36 +12,15 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import BoundedSemaphore, Lock
-from typing import Literal
 from uuid import uuid4
-
-from pydantic import BaseModel
 
 from app.application import ApplicationError, Principal
 from app.config import settings
 from app.services.storage_service import JobRecord, JobStore, get_job_store
+from app.upload_models import JobAdmission, UploadReceipt
 
 CHUNK = 256 * 1024
 MIB = 1024 * 1024
-
-
-class UploadReceipt(BaseModel):
-    upload_id: str
-    filename: str
-    state: Literal["reserved", "receiving", "ready", "expired"]
-    expected_size: int | None
-    size_bytes: int | None
-    sha256: str | None
-    page_count: int | None
-    expires_at: float
-    content_url: str
-
-
-class JobAdmission(BaseModel):
-    job_id: str
-    upload_id: str
-    status: Literal["queued"] = "queued"
-    poll_after_seconds: int = 2
 
 
 def filename_checked(filename: str) -> str:

@@ -10,6 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.api_models import ArtifactResponse, IdentityResponse, JobPage, MetricsResponse
 from app.models import JobResponse, JobStatus, QualityLabel
 from app.results import JobReport, TextChunk, read_page, read_report
 from app.services.storage_service import JobRecord, JobStore, get_job_store
@@ -49,29 +50,6 @@ class ErrorBody(BaseModel):
 class ErrorResponse(BaseModel):
     error: ErrorBody
     request_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-
-
-class IdentityResponse(BaseModel):
-    subject: str
-    kind: Literal["user", "service", "legacy"] = "user"
-    scopes: list[str]
-
-
-class JobPage(BaseModel):
-    items: list[JobResponse]
-    next_cursor: str | None
-
-
-class MetricsResponse(BaseModel):
-    total_jobs: int
-    by_status: dict[str, int]
-
-
-class ArtifactResponse(BaseModel):
-    job_id: str
-    available: bool
-    media_type: str = "application/pdf"
-    download_url: str | None = None
 
 
 class JobApplication:

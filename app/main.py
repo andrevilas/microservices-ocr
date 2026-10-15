@@ -22,7 +22,15 @@ from app.http_contract import API_VERSION, ERRORS, V1Boundary, error_response, i
 
 
 def create_app(service_provider=get_job_application) -> FastAPI:
-    mcp_server, mcp_app = build_mcp_server(service_provider)
+    # Resolve the same injectable instances for both transports, without creating
+    # storage or starting workers at import/discovery time.
+    def uploads():
+        return application.dependency_overrides.get(get_upload_service, get_upload_service)()
+
+    def queue():
+        return application.dependency_overrides.get(get_job_queue_processor, get_job_queue_processor)()
+
+    mcp_server, mcp_app = build_mcp_server(service_provider, uploads, queue)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):

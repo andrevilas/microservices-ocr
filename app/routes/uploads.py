@@ -13,6 +13,7 @@ from app.options import ProcessingOptions
 from app.http_contract import error_responses, example, operation
 from app.security import require_principal
 from app.services.job_queue import JobQueueProcessor, get_job_queue_processor
+from app.services.admission_service import submit_and_enqueue
 from app.services.upload_service import CHUNK, MIB, JobAdmission, UploadReceipt, UploadService, get_upload_service
 from app.upload_stream import MultipartUpload
 
@@ -160,15 +161,7 @@ async def submit_job(request: Request, response: Response, idempotency_key: str 
     """Persist one job and validated immutable options per identity/key. Changed options conflict; replays retain the original receipt even if engine availability changes."""
     principal.require("jobs:submit")
     body = await json_input(request, AdmissionInput)
-    try:
-        receipt, replayed = await run_in_threadpool(service.submit, principal, body.upload_id, idempotency_key, body.options)
-        job = service.jobs.get_snapshot(receipt.job_id)
-        if job and job.status == "queued":
-            try:
-                await run_in_threadpool(queue.enqueue, job.job_id)
-            except Exception:
-                raise ApplicationError(503, "queue_unavailable", "Job is persisted; retry with the same key or recover the runtime queue.") from None
-    except OSError:
-        raise ApplicationError(503, "storage_unavailable", "Admission storage is unavailable; retry with the same key.") from None
+    receipt, replayed = await run_in_threadpool(submit_and_enqueue, service, queue, principal,
+                                              body.upload_id, idempotency_key, body.options)
     response.headers["Idempotency-Replayed"] = "true" if replayed else "false"
     return receipt
