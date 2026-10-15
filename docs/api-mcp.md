@@ -8,7 +8,8 @@ Rastreabilidade: OCR-AM-02 / LPM `AEHQJUb02uohT4MlVf8U`, projeto OCR Recognizer
 
 Estes incrementos entregam a fundação, identidades de serviço, consultas autenticadas,
 [uploads persistentes e criação idempotente por HTTP](uploads.md),
-[texto por página e relatórios persistentes](results.md). Lotes, exportação, cancelamento ativo,
+[texto por página e relatórios persistentes](results.md),
+[opções por job e capacidades verificadas](capabilities.md). Lotes, exportação, cancelamento ativo,
 OAuth remoto e migração do painel continuam no backlog.
 Não é a entrega do fluxo vertical completo OCR-AM-08.
 
@@ -17,6 +18,7 @@ Não é a entrega do fluxo vertical completo OCR-AM-08.
 | HTTP | Ferramenta MCP | Permissão |
 |---|---|---|
 | GET /api/v1/me | ocr_whoami | Identidade autenticada |
+| GET /api/v1/capabilities | ocr_get_capabilities | Identidade autenticada |
 | GET /api/v1/jobs | ocr_list_jobs | jobs:read |
 | GET /api/v1/jobs/{job_id} | ocr_get_job | jobs:read |
 | GET /api/v1/metrics | ocr_get_metrics | jobs:read |
@@ -28,7 +30,7 @@ Não é a entrega do fluxo vertical completo OCR-AM-08.
 As duas interfaces chamam `JobApplication`, passando um `Principal` imutável.
 O SDK MCP oficial está fixado em 2.3.0. `/openapi.json` declara Bearer, schemas,
 operationId e erros da API v1. O download usa HTTP autenticado; PDFs não entram
-no JSON das ferramentas. As sete ferramentas são de leitura.
+no JSON das ferramentas. As oito ferramentas são de leitura.
 
 ## Autenticação e compatibilidade
 

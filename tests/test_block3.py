@@ -142,7 +142,7 @@ class TestEasyOcrCacheAndSingleRead:
                 result = svc.process(pdf_path)
 
         # Reader should be created exactly once
-        mock_easyocr.Reader.assert_called_once_with(["pt", "en"], gpu=False)
+        mock_easyocr.Reader.assert_called_once_with(["pt", "en"], gpu=False, download_enabled=False)
 
         # readtext should be called exactly once per page (2 pages)
         assert mock_reader_instance.readtext.call_count == 2

@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel
+from app.options import EffectiveOptions, ProcessingOptions
 
 
 JobStatus = Literal["queued", "processing", "completed", "failed", "canceled"]
@@ -40,6 +41,9 @@ class JobResponse(BaseModel):
     quality: QualityLabel | None = None
     download_url: str | None = None
     error: str | None = None
+    error_code: str | None = None
+    options_requested: ProcessingOptions | None = None
+    options_effective: EffectiveOptions | None = None
 
 
 class OCRResult(BaseModel):

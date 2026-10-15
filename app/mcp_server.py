@@ -13,6 +13,7 @@ from app.application import (ApplicationError, ArtifactResponse, IdentityRespons
                              MetricsResponse, get_job_application)
 from app.models import JobResponse, JobStatus, QualityLabel
 from app.results import JobReport, TextChunk
+from app.options import Capabilities
 from app.security import authenticate_bearer
 
 
@@ -53,6 +54,11 @@ def build_mcp_server(service_provider=get_job_application):
             return getattr(service_provider(), operation)(principal, *args)
         except ApplicationError as error:
             raise ToolError(f"{error.code}: {error.message}") from None
+
+    @server.tool(annotations=annotations)
+    def ocr_get_capabilities(ctx: Context) -> Capabilities:
+        """Discover probed engines, installed languages, supported profiles and limits; readiness is not OCR accuracy or PDF/A certification."""
+        return invoke(ctx, "capabilities")
 
     @server.tool(annotations=annotations)
     def ocr_whoami(ctx: Context) -> IdentityResponse:

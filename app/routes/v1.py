@@ -7,6 +7,7 @@ from app.application import (ArtifactResponse, IdentityResponse, JobApplication,
                              JobPage, MetricsResponse, Principal, get_job_application)
 from app.models import JobResponse, JobStatus, QualityLabel
 from app.results import JobReport, TextChunk
+from app.options import Capabilities, ProcessingOptions
 from app.security import require_principal
 from app.http_contract import error_responses, example, operation
 
@@ -15,6 +16,18 @@ router = APIRouter(prefix="/api/v1", tags=["API v1"],
 JOB_EXAMPLE = {"job_id": "00000000000000000000000000000001", "filename": "example.pdf",
                "status": "queued", "progress_percent": 0, "created_at": "2026-10-15T12:00:00Z",
                "updated_at": "2026-10-15T12:00:00Z", "quality": None, "download_url": None, "error": None}
+
+
+@router.get("/capabilities", response_model=Capabilities, operation_id="ocr_get_capabilities",
+            openapi_extra=operation(), responses=example({
+                "schema_version": "1.0", "engines": {"ocrmypdf": {"available": False, "version": None, "reasons": ["ocrmypdf_16_4_to_16_x_required"]}},
+                "languages": [], "processing_modes": ["extract_text"], "output_formats": ["pdf_searchable"],
+                "compression_profiles": ["none"], "fallback_policies": ["disabled"], "fallback_language_sets": [],
+                "defaults": ProcessingOptions().resolved().model_dump(mode="json"), "limits": {"text_response_max_chars": 20000},
+                "probe_cache_seconds": 60, "warnings": ["probe_is_not_ocr_homologation", "defaults_may_be_unavailable"]}))
+def capabilities(principal: Principal = Depends(require_principal), service: JobApplication = Depends(get_job_application)):
+    """Discover probed engines, installed supported languages, profiles and configured limits. Cached for 60 seconds; no credentials, paths or document data. Availability is not OCR homologation."""
+    return service.capabilities(principal)
 
 
 @router.get("/me", response_model=IdentityResponse, operation_id="ocr_whoami", openapi_extra=operation(),

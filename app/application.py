@@ -81,6 +81,10 @@ class JobApplication:
     def whoami(self, principal: Principal) -> IdentityResponse:
         return IdentityResponse(subject=principal.subject, kind=principal.kind, scopes=sorted(principal.scopes))
 
+    def capabilities(self, principal: Principal):
+        from app.services.capability_service import get_capability_service
+        return get_capability_service().snapshot()
+
     @staticmethod
     def _owned(principal: Principal, job: JobRecord) -> bool:
         # None never grants wildcard access; no administrator bypass for documents.

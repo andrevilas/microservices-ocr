@@ -6,6 +6,7 @@ from pathlib import Path
 from pypdf import PdfReader
 
 from app.services.ocrmypdf_service import OcrmypdfService
+from app.options import EffectiveOptions
 
 
 class PrimaryOcrService:
@@ -15,7 +16,16 @@ class PrimaryOcrService:
     def process(self, input_pdf_path: Path, output_pdf_path: Path) -> str:
         return "\n".join(self.process_pages(input_pdf_path, output_pdf_path))
 
-    def process_pages(self, input_pdf_path: Path, output_pdf_path: Path) -> list[str]:
+    def process_pages(self, input_pdf_path: Path, output_pdf_path: Path, options: EffectiveOptions | None = None) -> list[str]:
+        if options is not None:
+            if options.processing_mode == "extract_text":
+                shutil.copyfile(input_pdf_path, output_pdf_path)
+            else:
+                if not self.ocrmypdf_service.is_available():
+                    from app.application import ApplicationError
+                    raise ApplicationError(503, "ocr_unavailable", "OCR dependencies are unavailable.")
+                self.ocrmypdf_service.run_ocr(input_pdf_path, output_pdf_path, options=options)
+            return self.extract_pages(output_pdf_path)
         if self.ocrmypdf_service.is_available():
             self.ocrmypdf_service.run_ocr(input_pdf_path, output_pdf_path)
         else:

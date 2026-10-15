@@ -9,6 +9,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.application import ApplicationError, Principal
 from app.config import settings
+from app.options import ProcessingOptions
 from app.http_contract import error_responses, example, operation
 from app.security import require_principal
 from app.services.job_queue import JobQueueProcessor, get_job_queue_processor
@@ -26,6 +27,7 @@ class ReservationInput(BaseModel):
 class AdmissionInput(BaseModel):
     model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"upload_id": "00000000000000000000000000000001"}]})
     upload_id: str = Field(pattern="^[0-9a-f]{32}$")
+    options: ProcessingOptions = Field(default_factory=ProcessingOptions)
 
 
 RECEIPT = {"upload_id": "00000000000000000000000000000001", "filename": "example.pdf", "state": "reserved",
@@ -37,7 +39,15 @@ router = APIRouter(prefix="/api/v1", tags=["Upload and admission"],
 
 
 def json_contract(model):
-    return {**operation("jobs:submit"), "requestBody": {"required": True, "content": {"application/json": {"schema": model.model_json_schema()}}}}
+    schema = model.model_json_schema()
+    definitions = schema.pop("$defs", {})
+    def inline(value):
+        if isinstance(value, dict):
+            if "$ref" in value:
+                return inline(definitions[value["$ref"].rsplit("/", 1)[1]])
+            return {key: inline(item) for key, item in value.items()}
+        return [inline(item) for item in value] if isinstance(value, list) else value
+    return {**operation("jobs:submit"), "requestBody": {"required": True, "content": {"application/json": {"schema": inline(schema)}}}}
 
 
 async def json_input(request, model):
@@ -147,11 +157,11 @@ async def upload_pdf(request: Request, principal: Principal = Depends(require_pr
 async def submit_job(request: Request, response: Response, idempotency_key: str = Header(..., min_length=8, max_length=128),
                      principal: Principal = Depends(require_principal), service: UploadService = Depends(get_upload_service),
                      queue: JobQueueProcessor = Depends(get_job_queue_processor)):
-    """Atomically persist one job and admission receipt per identity/key. Replays return the original 202 receipt; poll the job for its current state. Options will be introduced separately."""
+    """Persist one job and validated immutable options per identity/key. Changed options conflict; replays retain the original receipt even if engine availability changes."""
     principal.require("jobs:submit")
     body = await json_input(request, AdmissionInput)
     try:
-        receipt, replayed = await run_in_threadpool(service.submit, principal, body.upload_id, idempotency_key)
+        receipt, replayed = await run_in_threadpool(service.submit, principal, body.upload_id, idempotency_key, body.options)
         job = service.jobs.get_snapshot(receipt.job_id)
         if job and job.status == "queued":
             try:

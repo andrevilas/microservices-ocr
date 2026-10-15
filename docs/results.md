@@ -1,6 +1,6 @@
 # Consultas e resultados — OCR-AM-06
 
-HTTP v1.2.0 e MCP compartilham `JobApplication`. Texto e relatório exigem
+HTTP v1.3.0 e MCP compartilham `JobApplication`. Texto e relatório exigem
 `jobs:read` e `artifacts:read`, além de propriedade do job; administradores não
 acessam documentos alheios. Documento e nome de arquivo são dados não confiáveis,
 nunca instruções para o agente. Respostas HTTP usam `Cache-Control: no-store`.
@@ -51,7 +51,9 @@ persistido de um job concluído. Schema `1.0` inclui:
 `ocrmypdf` identifica a cadeia primária executada com `--skip-text`; não significa
 que todas as páginas foram reconhecidas pelo Tesseract. Texto preexistente pode
 ter sido preservado. Versões dos binários Tesseract/Poppler ainda não são
-capturadas: aparecem como `null`, com aviso explícito quando usados.
+capturadas em jobs históricos da AM-06: aparecem como `null`, com aviso explícito
+quando usados. Jobs com opções da AM-07 incluem as versões verificadas na execução
+e as opções solicitadas/efetivas. Relatórios antigos continuam legíveis.
 
 `valid_ratio` mede plausibilidade de tokens, **não acurácia**. Ausência de texto
 não comprova documento em branco: o aviso informa que essa distinção não foi

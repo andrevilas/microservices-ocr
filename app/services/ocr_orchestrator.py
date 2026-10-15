@@ -9,6 +9,8 @@ from pathlib import Path
 from pypdf import PdfReader
 
 from app.config import settings
+from app.application import ApplicationError
+from app.services.capability_service import get_capability_service
 from app.models import OCRResult
 from app.results import (JobReport, OutputValidation, QualityReport, StageReport,
                          digest_file, package_version, persist_pages, persist_report)
@@ -43,46 +45,56 @@ class OcrOrchestrator:
                                      owner_principal_id=owner_principal_id)
 
     def process_job(self, job_id: str) -> OCRResult | None:
-        job = self.job_store.update(job_id, status="processing", progress_percent=5, error=None)
+        job = self.job_store.update(job_id, status="processing", progress_percent=5, error=None, error_code=None)
         _start_ms = time.monotonic()
         primary_output = job.working_dir / "primary-searchable.pdf"
         draft_output = job.working_dir / "final-draft.pdf"
         final_output = job.working_dir / "final-searchable-pdfa.pdf"
         try:
             logger.info("Job %s started", job_id)
+            options = job.options_effective
+            capabilities = get_capability_service().validate(options, refresh=True) if options is not None else None
+            quality_min_text = options.quality_min_text if options else settings.quality_min_text
+            quality_ratio = options.quality_valid_ratio_threshold if options else settings.quality_valid_ratio_threshold
+            fallback_enabled = options.fallback_policy == "if_low_quality" if options else True
             stages = []
             warnings = ["quality_is_heuristic_not_accuracy", "pdfa_conformance_not_validated"]
-            primary_available = self.ocrmypdf_service.is_available()
+            primary_available = options.processing_mode != "extract_text" if options else self.ocrmypdf_service.is_available()
             source = "ocrmypdf" if primary_available else "pdf_text"
             engines = {"pypdf": package_version("pypdf")}
             if primary_available:
                 engines["ocrmypdf"] = package_version("ocrmypdf")
-                # OCRmyPDF owns invocation of Tesseract; its binary version is not captured here.
-                engines["tesseract"] = None
-                warnings.append("tesseract_version_not_captured")
+                # New jobs record the fresh binary probe; legacy jobs have no such snapshot.
+                engines["tesseract"] = capabilities.engines["tesseract"].version if capabilities else None
+                if capabilities:
+                    engines["ghostscript"] = capabilities.engines["ghostscript"].version
+                else:
+                    warnings.append("tesseract_version_not_captured")
             else:
-                warnings.append("primary_ocr_unavailable")
+                warnings.append("text_extraction_only" if options else "primary_ocr_unavailable")
             stage_start = time.monotonic()
-            pages = self.primary_ocr.process_pages(job.input_pdf_path, primary_output)
+            pages = (self.primary_ocr.process_pages(job.input_pdf_path, primary_output, options=options)
+                     if options else self.primary_ocr.process_pages(job.input_pdf_path, primary_output))
             stages.append(StageReport(name="primary", duration_ms=int((time.monotonic() - stage_start) * 1000)))
             primary_text = "\n".join(pages)
             self.job_store.update(job_id, progress_percent=35)
             evaluation = evaluate_quality(
                 primary_text,
-                min_text=settings.quality_min_text,
-                valid_ratio_threshold=settings.quality_valid_ratio_threshold,
+                min_text=quality_min_text,
+                valid_ratio_threshold=quality_ratio,
             )
             text = primary_text
             used_fallback = False
             fallback_attempted = False
             base_pdf_path: Path | None = primary_output
 
-            if evaluation.label == "LOW" and self.fallback_ocr.is_available():
+            if evaluation.label == "LOW" and fallback_enabled and self.fallback_ocr.is_available():
                 fallback_attempted = True
                 engines["easyocr"] = package_version("easyocr")
                 engines["pdf2image"] = package_version("pdf2image")
-                engines["poppler"] = None
-                warnings.append("poppler_version_not_captured")
+                engines["poppler"] = capabilities.engines["pdftoppm"].version if capabilities else None
+                if not capabilities:
+                    warnings.append("poppler_version_not_captured")
                 logger.info("Job %s: primary quality LOW, trying fallback", job_id)
                 self.job_store.update(job_id, progress_percent=45)
                 stage_start = time.monotonic()
@@ -94,10 +106,11 @@ class OcrOrchestrator:
                 self.job_store.update(job_id, progress_percent=60)
                 fallback_eval = evaluate_quality(
                     fallback_text,
-                    min_text=settings.quality_min_text,
-                    valid_ratio_threshold=settings.quality_valid_ratio_threshold,
+                    min_text=quality_min_text,
+                    valid_ratio_threshold=quality_ratio,
                 )
-                if self._is_better(primary=evaluation, fallback=fallback_eval):
+                if self._is_better(primary=evaluation, fallback=fallback_eval,
+                                   tolerance=options.fallback_character_tolerance if options else None):
                     logger.info(
                         "Job %s: fallback chosen (ratio=%.2f, chars=%d)",
                         job_id, fallback_eval.valid_ratio, fallback_eval.character_count,
@@ -110,10 +123,12 @@ class OcrOrchestrator:
                     base_pdf_path = None
 
             if evaluation.label == "LOW" and not fallback_attempted:
-                warnings.append("fallback_ocr_unavailable")
+                if options and fallback_enabled:
+                    raise ApplicationError(503, "fallback_unavailable", "Fallback dependencies are unavailable.")
+                warnings.append("fallback_disabled" if not fallback_enabled else "fallback_ocr_unavailable")
             if not text.strip():
                 warnings.append("no_text_extracted_blankness_not_determined")
-            elif evaluation.character_count < settings.quality_min_text:
+            elif evaluation.character_count < quality_min_text:
                 warnings.append("insufficient_text")
             if used_fallback:
                 warnings.append("overlay_geometry_approximate_text_may_be_clipped")
@@ -132,7 +147,7 @@ class OcrOrchestrator:
             stages.append(StageReport(name="build", duration_ms=int((time.monotonic() - stage_start) * 1000)))
             self.job_store.update(job_id, progress_percent=88)
             stage_start = time.monotonic()
-            self._finalize_output(draft_output, final_output)
+            self._finalize_output(draft_output, final_output, options=options)
             stages.append(StageReport(name="finalize", duration_ms=int((time.monotonic() - stage_start) * 1000)))
             input_count = len(PdfReader(str(job.input_pdf_path)).pages)
             output_count = len(PdfReader(str(final_output)).pages)
@@ -144,11 +159,12 @@ class OcrOrchestrator:
                 input=digest_file(job.input_pdf_path), output=digest_file(final_output),
                 page_count=len(pages), pages=page_info,
                 quality=QualityReport(label=evaluation.label, character_count=evaluation.character_count,
-                                      valid_ratio=evaluation.valid_ratio, min_text=settings.quality_min_text,
-                                      valid_ratio_threshold=settings.quality_valid_ratio_threshold),
+                                      valid_ratio=evaluation.valid_ratio, min_text=quality_min_text,
+                                      valid_ratio_threshold=quality_ratio),
                 stages=stages, engines=engines, fallback_attempted=fallback_attempted,
                 used_fallback=used_fallback, warnings=warnings,
-                output_validation=OutputValidation(requested_format=settings.final_output_type,
+                options_requested=job.options_requested, options_effective=options,
+                output_validation=OutputValidation(requested_format=options.output_format if options else settings.final_output_type,
                                                    pdf_readable=True, page_count_matches=True),
             )
             persist_report(job.working_dir, report)
@@ -176,20 +192,27 @@ class OcrOrchestrator:
         except Exception as exc:  # pragma: no cover - final safety net for background work
             _elapsed_ms = int((time.monotonic() - _start_ms) * 1000)
             logger.error("Job %s failed after %d ms (%s)", job_id, _elapsed_ms, type(exc).__name__)
-            self.job_store.update(job_id, status="failed", progress_percent=100, error=str(exc))
+            code = exc.code if isinstance(exc, ApplicationError) else "processing_failed"
+            self.job_store.update(job_id, status="failed", progress_percent=100, error=str(exc), error_code=code)
             return None
 
-    def _finalize_output(self, draft_output: Path, final_output: Path) -> None:
+    def _finalize_output(self, draft_output: Path, final_output: Path, options=None) -> None:
+        if options is not None:
+            if options.processing_mode == "extract_text" or (options.output_format == "pdf_searchable" and options.compression_profile == "none"):
+                shutil.copyfile(draft_output, final_output)
+            else:
+                self.ocrmypdf_service.optimize_pdfa(draft_output, final_output, options=options)
+            return
         if self.ocrmypdf_service.is_available():
             self.ocrmypdf_service.optimize_pdfa(draft_output, final_output)
             return
         shutil.copyfile(draft_output, final_output)
 
     @staticmethod
-    def _is_better(primary: QualityEvaluation, fallback: QualityEvaluation) -> bool:
+    def _is_better(primary: QualityEvaluation, fallback: QualityEvaluation, tolerance: int | None = None) -> bool:
         # Conservative: fallback must not lose significant text and must have
         # equal or better valid_ratio to be preferred over primary.
-        tolerance = settings.fallback_character_tolerance
+        tolerance = settings.fallback_character_tolerance if tolerance is None else tolerance
         return (
             fallback.valid_ratio >= primary.valid_ratio
             and fallback.character_count >= primary.character_count - tolerance

@@ -35,6 +35,128 @@
         "title": "ArtifactResponse",
         "type": "object"
       },
+      "Capabilities": {
+        "properties": {
+          "compression_profiles": {
+            "items": {
+              "enum": [
+                "none",
+                "balanced"
+              ],
+              "type": "string"
+            },
+            "title": "Compression Profiles",
+            "type": "array"
+          },
+          "defaults": {
+            "$ref": "#/components/schemas/ResolvedOptions"
+          },
+          "engines": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EngineCapability"
+            },
+            "title": "Engines",
+            "type": "object"
+          },
+          "fallback_language_sets": {
+            "items": {
+              "items": {
+                "enum": [
+                  "eng",
+                  "por"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Fallback Language Sets",
+            "type": "array"
+          },
+          "fallback_policies": {
+            "items": {
+              "enum": [
+                "disabled",
+                "if_low_quality"
+              ],
+              "type": "string"
+            },
+            "title": "Fallback Policies",
+            "type": "array"
+          },
+          "languages": {
+            "items": {
+              "enum": [
+                "eng",
+                "por"
+              ],
+              "type": "string"
+            },
+            "title": "Languages",
+            "type": "array"
+          },
+          "limits": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Limits",
+            "type": "object"
+          },
+          "output_formats": {
+            "items": {
+              "enum": [
+                "pdf_searchable",
+                "pdfa"
+              ],
+              "type": "string"
+            },
+            "title": "Output Formats",
+            "type": "array"
+          },
+          "probe_cache_seconds": {
+            "default": 60,
+            "title": "Probe Cache Seconds",
+            "type": "integer"
+          },
+          "processing_modes": {
+            "items": {
+              "enum": [
+                "preserve_existing_text",
+                "extract_text"
+              ],
+              "type": "string"
+            },
+            "title": "Processing Modes",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": "1.0",
+            "default": "1.0",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "engines",
+          "languages",
+          "processing_modes",
+          "output_formats",
+          "compression_profiles",
+          "fallback_policies",
+          "fallback_language_sets",
+          "defaults",
+          "limits",
+          "warnings"
+        ],
+        "title": "Capabilities",
+        "type": "object"
+      },
       "CredentialInput": {
         "additionalProperties": false,
         "examples": [
@@ -152,6 +274,126 @@
           "last_used_at"
         ],
         "title": "CredentialResponse",
+        "type": "object"
+      },
+      "EffectiveOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "compression_profile": {
+            "enum": [
+              "none",
+              "balanced"
+            ],
+            "title": "Compression Profile",
+            "type": "string"
+          },
+          "engine_jobs": {
+            "maximum": 8.0,
+            "minimum": 1.0,
+            "title": "Engine Jobs",
+            "type": "integer"
+          },
+          "fallback_character_tolerance": {
+            "minimum": 0.0,
+            "title": "Fallback Character Tolerance",
+            "type": "integer"
+          },
+          "fallback_policy": {
+            "enum": [
+              "disabled",
+              "if_low_quality"
+            ],
+            "title": "Fallback Policy",
+            "type": "string"
+          },
+          "languages": {
+            "items": {
+              "enum": [
+                "eng",
+                "por"
+              ],
+              "type": "string"
+            },
+            "title": "Languages",
+            "type": "array"
+          },
+          "output_format": {
+            "enum": [
+              "pdf_searchable",
+              "pdfa"
+            ],
+            "title": "Output Format",
+            "type": "string"
+          },
+          "processing_mode": {
+            "enum": [
+              "preserve_existing_text",
+              "extract_text"
+            ],
+            "title": "Processing Mode",
+            "type": "string"
+          },
+          "quality_min_text": {
+            "minimum": 0.0,
+            "title": "Quality Min Text",
+            "type": "integer"
+          },
+          "quality_valid_ratio_threshold": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Quality Valid Ratio Threshold",
+            "type": "number"
+          },
+          "subprocess_timeout_seconds": {
+            "minimum": 1.0,
+            "title": "Subprocess Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "languages",
+          "processing_mode",
+          "output_format",
+          "compression_profile",
+          "fallback_policy",
+          "engine_jobs",
+          "subprocess_timeout_seconds",
+          "quality_min_text",
+          "quality_valid_ratio_threshold",
+          "fallback_character_tolerance"
+        ],
+        "title": "EffectiveOptions",
+        "type": "object"
+      },
+      "EngineCapability": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "EngineCapability",
         "type": "object"
       },
       "ErrorBody": {
@@ -360,6 +602,26 @@
             "title": "Job Id",
             "type": "string"
           },
+          "options_effective": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EffectiveOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "options_requested": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "output": {
             "$ref": "#/components/schemas/FileDigest"
           },
@@ -456,6 +718,17 @@
             ],
             "title": "Error"
           },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
           "filename": {
             "title": "Filename",
             "type": "string"
@@ -463,6 +736,26 @@
           "job_id": {
             "title": "Job Id",
             "type": "string"
+          },
+          "options_effective": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EffectiveOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "options_requested": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "progress_percent": {
             "default": 0,
@@ -596,6 +889,86 @@
         "title": "PageInfo",
         "type": "object"
       },
+      "ProcessingOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "compression_profile": {
+            "anyOf": [
+              {
+                "enum": [
+                  "none",
+                  "balanced"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compression Profile"
+          },
+          "fallback_policy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "disabled",
+                  "if_low_quality"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Policy"
+          },
+          "languages": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "eng",
+                    "por"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 2,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Languages"
+          },
+          "output_format": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pdf_searchable",
+                  "pdfa"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Format"
+          },
+          "processing_mode": {
+            "default": "preserve_existing_text",
+            "enum": [
+              "preserve_existing_text",
+              "extract_text"
+            ],
+            "title": "Processing Mode",
+            "type": "string"
+          }
+        },
+        "title": "ProcessingOptions",
+        "type": "object"
+      },
       "QualityReport": {
         "properties": {
           "character_count": {
@@ -646,6 +1019,63 @@
           "valid_ratio_threshold"
         ],
         "title": "QualityReport",
+        "type": "object"
+      },
+      "ResolvedOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "compression_profile": {
+            "enum": [
+              "none",
+              "balanced"
+            ],
+            "title": "Compression Profile",
+            "type": "string"
+          },
+          "fallback_policy": {
+            "enum": [
+              "disabled",
+              "if_low_quality"
+            ],
+            "title": "Fallback Policy",
+            "type": "string"
+          },
+          "languages": {
+            "items": {
+              "enum": [
+                "eng",
+                "por"
+              ],
+              "type": "string"
+            },
+            "title": "Languages",
+            "type": "array"
+          },
+          "output_format": {
+            "enum": [
+              "pdf_searchable",
+              "pdfa"
+            ],
+            "title": "Output Format",
+            "type": "string"
+          },
+          "processing_mode": {
+            "enum": [
+              "preserve_existing_text",
+              "extract_text"
+            ],
+            "title": "Processing Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "languages",
+          "processing_mode",
+          "output_format",
+          "compression_profile",
+          "fallback_policy"
+        ],
+        "title": "ResolvedOptions",
         "type": "object"
       },
       "ServiceInput": {
@@ -938,11 +1368,371 @@
   "info": {
     "description": "OCR HTTP API. Versioned operations use Bearer user or individual service credentials; legacy routes retain separate contracts.",
     "title": "Fluxo OCR",
-    "version": "1.2.0",
-    "x-api-version": "1.2.0"
+    "version": "1.3.0",
+    "x-api-version": "1.3.0"
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/capabilities": {
+      "get": {
+        "description": "Discover probed engines, installed supported languages, profiles and configured limits. Cached for 60 seconds; no credentials, paths or document data. Availability is not OCR homologation.",
+        "operationId": "ocr_get_capabilities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "compression_profiles": [
+                    "none"
+                  ],
+                  "defaults": {
+                    "compression_profile": "balanced",
+                    "fallback_policy": "disabled",
+                    "languages": [
+                      "eng"
+                    ],
+                    "output_format": "pdfa",
+                    "processing_mode": "preserve_existing_text"
+                  },
+                  "engines": {
+                    "ocrmypdf": {
+                      "available": false,
+                      "reasons": [
+                        "ocrmypdf_16_4_to_16_x_required"
+                      ],
+                      "version": null
+                    }
+                  },
+                  "fallback_language_sets": [],
+                  "fallback_policies": [
+                    "disabled"
+                  ],
+                  "languages": [],
+                  "limits": {
+                    "text_response_max_chars": 20000
+                  },
+                  "output_formats": [
+                    "pdf_searchable"
+                  ],
+                  "probe_cache_seconds": 60,
+                  "processing_modes": [
+                    "extract_text"
+                  ],
+                  "schema_version": "1.0",
+                  "warnings": [
+                    "probe_is_not_ocr_homologation",
+                    "defaults_may_be_unavailable"
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Capabilities"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "artifact_unavailable",
+                    "details": [],
+                    "message": "Artifact is not available."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact is not available.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "storage_unavailable",
+                    "details": [],
+                    "message": "Storage is unavailable."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Storage is unavailable.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "Capabilities",
+        "tags": [
+          "API v1"
+        ],
+        "x-human-admin-required": false,
+        "x-required-scopes": []
+      }
+    },
     "/api/v1/jobs": {
       "get": {
         "description": "List caller-owned jobs in creation order; pass next_cursor unchanged to continue.\n\nLimit is 1–100 (default 50). Results are live; concurrent inserts can appear on later pages.",
@@ -1404,7 +2194,7 @@
         ]
       },
       "post": {
-        "description": "Atomically persist one job and admission receipt per identity/key. Replays return the original 202 receipt; poll the job for its current state. Options will be introduced separately.",
+        "description": "Persist one job and validated immutable options per identity/key. Changed options conflict; replays retain the original receipt even if engine availability changes.",
         "operationId": "ocr_submit_job",
         "parameters": [
           {
@@ -1430,6 +2220,86 @@
                   }
                 ],
                 "properties": {
+                  "options": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "compression_profile": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "none",
+                              "balanced"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Compression Profile"
+                      },
+                      "fallback_policy": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "disabled",
+                              "if_low_quality"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Fallback Policy"
+                      },
+                      "languages": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "enum": [
+                                "eng",
+                                "por"
+                              ],
+                              "type": "string"
+                            },
+                            "maxItems": 2,
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Languages"
+                      },
+                      "output_format": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "pdf_searchable",
+                              "pdfa"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Output Format"
+                      },
+                      "processing_mode": {
+                        "default": "preserve_existing_text",
+                        "enum": [
+                          "preserve_existing_text",
+                          "extract_text"
+                        ],
+                        "title": "Processing Mode",
+                        "type": "string"
+                      }
+                    },
+                    "title": "ProcessingOptions",
+                    "type": "object"
+                  },
                   "upload_id": {
                     "pattern": "^[0-9a-f]{32}$",
                     "title": "Upload Id",

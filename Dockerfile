@@ -37,6 +37,8 @@ ENV PATH="/opt/venv/bin:$PATH" \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-por \
     ghostscript \
     poppler-utils \
     pngquant \

@@ -23,14 +23,15 @@ class Settings(BaseSettings):
     job_owner_max_pending: int = Field(default=20, ge=1)
     job_worker_concurrency: int = 2
     ocr_tmp_dir: Path = Path("/tmp/ocr-recognizer")
-    ocr_subprocess_timeout_seconds: int = 300
+    ocr_subprocess_timeout_seconds: int = Field(default=300, ge=1)
+    ocr_engine_jobs: int = Field(default=1, ge=1, le=8)
     max_batch_files: int = 25
     api_key: str | None = None
     upload_rate_limit_per_minute: int = 0
-    quality_min_text: int = 40
-    quality_valid_ratio_threshold: float = 0.7
+    quality_min_text: int = Field(default=40, ge=0)
+    quality_valid_ratio_threshold: float = Field(default=0.7, ge=0, le=1)
     fallback_min_improvement_chars: int = 20
-    fallback_character_tolerance: int = 20
+    fallback_character_tolerance: int = Field(default=20, ge=0)
     final_output_type: str = "pdfa"
     final_pdf_optimize_level: int = 3
     final_pdfa_image_compression: str = "jpeg"

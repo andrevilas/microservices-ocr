@@ -50,7 +50,7 @@ def validate_response(app, response, path, method="get"):
 def test_all_published_examples_and_security(contract):
     app, _, _, _ = contract
     schema = v1_schema(app)
-    assert schema["info"]["x-api-version"] == "1.2.0"
+    assert schema["info"]["x-api-version"] == "1.3.0"
     assert list(schema["components"]["securitySchemes"]) == ["PrincipalBearer"]
     operations = []
     for path, methods in schema["paths"].items():
@@ -76,7 +76,7 @@ def test_all_published_examples_and_security(contract):
                 model = schema["components"]["schemas"][body["$ref"].rsplit("/", 1)[1]] if "$ref" in body else body
                 for example in model["examples"]:
                     Draft202012Validator({"components": schema["components"], **model}).validate(example)
-    assert len(operations) == len(set(operations)) == 19
+    assert len(operations) == len(set(operations)) == 20
 
 
 def test_real_success_exchanges_match_openapi(contract):

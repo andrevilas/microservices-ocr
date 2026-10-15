@@ -52,7 +52,7 @@ def filename_checked(filename: str) -> str:
 
 def validate_pdf(path: Path) -> int:
     command = [sys.executable, "-m", "app.pdf_validation", str(path), str(settings.upload_validation_memory_mb * MIB),
-               str(settings.upload_max_pages), str(settings.upload_max_page_pixels)]
+               str(min(settings.upload_max_pages, 300)), str(settings.upload_max_page_pixels)]
     try:
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                 timeout=settings.upload_validation_timeout_seconds,
@@ -200,23 +200,38 @@ class UploadService:
                 (self.root / f"{upload_id}.pdf").unlink(missing_ok=True)
                 self.jobs._get_conn().execute("DELETE FROM uploads WHERE upload_id=?", (upload_id,))
 
-    def submit(self, principal, upload_id: str, key: str):
+    def submit(self, principal, upload_id: str, key: str, options=None):
+        from app.options import ProcessingOptions
+        from app.services.capability_service import get_capability_service
         principal.require("jobs:submit")
         if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", key):
             raise ApplicationError(422, "invalid_idempotency_key", "Use an Idempotency-Key of 8 to 128 ASCII letters, digits, dots, underscores, colons or hyphens.")
         key_hash = hashlib.sha256(key.encode()).hexdigest()
-        request_hash = hashlib.sha256(json.dumps({"upload_id": upload_id}, sort_keys=True).encode()).hexdigest()
+        requested = options if isinstance(options, ProcessingOptions) else ProcessingOptions.model_validate({} if options is None else options)
+        legacy_hash = hashlib.sha256(json.dumps({"upload_id": upload_id}, sort_keys=True).encode()).hexdigest()
+        request_hash = hashlib.sha256(json.dumps({"upload_id": upload_id, "options": requested.resolved().model_dump(mode="json")}, sort_keys=True).encode()).hexdigest()
         conn = self.jobs._get_conn()
+        def replay(existing):
+            compatible_legacy = not requested.model_dump(exclude_defaults=True) and existing[0] == legacy_hash
+            if existing[0] != request_hash and not compatible_legacy:
+                raise ApplicationError(409, "idempotency_conflict", "This key was used for a different request.")
+            return JobAdmission.model_validate_json(existing[1]), True
+
+        with self.jobs._lock:
+            existing = conn.execute("SELECT request_hash,response_json FROM job_admissions WHERE owner=? AND key_hash=?", (principal.subject, key_hash)).fetchone()
+            if existing:
+                return replay(existing)
+            self._owned(principal, upload_id)
+        # Expensive engine probes never hold the jobs lock or a write transaction.
+        effective = get_capability_service().resolve(requested)
         directory = None
         with self.jobs._lock:
             try:
                 conn.execute("BEGIN IMMEDIATE")
                 existing = conn.execute("SELECT request_hash,response_json FROM job_admissions WHERE owner=? AND key_hash=?", (principal.subject, key_hash)).fetchone()
                 if existing:
-                    if existing[0] != request_hash:
-                        raise ApplicationError(409, "idempotency_conflict", "This key was used for a different request.")
                     conn.rollback()
-                    return JobAdmission.model_validate_json(existing[1]), True
+                    return replay(existing)
                 row = self._owned(principal, upload_id)
                 if row["state"] != "ready":
                     raise ApplicationError(409, "upload_not_ready", "Upload is not ready.")
@@ -233,7 +248,7 @@ class UploadService:
                     os.fsync(output.fileno())
                 now = datetime.now(timezone.utc)
                 job = JobRecord(job_id, row["filename"], directory, "queued", principal.user_id, 0, now, now, target,
-                                owner_principal_id=principal.subject)
+                                owner_principal_id=principal.subject, options_requested=requested, options_effective=effective)
                 self.jobs._persist(job, commit=False)
                 response = JobAdmission(job_id=job_id, upload_id=upload_id)
                 conn.execute("INSERT INTO job_admissions VALUES (?,?,?,?,?)", (principal.subject, key_hash, request_hash, job_id, response.model_dump_json()))

@@ -26,7 +26,7 @@ class FallbackOcrService:
             with self._reader_lock:
                 if self._reader is None:
                     import easyocr
-                    self._reader = easyocr.Reader(["pt", "en"], gpu=False)
+                    self._reader = easyocr.Reader(["pt", "en"], gpu=False, download_enabled=False)
         return self._reader
 
     def process(self, input_pdf_path: Path) -> str:

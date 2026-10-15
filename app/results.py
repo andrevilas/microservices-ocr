@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.models import QualityLabel
+from app.options import EffectiveOptions, ProcessingOptions
 
 MAX_PAGE_CHARS = 500_000
 MAX_TOTAL_CHARS = 5_000_000
@@ -67,6 +68,8 @@ class JobReport(BaseModel):
     used_fallback: bool
     output_validation: OutputValidation
     warnings: list[str]
+    options_requested: ProcessingOptions | None = None
+    options_effective: EffectiveOptions | None = None
 
 
 class TextChunk(BaseModel):

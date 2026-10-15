@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from app.config import settings
+from app.options import EffectiveOptions
 
 
 class OcrmypdfService:
@@ -13,7 +14,12 @@ class OcrmypdfService:
     def is_available() -> bool:
         return importlib.util.find_spec("ocrmypdf") is not None
 
-    def run_ocr(self, input_pdf_path: Path, output_pdf_path: Path) -> None:
+    def run_ocr(self, input_pdf_path: Path, output_pdf_path: Path, options: EffectiveOptions | None = None) -> None:
+        if options is not None:
+            self._run(["--skip-text", "--output-type", "pdf", "--optimize", "0",
+                       "--language", "+".join(options.languages), "--jobs", str(options.engine_jobs),
+                       str(input_pdf_path), str(output_pdf_path)], timeout=options.subprocess_timeout_seconds)
+            return
         self._run(
             [
                 "--skip-text",
@@ -26,7 +32,13 @@ class OcrmypdfService:
             ]
         )
 
-    def optimize_pdfa(self, input_pdf_path: Path, output_pdf_path: Path) -> None:
+    def optimize_pdfa(self, input_pdf_path: Path, output_pdf_path: Path, options: EffectiveOptions | None = None) -> None:
+        if options is not None:
+            self._run(["--skip-text", "--output-type", "pdfa" if options.output_format == "pdfa" else "pdf",
+                       "--optimize", "1" if options.compression_profile == "balanced" else "0",
+                       "--language", "+".join(options.languages), "--jobs", str(options.engine_jobs),
+                       str(input_pdf_path), str(output_pdf_path)], timeout=options.subprocess_timeout_seconds)
+            return
         try:
             self._run(self._optimize_args(input_pdf_path, output_pdf_path, settings.final_pdf_optimize_level))
         except RuntimeError as exc:
@@ -51,18 +63,18 @@ class OcrmypdfService:
             str(output_pdf_path),
         ]
 
-    def _run(self, args: list[str]) -> None:
+    def _run(self, args: list[str], *, timeout: int | None = None) -> None:
         try:
             subprocess.run(
                 [sys.executable, "-m", "ocrmypdf", *args],
                 check=True,
                 capture_output=True,
                 text=True,
-                timeout=settings.ocr_subprocess_timeout_seconds,
+                timeout=timeout if timeout is not None else settings.ocr_subprocess_timeout_seconds,
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
-                f"OCR subprocess timed out after {settings.ocr_subprocess_timeout_seconds} seconds."
+                "OCR subprocess timed out."
             ) from exc
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(exc.stderr.strip() or str(exc)) from exc

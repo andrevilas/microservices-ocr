@@ -27,8 +27,10 @@ exige também `jobs:read`. O chamador nunca escolhe proprietário ou caminho loc
    bytes diferentes retornam 409 e não substituem o arquivo já validado.
 4. Envie `{"upload_id":"..."}` a POST /api/v1/jobs, com Idempotency-Key de
    8–128 caracteres ASCII (letras, dígitos, `.`, `_`, `:`, `-`). Guarde essa chave
-   junto do pedido; use a mesma em toda repetição. Campos extras, incluindo
-   options ainda não implementadas, são rejeitados.
+   junto do pedido; use a mesma em toda repetição. A AM-07 acrescenta `options`
+   conforme [opções e capacidades](capabilities.md); outros campos são rejeitados.
+   O padrão exige OCR disponível. Para extrair somente texto existente, envie
+   `"options":{"processing_mode":"extract_text"}` explicitamente.
 5. A resposta 202 traz job_id e poll_after_seconds=2. Consulte o job e seu
    artefato pelos endpoints existentes. O prazo é uma sugestão de polling,
    não uma estimativa de término do OCR.
@@ -92,7 +94,8 @@ o máximo por arquivo e reduz para o tamanho efetivo ao concluir. Quotas incluem
 cópias de entrada dos jobs, inclusive legados; um job requer espaço para sua
 própria cópia. O disco livre considera reservas ainda não materializadas.
 Resultados OCR, rasterizações e arquivos externos não são contabilizados por
-essa quota de entrada; orçamento completo de processamento vem nas AM-07/15.
+essa quota de entrada. A AM-07 fixa concorrência interna e timeout por job;
+orçamento completo de disco/RAM do processamento permanece na AM-15.
 
 Gravação usa blocos de até 256 KiB; multipart limita oito cabeçalhos, 8 KiB no total e
 overhead total a 64 KiB. JSON de reserva/admissão limita-se a 64 KiB. A aplicação

@@ -81,7 +81,7 @@ def upload(system, data=None, token=None):
 
 
 def submit(system, upload_id, key="same-key-0001", token=None):
-    return system.client.post("/api/v1/jobs", json={"upload_id": upload_id}, headers={**bearer(token or system.tokens[0]), "Idempotency-Key": key})
+    return system.client.post("/api/v1/jobs", json={"upload_id": upload_id, "options": {"processing_mode": "extract_text"}}, headers={**bearer(token or system.tokens[0]), "Idempotency-Key": key})
 
 
 def test_four_identities_upload_and_submit_isolated(system):
@@ -148,7 +148,7 @@ def test_concurrent_duplicate_admission_creates_one_job(system):
     receipt = upload(system)
     principal = Principal("user:1", 1, frozenset({"jobs:submit"}))
     with ThreadPoolExecutor(max_workers=16) as pool:
-        responses = list(pool.map(lambda _: system.uploads.submit(principal, receipt["upload_id"], "concurrent-key"), range(32)))
+        responses = list(pool.map(lambda _: system.uploads.submit(principal, receipt["upload_id"], "concurrent-key", {"processing_mode": "extract_text"}), range(32)))
     assert len({r.job_id for r, _ in responses}) == 1
     assert sum(not replay for _, replay in responses) == 1
     assert len(system.jobs.snapshot()) == 1
@@ -180,7 +180,7 @@ def test_atomic_rollback_and_crash_recovery(system, monkeypatch):
     with monkeypatch.context() as m:
         m.setattr(system.jobs, "_persist", fail_after_insert)
         with pytest.raises(RuntimeError):
-            system.uploads.submit(principal, receipt["upload_id"], "crash-key-01")
+            system.uploads.submit(principal, receipt["upload_id"], "crash-key-01", {"processing_mode": "extract_text"})
     assert not system.jobs.snapshot()
     assert system.jobs._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
     assert not list(system.uploads.admissions.iterdir())
@@ -197,7 +197,7 @@ def crash(job, **kwargs):
     original(job, **kwargs)
     os._exit(23)
 store._persist=crash
-service.submit(Principal('user:1',1,frozenset({'jobs:submit'})),sys.argv[2],'crash-key-01')
+service.submit(Principal('user:1',1,frozenset({'jobs:submit'})),sys.argv[2],'crash-key-01',{'processing_mode':'extract_text'})
 """
     result = subprocess.run([sys.executable, "-c", code, str(system.jobs.root_dir), receipt["upload_id"]], timeout=30, capture_output=True)
     assert result.returncode == 23
@@ -205,7 +205,7 @@ service.submit(Principal('user:1',1,frozenset({'jobs:submit'})),sys.argv[2],'cra
     try:
         service = UploadService(reopened)
         assert not list(service.admissions.iterdir())
-        accepted, replay = service.submit(principal, receipt["upload_id"], "crash-key-01")
+        accepted, replay = service.submit(principal, receipt["upload_id"], "crash-key-01", {"processing_mode": "extract_text"})
         assert not replay and len(reopened.snapshot()) == 1
         assert accepted.job_id == reopened.snapshot()[0].job_id
     finally:
@@ -215,7 +215,7 @@ service.submit(Principal('user:1',1,frozenset({'jobs:submit'})),sys.argv[2],'cra
 def test_committed_job_survives_restart_and_queue_recovers(system):
     receipt = upload(system)
     principal = Principal("user:1", 1, frozenset({"jobs:submit"}))
-    original, _ = system.uploads.submit(principal, receipt["upload_id"], "restart-key")
+    original, _ = system.uploads.submit(principal, receipt["upload_id"], "restart-key", {"processing_mode": "extract_text"})
     system.jobs._conn.close()
     reopened = JobStore(system.jobs.root_dir)
     processor = JobQueueProcessor(reopened, worker_count=1)
@@ -228,7 +228,7 @@ def test_committed_job_survives_restart_and_queue_recovers(system):
     processor.orchestrator.process_job = process
     try:
         service = UploadService(reopened)
-        again, replay = service.submit(principal, receipt["upload_id"], "restart-key")
+        again, replay = service.submit(principal, receipt["upload_id"], "restart-key", {"processing_mode": "extract_text"})
         assert replay and again == original
         processor.start()
         assert event.wait(5)
@@ -515,7 +515,7 @@ def test_body_limit_and_header_limit_drop_convenience_upload(system, monkeypatch
 def test_delayed_replay_cannot_reenqueue_completed_job(system):
     ready = upload(system)
     principal = Principal("user:1", 1, frozenset({"jobs:submit"}))
-    receipt, _ = system.uploads.submit(principal, ready["upload_id"], "delayed-replay")
+    receipt, _ = system.uploads.submit(principal, ready["upload_id"], "delayed-replay", {"processing_mode": "extract_text"})
     processor = JobQueueProcessor(system.jobs)
     processor._started = True  # Exercise admission without running engines.
     stale = system.jobs.get_snapshot(receipt.job_id)
