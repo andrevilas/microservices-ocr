@@ -467,3 +467,46 @@ body.is-busy .job-list, body.is-busy .detail-actions { cursor: progress; }
   .chip, .segmented__item, .menu__item, .topnav a, .disclosure-plain > summary { min-height: 44px; }
   .row-select { min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; }
 }
+
+/* Pure catalog field editor; all additions are locally scoped. */
+.catalog-fields { display: grid; gap: var(--s3); min-width: 0; max-width: 100%; }
+.catalog-fields .catalog-fields__list,
+.catalog-fields .catalog-fields__advanced,
+.catalog-fields .catalog-fields__value-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); min-width: 0; }
+.catalog-fields .catalog-fields__card { display: grid; gap: var(--s3); min-width: 0; padding: var(--s4); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+.catalog-fields .catalog-fields__grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); min-width: 0; }
+.catalog-fields .catalog-fields__field,
+.catalog-fields .catalog-fields__value,
+.catalog-fields .catalog-fields__values { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s1); min-width: 0; }
+.catalog-fields .catalog-fields__values { gap: var(--s2); }
+.catalog-fields .catalog-fields__field > label,
+.catalog-fields .catalog-fields__value > label { font-size: 0.875rem; font-weight: 500; color: var(--text-2); }
+.catalog-fields .catalog-fields__check { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+.catalog-fields input,
+.catalog-fields select,
+.catalog-fields textarea,
+.catalog-fields button { min-width: 0; max-width: 100%; }
+.catalog-fields textarea { width: 100%; min-height: 80px; padding: var(--s2) var(--s3); border: 1px solid var(--control-border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); resize: vertical; font-size: 0.9375rem; }
+.catalog-fields textarea:disabled { background: var(--surface-sunken); color: var(--text-3); }
+.catalog-fields input[type="checkbox"] { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+.catalog-fields .catalog-fields__field > input[type="checkbox"] { min-height: 18px; }
+.catalog-fields button { justify-self: start; white-space: normal; overflow-wrap: anywhere; padding-top: var(--s2); padding-bottom: var(--s2); }
+.catalog-fields .catalog-fields__actions { display: flex; flex-wrap: wrap; gap: var(--s2); min-width: 0; }
+.catalog-fields .catalog-fields__details { min-width: 0; border-top: 1px solid var(--border); padding-top: var(--s2); }
+.catalog-fields .catalog-fields__details > summary { min-height: var(--control); padding: var(--s2) 0; cursor: pointer; color: var(--text-2); font-weight: 500; overflow-wrap: anywhere; }
+.catalog-fields .catalog-fields__advanced { padding-top: var(--s2); }
+.catalog-fields .catalog-fields__condition { min-width: 0; }
+.catalog-fields h3,
+.catalog-fields h4,
+.catalog-fields p,
+.catalog-fields label,
+.catalog-fields pre { min-width: 0; overflow-wrap: anywhere; }
+.catalog-fields h4 { margin: 0; font-size: 0.875rem; font-weight: 600; }
+.catalog-fields pre { margin: var(--s2) 0 0; white-space: pre-wrap; font: 0.8125rem/1.5 var(--mono); }
+.catalog-fields .catalog-fields__status,
+.catalog-fields .catalog-fields__hint { font-size: 0.8125rem; color: var(--text-3); }
+.catalog-fields .catalog-fields__error { padding: var(--s2) var(--s3); border-left: 3px solid var(--danger); background: var(--danger-soft); color: var(--danger); font-size: 0.875rem; }
+.catalog-fields [aria-invalid="true"] { outline: 2px solid var(--danger); outline-offset: 1px; }
+@media (min-width: 720px) {
+  .catalog-fields .catalog-fields__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
