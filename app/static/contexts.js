@@ -74,10 +74,16 @@
   const listStatus = (text) => { $("list-status").textContent = text; };
   const protectedState = () => dirty || !!pendingCreate || !!uncertainUpdate || writing;
   const active = () => !pageInactive && !approvedDeparture && ready && !expired && canRead;
-  const mutable = () => activeKind === contextKind && active() && canWrite && !writing && !reading && !pendingCreate && !uncertainUpdate;
+  const mutable = () => active() && canWrite && !writing && !reading && !pendingCreate && !uncertainUpdate && (activeKind !== "type" || !!parentContext);
   const editor = window.OcrCatalogFields.create($("fields"), {
     idPrefix: "context-common", readonly: true,
-    onChange: () => { if (!programmatic && editing) { dirty = true; update(); } },
+    onChange: (fields) => {
+      if (!programmatic && editing) {
+        dirty = true;
+        if (activeKind === "type") refreshTypeFields(fields);
+        update();
+      }
+    },
   });
   const inheritedEditor = window.OcrCatalogFields.create(document.getElementById("type-common-fields"), {
     idPrefix: "type-common", readonly: true,
@@ -97,9 +103,12 @@
     name.disabled = !editing; description.disabled = !editing;
     name.readOnly = readonly; description.readOnly = readonly;
     editor.setReadonly(readonly);
-    $("save").hidden = activeKind === "type";
+    $("save").hidden = false;
+    $("save").textContent = activeKind === "type" ? "Salvar tipo" : "Salvar contexto";
     $("save").disabled = readonly || (!dirty && !!selected);
     const typeBusy = !available || writing || reading;
+    document.getElementById("type-new").hidden = !parentContext || !canWrite;
+    document.getElementById("type-new").disabled = typeBusy || !canWrite || !parentContext;
     document.getElementById("type-section").hidden = !parentContext;
     document.getElementById("type-refresh").disabled = typeBusy || typeListing || !parentContext;
     document.getElementById("type-more").hidden = !typeCursor;
@@ -215,8 +224,49 @@
     document.getElementById("type-field-count").textContent = "";
     inheritedEditor.setValue([], {inherited: []});
   }
+  function samePair(kind, parentSnapshot) {
+    return activeKind === kind && (kind === contextKind || (kind === "type" && !!parentSnapshot &&
+      parentContext?.context_id === parentSnapshot.context_id && parentContext?.revision === parentSnapshot.revision));
+  }
+  function refreshTypeFields(fields) {
+    if (activeKind !== "type" || !parentContext || !Array.isArray(fields)) return;
+    const common = parentContext.body.common_fields;
+    inheritedEditor.setValue(clone(common), {inherited: clone(fields)});
+    inheritedEditor.setReadonly(true);
+    document.getElementById("type-field-count").textContent = `${common.length + fields.length} campo(s): ${common.length} comuns herdados do contexto e ${fields.length} específicos do tipo.`;
+  }
+  function hydrateType(record, parentSnapshot) {
+    if (!recordOk(parentSnapshot) || (record !== null && !entityRecordOk("type", parentSnapshot.context_id, record))) throw new Error("Invalid type-parent pair");
+    const body = record ? clone(record.body) : entityBody("type", "", "", []);
+    abandonState(); setParent(parentSnapshot); activeKind = "type";
+    const parent = parentContext;
+    programmatic = true;
+    try {
+      editor.setValue(clone(body.specific_fields), {inherited: clone(parent.body.common_fields)});
+      refreshTypeFields(body.specific_fields);
+      name.value = body.name; description.value = body.description;
+    } finally { programmatic = false; }
+    selected = record ? record.type_id : null;
+    originalRevision = record ? record.revision : null;
+    savedSnapshot = record ? clone(record.body) : null;
+    editing = true; dirty = false; resetErrors();
+    form.hidden = false; $("empty").hidden = true;
+    $("detail-title").textContent = "Detalhes do tipo";
+    $("fields-title").textContent = "Campos específicos";
+    $("revision").textContent = record
+      ? `Rascunho — tipo de documento · Revisão ${record.revision} · Contexto: ${parent.body.name} · Revisão ${parent.revision}`
+      : `Novo tipo · Contexto ${parent.body.name} · Revisão ${parent.revision}`;
+    document.getElementById("type-common-panel").hidden = false;
+    renderList(); renderTypes(); update();
+  }
+  function hydrateEntity(kind, record, parentSnapshot) {
+    if (kind === contextKind) hydrate(record);
+    else if (kind === "type") hydrateType(record, parentSnapshot);
+    else throw new Error("Invalid entity kind");
+  }
   function hydrate(record) {
-    contextView(); setParent(record);
+    if (!recordOk(record)) throw new Error("Invalid context record");
+    abandonState(); contextView(); setParent(record);
     programmatic = true;
     try {
       editor.setValue(clone(record.body[entities[contextKind].fieldsKey]), {inherited: []});
@@ -232,7 +282,7 @@
   }
   async function selectType(id) {
     if (!active() || writing || reading || !parentContext || !idOk(id)) return;
-    if (activeKind === "type" && selected === id) return;
+    if (activeKind === "type" && selected === id && !pendingCreate) return;
     const parent = parentContext, before = selectionGeneration;
     if (!await confirmDeparture() || before !== selectionGeneration || parent !== parentContext || writing || reading || !active()) return;
     const generation = ++selectionGeneration, parentId = parent.context_id;
@@ -243,24 +293,8 @@
         request(entityPath("type", parentId, id), {valid: (value) => entityRecordOk("type", parentId, value) && value.type_id === id}),
       ]);
       if (generation !== selectionGeneration || parentContext !== parent || !active()) return;
-      abandonState(); setParent(authoritativeParent); activeKind = "type";
-      programmatic = true;
-      try {
-        inheritedEditor.setValue(clone(authoritativeParent.body.common_fields), {inherited: clone(record.body.specific_fields)});
-        editor.setValue(clone(record.body.specific_fields), {inherited: clone(authoritativeParent.body.common_fields)});
-        name.value = record.body.name; description.value = record.body.description;
-      } finally { programmatic = false; }
-      selected = record.type_id; originalRevision = record.revision; savedSnapshot = clone(record.body);
-      editing = true; dirty = false; resetErrors();
-      form.hidden = false; $("empty").hidden = true;
-      $("detail-title").textContent = "Detalhes do tipo";
-      $("fields-title").textContent = "Campos específicos";
-      $("revision").textContent = `Rascunho — tipo de documento · Revisão ${record.revision} · Contexto: ${authoritativeParent.body.name} · Revisão ${authoritativeParent.revision}`;
-      document.getElementById("type-common-panel").hidden = false;
-      const commonCount = authoritativeParent.body.common_fields.length, specificCount = record.body.specific_fields.length;
-      document.getElementById("type-field-count").textContent = `${commonCount + specificCount} campo(s): ${commonCount} comuns herdados do contexto e ${specificCount} específicos do tipo.`;
-      renderList(); renderTypes(); update();
-      status("Tipo de documento carregado. Consulta somente para leitura.");
+      hydrateType(record, authoritativeParent);
+      status(canWrite ? "Tipo de documento carregado." : "Tipo de documento carregado. Consulta somente para leitura.");
     } catch (_) {
       if (generation === selectionGeneration && active()) status("Não foi possível abrir o tipo de documento. O formulário anterior foi preservado. Selecione o tipo para tentar novamente.");
     } finally {
@@ -316,7 +350,7 @@
     try {
       const record = await request(entityPath(contextKind, null, id), {valid: (value) => recordOk(value) && value[entities[contextKind].idKey] === id});
       if (generation !== selectionGeneration || !active()) return;
-      abandonState(); hydrate(record); status(canWrite ? "Contexto carregado." : "Contexto carregado. Você tem permissão somente para leitura.");
+      hydrate(record); status(canWrite ? "Contexto carregado." : "Contexto carregado. Você tem permissão somente para leitura.");
     } catch (error) { if (generation === selectionGeneration) { showError(error, "Não foi possível abrir o contexto. Seu formulário foi preservado. "); } }
     finally { if (generation === selectionGeneration) { reading = false; update(); } }
   }
@@ -332,12 +366,30 @@
     $("revision").textContent = "Novo contexto";
     status("Preencha o nome e os campos comuns."); renderList(); update(); name.focus();
   }
+  async function newType() {
+    if (!active() || !canWrite || writing || reading || !parentContext) return;
+    const parent = parentContext, before = selectionGeneration;
+    if (!await confirmDeparture() || before !== selectionGeneration || parent !== parentContext || writing || reading || !active() || !canWrite) return;
+    const generation = ++selectionGeneration, parentId = parent.context_id;
+    reading = true; status("Carregando contexto para novo tipo…"); update();
+    try {
+      const authoritativeParent = await request(entityPath(contextKind, null, parentId), {valid: (value) => recordOk(value) && value.context_id === parentId});
+      if (generation !== selectionGeneration || parent !== parentContext || !active() || !canWrite) return;
+      hydrateType(null, authoritativeParent);
+      status("Preencha o nome e os campos específicos. Os campos comuns são herdados do contexto.");
+      name.focus();
+    } catch (error) {
+      if (generation === selectionGeneration && parent === parentContext && active()) showError(error, "Não foi possível preparar o novo tipo. Seu formulário e a recuperação foram preservados. ");
+    } finally {
+      if (generation === selectionGeneration) { reading = false; update(); }
+    }
+  }
   function inputChanged() {
     if (!programmatic && editing) { dirty = true; update(); }
   }
   name.addEventListener("input", inputChanged); description.addEventListener("input", inputChanged);
   function draft() {
-    if (activeKind !== contextKind) return null;
+    if (activeKind === "type" && !parentContext) return null;
     resetErrors(); let first = null;
     function invalid(field, text) { $(field).setAttribute("aria-invalid", "true"); $(`${field}-error`).textContent = text; $(`${field}-error`).hidden = false; first ||= $(field); }
     // Iterate code points, rejecting isolated UTF-16 surrogates, not valid pairs.
@@ -350,25 +402,28 @@
     if (Array.from(description.value).length > 4000 || forbidden(description.value, true)) invalid("description", "Use até 4.000 caracteres. Tabulação e quebra de linha são permitidas; outros controles não são.");
     let fields;
     try { fields = editor.getValue(); }
-    catch (_) { if (!first) editor.focusFirstError(); status("Revise os campos comuns indicados."); }
+    catch (_) { if (!first) editor.focusFirstError(); status(activeKind === "type" ? "Revise os campos específicos indicados." : "Revise os campos comuns indicados."); }
     if (first) { first.focus(); status("Revise os dados indicados."); }
     if (first || !fields) return null;
-    return clone(entityBody(contextKind, name.value, description.value, fields));
+    return clone(entityBody(activeKind, name.value, description.value, fields));
   }
-  async function recoverCreated(intent) {
+  async function recoverCreated(intent, generation) {
     const receipt = intent.receipt;
-    const {kind, parentId} = intent.request;
+    const {kind, parentId, parentSnapshot} = intent.request;
     const id = receipt[entities[kind].idKey];
     const record = await request(entityPath(kind, parentId, id), {valid: (value) => entityRecordOk(kind, parentId, value) && value[entities[kind].idKey] === id});
-    if (expired || pendingCreate !== intent) return false;
-    hydrate(record); pendingCreate = null; update();
-    status("Contexto criado. A versão atual foi recuperada.");
+    if (!active() || pendingCreate !== intent || generation !== selectionGeneration || !samePair(kind, parentSnapshot)) return false;
+    hydrateEntity(kind, record, parentSnapshot); update();
+    status(kind === "type" ? "Tipo de documento criado. A versão atual foi recuperada." : "Contexto criado. A versão atual foi recuperada.");
     return true;
   }
   async function sendCreate() {
     if (!pendingCreate || writing || reading || !active() || !canWrite) return;
-    const intent = pendingCreate;
-    writing = true; status(intent.receipt ? "Recuperando contexto criado…" : "Salvando contexto…"); update();
+    const intent = pendingCreate, generation = selectionGeneration;
+    const isType = intent.request.kind === "type";
+    if (!samePair(intent.request.kind, intent.request.parentSnapshot)) return;
+    writing = true;
+    status(intent.receipt ? (isType ? "Recuperando tipo de documento criado…" : "Recuperando contexto criado…") : (isType ? "Salvando tipo de documento…" : "Salvando contexto…")); update();
     let saved = false;
     try {
       if (!intent.receipt) {
@@ -376,40 +431,53 @@
         const receipt = await request(intent.request.path, {method: "POST", body: intent.request.body, key: intent.request.key, valid: (value) => entityReceiptOk(kind, parentId, value)});
         intent.receipt = receipt;
       }
-      saved = await recoverCreated(intent);
+      if (!active() || pendingCreate !== intent || generation !== selectionGeneration || !samePair(intent.request.kind, intent.request.parentSnapshot)) return;
+      saved = await recoverCreated(intent, generation);
     } catch (error) {
+      if (!active() || pendingCreate !== intent || generation !== selectionGeneration || !samePair(intent.request.kind, intent.request.parentSnapshot)) return;
       if (error.ambiguous) intent.everAmbiguous = true;
       const entity = entities[intent.request.kind];
       const preAdmission = !intent.receipt && !intent.everAmbiguous && ((error.status === 422 && [entity.invalidBody, "validation_error"].includes(error.code)) || (error.status === 413 && error.code === "request_too_large") || (error.status === 429 && error.code === entity.quotaExceeded));
-      if (preAdmission) { pendingCreate = null; showError(error, "O contexto não foi admitido. Corrija o rascunho e salve novamente. "); }
+      if (preAdmission) { pendingCreate = null; showError(error, isType ? "O tipo de documento não foi admitido. Corrija o rascunho e salve novamente. " : "O contexto não foi admitido. Corrija o rascunho e salve novamente. "); }
       else showError(error, intent.receipt ? "A criação foi recebida, mas a versão atual ainda não foi recuperada. Use Tentar novamente. " : "O pedido foi preservado e o formulário permanece bloqueado. Tentar novamente reutiliza exatamente o mesmo pedido. ");
     } finally { writing = false; update(); }
-    if (saved && active()) await loadList();
+    if (saved && active()) {
+      if (intent.request.kind === "type") await loadTypes();
+      else await loadList();
+    }
   }
   async function save(event) {
     event.preventDefault();
     if (!mutable() || !editing) return;
     const body = draft(); if (!body) return;
+    const kind = activeKind, parentSnapshot = kind === "type" ? parentContext : null;
+    const parentId = parentSnapshot ? parentSnapshot.context_id : null;
     if (!selected) {
       let key;
       try { key = crypto.randomUUID(); }
       catch (_) { status("Não foi possível preparar o pedido. Use um navegador com conexão segura."); return; }
-      pendingCreate = {request: freeze({kind: contextKind, parentId: null, path: entityPath(contextKind, null), body: JSON.stringify(body), key}), everAmbiguous: false, receipt: null};
+      pendingCreate = {request: freeze({kind, parentId, parentSnapshot, path: entityPath(kind, parentId), body: JSON.stringify(body), key}), everAmbiguous: false, receipt: null};
       update(); await sendCreate(); return;
     }
-    const intent = freeze({kind: contextKind, parentId: null, path: entityPath(contextKind, null, selected), id: selected, expectedRevision: originalRevision, body: clone(body), wire: JSON.stringify({body, expected_revision: originalRevision})});
-    writing = true; status("Salvando contexto…"); update();
+    const intent = freeze({kind, parentId, parentSnapshot, path: entityPath(kind, parentId, selected), id: selected, expectedRevision: originalRevision, body: clone(body), wire: JSON.stringify({body, expected_revision: originalRevision})});
+    const generation = selectionGeneration;
+    writing = true; status(kind === "type" ? "Salvando tipo de documento…" : "Salvando contexto…"); update();
     let saved = false;
     try {
       const record = await request(intent.path, {method: "PUT", body: intent.wire, valid: (value) => entityRecordOk(intent.kind, intent.parentId, value) && value[entities[intent.kind].idKey] === intent.id && value.revision === intent.expectedRevision + 1 && equal(value.body, intent.body)});
-      if (expired) return;
-      hydrate(record); status("Contexto salvo."); saved = true;
+      if (!active() || generation !== selectionGeneration || !samePair(intent.kind, intent.parentSnapshot) || selected !== intent.id) return;
+      hydrateEntity(intent.kind, record, intent.parentSnapshot);
+      status(intent.kind === "type" ? "Tipo de documento salvo." : "Contexto salvo."); saved = true;
     } catch (error) {
+      if (!active() || generation !== selectionGeneration || !samePair(intent.kind, intent.parentSnapshot) || selected !== intent.id) return;
       if (error.ambiguous) { uncertainUpdate = intent; conflict = false; clearComparison(); showError(error, "O resultado da gravação é incerto. Novas gravações estão bloqueadas. Consulte a versão atual para verificar. "); }
       else if (error.status === 409 && error.code === entities[intent.kind].revisionConflict) { conflict = true; clearComparison(); showError(error, "Seu rascunho e sua revisão original foram preservados. Consulte a versão atual antes de decidir. "); }
       else showError(error);
     } finally { writing = false; update(); }
-    if (saved && active()) await loadList();
+    if (saved && active()) {
+      if (intent.kind === "type") await loadTypes();
+      else await loadList();
+    }
   }
   // Read-only comparison, rendered as text and semantic lists, never as editable JSON.
   function valueNode(value) {
@@ -421,24 +489,27 @@
     }
     return ui.el("span", {text: value === null ? "Não definido" : value === true ? "Sim" : value === false ? "Não" : String(value)});
   }
-  function showCurrent(record) {
-    current = clone(record); $("comparison").hidden = false;
-    $("current").replaceChildren(ui.el("p", {text: `Revisão ${record.revision} · ${record.body.name}`}), ui.el("p", {className: "catalog-description", text: record.body.description || "Sem descrição."}), ui.el("h3", {text: "Campos comuns"}), valueNode(record.body.common_fields));
+  function showCurrent(record, kind, parentSnapshot) {
+    current = freeze({kind, parentSnapshot: parentSnapshot ? clone(parentSnapshot) : null, record: clone(record)});
+    $("comparison").hidden = false;
+    $("current").replaceChildren(ui.el("p", {text: `Revisão ${record.revision} · ${record.body.name}`}), ui.el("p", {className: "catalog-description", text: record.body.description || "Sem descrição."}), ui.el("h3", {text: kind === "type" ? "Campos específicos" : "Campos comuns"}), valueNode(record.body[entities[kind].fieldsKey]));
   }
   async function consult() {
     if (!active() || writing || reading || !(uncertainUpdate || conflict) || !selected) return;
     const generation = selectionGeneration, intent = uncertainUpdate;
-    const kind = intent ? intent.kind : contextKind;
-    const parentId = intent ? intent.parentId : null;
+    const kind = intent ? intent.kind : activeKind;
+    const parentSnapshot = intent ? intent.parentSnapshot : (kind === "type" ? parentContext : null);
+    const parentId = intent ? intent.parentId : (parentSnapshot ? parentSnapshot.context_id : null);
     const id = intent ? intent.id : selected;
+    if (!samePair(kind, parentSnapshot)) return;
     const path = intent ? intent.path : entityPath(kind, parentId, id);
     reading = true; status("Consultando versão atual…"); update();
     try {
       const record = await request(path, {valid: (value) => entityRecordOk(kind, parentId, value) && value[entities[kind].idKey] === id});
-      if (generation !== selectionGeneration || expired) return;
-      if (intent && record.revision === intent.expectedRevision + 1 && equal(record.body, intent.body)) { hydrate(record); status("A gravação foi confirmada."); }
-      else { showCurrent(record); status(intent ? "A consulta não confirmou a gravação esperada. Compare a versão atual com seu rascunho. Para resolver, escolha explicitamente Usar versão atual ou abandone este rascunho ao navegar." : "Versão atual consultada. Seu rascunho e sua revisão original permanecem no formulário."); }
-    } catch (error) { if (generation === selectionGeneration) showError(error, "Não foi possível consultar. A recuperação permanece disponível. "); }
+      if (generation !== selectionGeneration || !active() || !samePair(kind, parentSnapshot) || selected !== id) return;
+      if (intent && record.revision === intent.expectedRevision + 1 && equal(record.body, intent.body)) { hydrateEntity(kind, record, parentSnapshot); status("A gravação foi confirmada."); }
+      else { showCurrent(record, kind, parentSnapshot); status(intent ? "A consulta não confirmou a gravação esperada. Compare a versão atual com seu rascunho. Para resolver, escolha explicitamente Usar versão atual ou abandone este rascunho ao navegar." : "Versão atual consultada. Seu rascunho e sua revisão original permanecem no formulário."); }
+    } catch (error) { if (generation === selectionGeneration && active() && samePair(kind, parentSnapshot) && selected === id) showError(error, "Não foi possível consultar. A recuperação permanece disponível. "); }
     finally { if (generation === selectionGeneration) { reading = false; update(); } }
   }
   async function useCurrent() {
@@ -448,7 +519,10 @@
     let accepted;
     try { accepted = await ui.confirmAction({title: "Usar versão atual?", body: "Seu rascunho será descartado e substituído pela versão consultada. Uma operação com resultado incerto pode já ter sido gravada. Nenhuma gravação será repetida.", confirmLabel: "Usar versão atual", danger: true}); }
     finally { confirming = false; }
-    if (accepted && generation === selectionGeneration && candidate === current && !writing && !reading && active()) { hydrate(candidate); status("Versão consultada carregada. Novas alterações usarão esta revisão."); }
+    if (accepted && generation === selectionGeneration && candidate === current && !writing && !reading && active() && samePair(candidate.kind, candidate.parentSnapshot) && selected === candidate.record[entities[candidate.kind].idKey]) {
+      hydrateEntity(candidate.kind, candidate.record, candidate.parentSnapshot);
+      status("Versão consultada carregada. Novas alterações usarão esta revisão.");
+    }
   }
   async function abandonCreate() {
     if (!pendingCreate || writing || reading || approvedDeparture || pageInactive) return;
@@ -475,6 +549,7 @@
       if (!expired) { status(error instanceof RequestError ? failMessage(error) : "Não foi possível recuperar a sessão. Verifique a conexão e tente novamente."); $("bootstrap").hidden = false; listStatus("A sessão não foi carregada."); }
     } finally { booting = false; update(); }
   }
+  document.getElementById("type-new").addEventListener("click", newType);
   document.getElementById("type-refresh").addEventListener("click", () => loadTypes());
   document.getElementById("type-more").addEventListener("click", () => loadTypes(true));
   document.getElementById("type-edit-context").addEventListener("click", () => {
