@@ -48,6 +48,34 @@ permite preparar upload, submeter uma referência e recuperar texto e artefato.
 | GET /api/v1/jobs/{job_id}/report | ocr_get_report | jobs:read e artifacts:read |
 | GET /api/v1/jobs/{job_id}/artifact/content | URL retornada por ocr_get_artifact | jobs:read e artifacts:read |
 
+### Catálogo HTTP (contextos e tipos documentais) — sem tools MCP ainda
+
+Onze operações HTTP (tag `Catalog`) expõem os serviços de contextos/tipos. **Não há
+tools MCP nem UI para elas neste corte**; a paridade é pendente. Escopos:
+leituras `contexts:read`; criar/atualizar `contexts:read` + `contexts:write`;
+publicar `contexts:read` + `contexts:publish`. Tokens JWT legados (sem claims de
+escopo) não recebem esses escopos (403).
+
+| HTTP | operationId |
+|---|---|
+| GET/POST /api/v1/contexts | ocr_list_contexts / ocr_create_context |
+| GET/PUT /api/v1/contexts/{context_id} | ocr_get_context / ocr_update_context |
+| GET/POST /api/v1/contexts/{context_id}/types | ocr_list_document_types / ocr_create_document_type |
+| GET/PUT /api/v1/document-types/{type_id} | ocr_get_document_type / ocr_update_document_type |
+| GET/POST /api/v1/document-types/{type_id}/versions | ocr_list_document_type_versions / ocr_publish_document_type |
+| GET /api/v1/document-types/{type_id}/versions/{version} | ocr_get_document_type_version |
+
+POST exige `Idempotency-Key` (ASCII, 8–128): 201 na criação, 200 com o recibo
+original no replay (`Idempotency-Replayed: true|false`); a mesma chave com outro
+conteúdo retorna 409. PUT substitui o recurso inteiro com `expected_revision`
+(compare-and-swap, sem retry automático; 409 em conflito). Publicar exige
+`expected_revision` e `expected_context_revision`. Corpos JSON têm limite de 2 MiB
+lido em streaming (413), `application/json` obrigatório (415) e o payload canônico
+tem limite próprio (422). Listas retornam só resumos (`limit` 1–100, padrão 25,
+cursor `after`). A versão publicada devolve o schema canônico no campo de fio
+`schema`; editar contexto/tipo depois nunca altera versões publicadas. Recursos de
+outro dono, inclusive de administradores, retornam 404.
+
 As duas interfaces chamam `JobApplication`, passando um `Principal` imutável.
 O SDK MCP oficial está fixado em 2.3.0. `/openapi.json` declara Bearer, schemas,
 operationId e erros da API v1. O download usa HTTP autenticado; PDFs não entram

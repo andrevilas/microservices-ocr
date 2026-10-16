@@ -2,8 +2,11 @@
 
 Fonte: matriz do plano OCR-AM-01, projeto LPM `POzf83SdXU3HWL9KX9i2`.
 Esta tabela usa os nomes efetivamente implementados; nomes propostos diferentes
-não são aliases. Catálogo atual: HTTP v1 **1.6.0, 30 operações**; MCP **0.5.0,
-20 tools**. Contratos e permissões: [API/MCP](api-mcp.md).
+não são aliases. Catálogo atual: HTTP v1 **1.6.0, 41 operações** (30 de OCR +
+11 de contextos/tipos documentais, E2); MCP **0.5.0, 20 tools**. Contratos e
+permissões: [API/MCP](api-mcp.md). As 11 rotas do catálogo (tag Catalog) ainda
+não têm tools MCP nem tela: a paridade MCP/UI é pendente (próximos jobs) e E2 não
+está concluído. A tabela F01–F29 abaixo cobre apenas o fluxo OCR.
 
 | ID | Funcionalidade | Contrato efetivo / decisão de cobertura |
 |---|---|---|

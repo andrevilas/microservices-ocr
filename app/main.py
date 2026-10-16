@@ -16,6 +16,8 @@ from app.routes.service_identities import router as identity_router
 from app.routes.uploads import router as upload_router
 from app.routes.bulk import router as bulk_router
 from app.routes.control import router as control_router
+from app.routes.catalog import router as catalog_router
+from app.services.catalog_runtime import CatalogProvider
 from app.services.control_service import get_control_service
 from app.services.batch_service import get_batch_service
 from app.services.export_service import get_export_service
@@ -85,8 +87,11 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
     application.mount("/static", StaticFiles(directory="app/static"), name="static")
     application.include_router(router)
     application.include_router(auth_router)
+    # Lazy and cached per store (not per JobApplication, which is rebuilt per request); no I/O until first use.
+    application.state.catalog_provider = CatalogProvider(
+        lambda: application.dependency_overrides.get(get_job_application, service_provider)())
     versioned_routes = []
-    for versioned_router in (v1_router, identity_router, upload_router, bulk_router, control_router):
+    for versioned_router in (v1_router, identity_router, upload_router, bulk_router, control_router, catalog_router):
         application.include_router(versioned_router)
         versioned_routes.extend(versioned_router.routes)
     if service_provider is not get_job_application:
