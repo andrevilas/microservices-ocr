@@ -1877,7 +1877,8 @@
               "primary",
               "fallback",
               "build",
-              "finalize"
+              "finalize",
+              "pdfa_validation"
             ],
             "title": "Name",
             "type": "string"

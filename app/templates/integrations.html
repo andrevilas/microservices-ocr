@@ -9,6 +9,7 @@
   </div>
 </div>
 
+<p id="integrations-loading" class="hint" role="status">Carregando serviços…</p>
 <p id="integrations-status" class="form-alert" data-tone="success" role="status" hidden></p>
 <p id="integrations-error" class="form-alert" role="alert" hidden></p>
 <button id="integrations-retry" class="button button-small" type="button" hidden>Tentar novamente</button>
@@ -24,7 +25,7 @@
       <input type="text" id="service-name" maxlength="80" required autocomplete="off" />
     </label>
     <div class="form-actions form-grid__wide">
-      <button type="submit" id="create-service-btn" class="button button-primary">Criar serviço</button>
+      <button type="submit" id="create-service-btn" class="button button-primary" disabled>Criar serviço</button>
     </div>
   </form>
 </details>
