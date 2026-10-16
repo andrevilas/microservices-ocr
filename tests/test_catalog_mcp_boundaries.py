@@ -75,7 +75,7 @@ async def catalog_calls(runtime, token, cid, tid, tag):
         "ocr_list_context_templates": {},
         "ocr_clone_context_template": {
             "template_id": template["template_id"],
-            "body": {"expected_version": template["version"], "expected_sha256": template["template_sha256"]},
+            "body": {"expected_version": template["template_version"], "expected_sha256": template["template_sha256"]},
             "idempotency_key": tag + "-clone"},
         "ocr_list_contexts": {},
         "ocr_create_context": {"body": CTX2, "idempotency_key": tag + "-create-context"},

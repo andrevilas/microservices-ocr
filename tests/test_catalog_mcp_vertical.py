@@ -306,31 +306,34 @@ async def catalog_flow(runtime, accounts, client):
         ContextTemplateList.model_validate(templates)
         template = templates["items"][0]
         clone_args = {"template_id": template["template_id"],
-                      "body": {"expected_version": template["version"],
+                      "body": {"expected_version": template["template_version"],
                                "expected_sha256": template["template_sha256"]},
                       "idempotency_key": owner_key + "-clone"}
         cloned = await tools("ocr_clone_context_template", clone_args)
-        TemplateCloneReceipt.model_validate(cloned)
+        TemplateCloneReceipt.model_validate_json(json.dumps(cloned))
         assert cloned["template_id"] == template["template_id"]
-        assert cloned["template_version"] == template["version"]
+        assert cloned["template_version"] == template["template_version"]
         assert cloned["template_sha256"] == template["template_sha256"]
         assert cloned["context_revision"] == 1 and cloned["context_id"] not in ids
         assert await tools("ocr_clone_context_template", clone_args) == cloned
         cloned_context = await tools("ocr_get_context", {"context_id": cloned["context_id"]})
         assert cloned_context["revision"] == 1
         ContextInput.model_validate(cloned_context["body"])
+        assert cloned_context["body"] == template["context"]
+        template_types = {definition["type_key"]: definition["body"] for definition in template["types"]}
         for item in cloned["types"]:
             assert item["revision"] == 1 and item["type_id"] != tid
             draft = await tools("ocr_get_document_type", {"type_id": item["type_id"]})
             assert draft["revision"] == 1 and draft["context_id"] == cloned["context_id"]
             TypeInput.model_validate(draft["body"])
+            assert draft["body"] == template_types[item["type_key"]]
             assert (await tools("ocr_list_document_type_versions", {"type_id": item["type_id"]}))["items"] == []
         async with connected(runtime, "http", "auto", accounts.other) as other_client:
             other_tools = Tools(other_client, (await other_client.list_tools()).tools)
             assert await other_tools("ocr_list_context_templates", {}) == templates
             other_clone = await other_tools("ocr_clone_context_template", {
                 **clone_args, "idempotency_key": owner_key + "-other-clone"})
-            TemplateCloneReceipt.model_validate(other_clone)
+            TemplateCloneReceipt.model_validate_json(json.dumps(other_clone))
             assert other_clone["context_id"] != cloned["context_id"]
             assert (await other_tools("ocr_get_context", {"context_id": other_clone["context_id"]}))["revision"] == 1
             await other_tools.denied("ocr_get_context", {"context_id": cloned["context_id"]}, "not_found")
