@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from functools import wraps
 from uuid import uuid4
@@ -259,6 +259,7 @@ class MetadataStore:
     def __init__(self, jobs):
         self.jobs = jobs
         with self._transaction() as conn:
+            self._active_writes = set()
             for statement in _DDL:
                 conn.execute(statement)
 
@@ -503,6 +504,106 @@ class MetadataStore:
                 or job_bytes + add_bytes > MAX_JOB_BYTES
                 or job_slots + add_slots > MAX_REVISIONS_PER_JOB):
             _fail("metadata_quota_exceeded")
+
+    @_guard
+    def _reserved_disk_bytes_locked(self, conn, owner, job_id):
+        """All head and pending disk reserves, including cleanup and expired jobs.
+
+        Own pending capacity is already included. Other pending files may already
+        occupy disk; counting their full reserve again deliberately trades write
+        availability for conservative capacity admission. This is neither a
+        unified upload/export quota nor protection against external consumption.
+        """
+        self._connection_locked(conn)
+        self._quota(conn, owner, job_id)
+        row = conn.execute(
+            "SELECT COALESCE(SUM(bytes),0) FROM ("
+            "SELECT approval_bytes AS bytes FROM metadata_heads UNION ALL "
+            "SELECT charged_bytes AS bytes FROM metadata_pending)").fetchone()
+        _require(row is not None and len(row) == 1
+                 and type(row[0]) is int and row[0] >= 0)
+        return row[0]
+
+    @_guard
+    def _index_outcome_locked(self, conn, reservation, receipt):
+        """Diagnose only the captured attempt; no admission, lifecycle or repair.
+
+        Caller owns the shared lock and a fresh transaction. Exceptions are also
+        unknown outcomes to the coordinator. A later head is permitted, whereas
+        contradictory references to this attempt never authorize cleanup.
+        """
+        self._connection_locked(conn)
+        _require(type(reservation) is MetadataPending)
+        r = reservation
+        receipt = _receipt(receipt, stored=True)
+        _require(receipt.revision_id == r.revision_id and receipt.sha256 == r.sha256)
+        key = (r.owner, r.job_id, r.operation, r.key_hash)
+        pending_rows = conn.execute(
+            "SELECT pending_id FROM metadata_pending WHERE pending_id=? OR revision_id=? "
+            "OR (owner=? AND job_id=? AND operation=? AND key_hash=?)",
+            (r.pending_id, r.revision_id, *key)).fetchall()
+        operation_rows = conn.execute(
+            "SELECT owner,job_id,operation,key_hash,request_hash,revision_id,receipt_json,created_at "
+            "FROM metadata_operations WHERE revision_id=? OR "
+            "(owner=? AND job_id=? AND operation=? AND key_hash=?)",
+            (r.revision_id, *key)).fetchall()
+        audit_rows = conn.execute(
+            "SELECT owner,job_id,revision_id,parent_revision_id,sha256,action,actor,auth_source,created_at "
+            "FROM metadata_audit WHERE revision_id=?", (r.revision_id,)).fetchall()
+        head_rows = conn.execute(
+            "SELECT owner,job_id FROM metadata_heads WHERE revision_id=?",
+            (r.revision_id,)).fetchall()
+        revision = self._revision(conn, r.revision_id)
+        if len(pending_rows) == 1:
+            pending = self._pending(conn, pending_rows[0][0])
+            if (pending is not None and pending.state in ("active", "cleanup")
+                    and replace(pending, state=r.state) == r and r.state == "active"
+                    and revision is None and not operation_rows and not audit_rows
+                    and not head_rows):
+                return "uncommitted"
+            return "unknown"
+        if pending_rows or revision is None or len(operation_rows) != 1 or len(audit_rows) != 1:
+            return "unknown"
+        expected_revision = MetadataRevision(
+            r.revision_id, r.owner, r.job_id, r.expected_head, r.sha256,
+            r.size_bytes, "draft", r.created_at)
+        if revision != expected_revision:
+            return "unknown"
+        operation = tuple(operation_rows[0])
+        if operation[:6] != (*key, r.request_hash, r.revision_id):
+            return "unknown"
+        encoded = operation[6]
+        _require(type(encoded) is str and len(encoded) <= 8192)
+        stored_receipt = _receipt(
+            json.loads(encoded, object_pairs_hook=_unique_object), stored=True)
+        if stored_receipt != receipt or _stored_time(operation[7]) != r.created_at:
+            return "unknown"
+        audit = tuple(audit_rows[0])
+        if (audit[:8] != (r.owner, r.job_id, r.revision_id, r.expected_head,
+                          r.sha256, "save", r.actor, r.auth_source)
+                or _stored_time(audit[8]) != r.created_at):
+            return "unknown"
+        head = self._head(conn, r.owner, r.job_id)
+        if head is None:
+            return "unknown"
+        expected_heads = [(r.owner, r.job_id)] if head.revision_id == r.revision_id else []
+        if [tuple(row) for row in head_rows] != expected_heads:
+            return "unknown"
+        # A later reservation is legitimate only against the current head.
+        later = conn.execute("SELECT pending_id FROM metadata_pending WHERE job_id=?",
+                             (r.job_id,)).fetchall()
+        if len(later) > 1:
+            return "unknown"
+        if later:
+            pending = self._pending(conn, later[0][0])
+            if (pending is None or pending.owner != r.owner
+                    or (pending.expected_head, pending.expected_sha256)
+                    != (head.revision_id, head.sha256)
+                    or (pending.charged_slots, pending.charged_bytes,
+                        pending.approval_slots, pending.approval_bytes)
+                    != self._charges(head, pending.size_bytes)):
+                return "unknown"
+        return "confirmed"
 
     @_guard
     def preflight(self, principal, job_id, *, key_hash, request_hash):

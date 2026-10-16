@@ -329,6 +329,58 @@ class WriteAttempt:
         self._needs_sync = False
 
     @_guard
+    def available_bytes(self) -> int:
+        """Observe free bytes without creating directories or changing phases.
+
+        A validated existing ancestor suffices when results/metadata is missing.
+        This observation provides no guarantee against later disk consumption.
+        """
+        directories = _Directories()
+        try:
+            directories.open(self._target, allow_missing=True)
+            if (self._ancestor_chain is not None
+                    and tuple(zip(directories.names, directories.identities))
+                    != self._ancestor_chain):
+                _reject()
+            directories.check()
+            info = os.fstatvfs(directories.fd)
+            if (type(info.f_bavail) is not int or info.f_bavail < 0
+                    or type(info.f_frsize) is not int or info.f_frsize <= 0):
+                _reject()
+            directories.check()
+            return info.f_bavail * info.f_frsize
+        finally:
+            directories.close()
+
+    @_guard
+    def verify_absent(self) -> None:
+        """Prove both exact names absent, including unowned collisions.
+
+        After observing a publication tree, require that original ancestry. A
+        never-published attempt can use a safely missing results/metadata child;
+        this is not recovery or permission to adopt uncertain files.
+        """
+        directories = _Directories()
+        try:
+            if self._ancestor_chain is not None:
+                directories.open(self._target)
+                if tuple(zip(directories.names, directories.identities)) != self._ancestor_chain:
+                    _reject()
+            else:
+                if (self._temp_pending or self._final_pending or self._needs_sync
+                        or self._temp_inode is not None or self._final_inode is not None):
+                    _reject()
+                directories.open(self._target, allow_missing=True)
+            directories.check()
+            if directories.missing is None:
+                for name in (self._temp, self._target.filename):
+                    if _optional_stat(directories.fd, name) is not None:
+                        _reject()
+            directories.check()
+        finally:
+            directories.close()
+
+    @_guard
     def publish(self, canonical_bytes: bytes) -> None:
         if self._started or self._closed:
             _reject()
@@ -339,10 +391,11 @@ class WriteAttempt:
         try:
             directories.open(target, create=True)
             directories.check()
+            # Capture ancestry before observing any possible collision.
+            self._ancestor_chain = tuple(zip(directories.names, directories.identities))
             if _optional_stat(directories.fd, self._temp) is not None:
                 _reject()
             directories.check()
-            self._ancestor_chain = tuple(zip(directories.names, directories.identities))
             # Set the phase BEFORE open: it may create and then throw without an FD.
             self._temp_pending = True
             self._needs_sync = True
