@@ -60,6 +60,13 @@
     </section>
     <section id="version-section" class="panel catalog-comparison" aria-labelledby="version-title" hidden>
       <h3 id="version-title">Versões imutáveis</h3>
+      <div class="catalog-actions">
+        <button id="version-publish" type="button" hidden disabled>Publicar versão</button>
+        <button id="version-publish-recover" type="button" hidden disabled>Recuperar publicação</button>
+        <button id="version-publish-abandon" type="button" hidden disabled>Abandonar recuperação da publicação</button>
+        <button id="version-refresh-draft" type="button" hidden disabled>Atualizar rascunho</button>
+      </div>
+      <p id="version-publish-status" role="status" aria-live="polite"></p>
       <p id="version-list-status" role="status" aria-live="polite"></p>
       <ul id="version-list" class="entity-list"></ul>
       <div class="catalog-actions">

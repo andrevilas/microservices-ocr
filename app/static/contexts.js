@@ -59,10 +59,11 @@
     return value;
   }
   let token = null, subject = null, ready = false, expired = false;
-  let canRead = false, canWrite = false, booting = false, writing = false, listing = false, reading = false;
+  let canRead = false, canWrite = false, canPublish = false, booting = false, writing = false, listing = false, reading = false;
   let selected = null, originalRevision = null, savedSnapshot = null, dirty = false, editing = false;
   let selectionGeneration = 0, listGeneration = 0, summaries = [], cursor = null;
   let pendingCreate = null, uncertainUpdate = null, conflict = false, current = null;
+  let pendingPublish = null, publicationStale = false;
   let programmatic = false, confirming = false, logoutBypass = false;
   let approvedDeparture = false, pageInactive = false;
   let activeKind = contextKind, parentContext = null;
@@ -72,9 +73,9 @@
   const edgeWhitespace = /^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]$/u;
   const status = (text) => { $("status").textContent = text; };
   const listStatus = (text) => { $("list-status").textContent = text; };
-  const protectedState = () => dirty || !!pendingCreate || !!uncertainUpdate || writing;
+  const protectedState = () => dirty || !!pendingCreate || !!uncertainUpdate || !!pendingPublish || writing;
   const active = () => !pageInactive && !approvedDeparture && ready && !expired && canRead;
-  const mutable = () => active() && canWrite && !writing && !reading && !pendingCreate && !uncertainUpdate && (activeKind !== "type" || !!parentContext);
+  const mutable = () => active() && canWrite && !writing && !reading && !pendingCreate && !uncertainUpdate && !pendingPublish && (activeKind !== "type" || !!parentContext);
   const editor = window.OcrCatalogFields.create($("fields"), {
     idPrefix: "context-common", readonly: true,
     onChange: (fields) => {
@@ -99,27 +100,52 @@
   const lifecycleOk = (value) => object(value) &&
     ((value.state === "published" && value.revision === 1) || (value.state === "deprecated" && value.revision === 2)) &&
     dateOk(value.changed_at) && /(?:Z|\+00:00)$/.test(value.changed_at);
-  function versionSummaryOk(binding, value) {
+  function immutableVersionSummaryOk(binding, value) {
     return identityOk("type", binding.contextId, value) && value.type_id === binding.typeId &&
       [value.version, value.draft_revision, value.context_revision].every(revisionOk) &&
       typeof value.schema_sha256 === "string" && /^[0-9a-f]{64}$/.test(value.schema_sha256) &&
       [value.schema_version, value.type_name, value.context_name].every((item) => typeof item === "string") &&
-      dateOk(value.created_at) && lifecycleOk(value.lifecycle);
+      value.schema_version.length > 0 && dateOk(value.created_at);
+  }
+  function versionSummaryOk(binding, value) {
+    return immutableVersionSummaryOk(binding, value) && lifecycleOk(value.lifecycle);
   }
   function versionPageOk(binding, value) {
     return object(value) && Array.isArray(value.items) && value.items.every((item) => versionSummaryOk(binding, item)) &&
       (value.next_cursor === null || revisionOk(value.next_cursor));
   }
-  function versionRecordOk(binding, summary, value) {
+  function versionRecordOk(binding, summary, value, fromReceipt = false) {
     return versionSummaryOk(binding, value) && versionKeys.every((key) => value[key] === summary[key]) &&
-      value.lifecycle.revision >= summary.lifecycle.revision &&
-      (value.lifecycle.revision !== summary.lifecycle.revision || equal(value.lifecycle, summary.lifecycle)) &&
+      (fromReceipt || (value.lifecycle.revision >= summary.lifecycle.revision &&
+        (value.lifecycle.revision !== summary.lifecycle.revision || equal(value.lifecycle, summary.lifecycle)))) &&
       object(value.schema) && value.schema.schema_version === value.schema_version &&
       [value.schema.common_fields, value.schema.specific_fields, value.schema.fields].every(fieldsOk);
   }
   function versionBound(binding = versionBinding) {
     return !!binding && binding === versionBinding && active() && activeKind === "type" &&
       selected === binding.typeId && parentContext?.context_id === binding.contextId;
+  }
+  function publicationStatus(text) { versionUi("publish-status").textContent = text; }
+  function publicationPair(intent) {
+    const r = intent?.request;
+    return !!r && activeKind === "type" && selected === r.typeId && parentContext === r.parentSnapshot &&
+      originalRevision === r.draftRevision && parentContext?.context_id === r.parentId && parentContext?.revision === r.contextRevision;
+  }
+  function publicationEligible() {
+    return canPublish && versionBound() && !!savedSnapshot && revisionOk(originalRevision) && !confirming &&
+      !dirty && !conflict && !uncertainUpdate && !pendingCreate && !pendingPublish && !publicationStale && !writing && !reading;
+  }
+  function canRecoverPublication() {
+    return canPublish && versionBound() && !!pendingPublish && publicationPair(pendingPublish) && !writing && !reading && !confirming;
+  }
+  function publicationCurrent(intent, generation, binding) {
+    return canPublish && pendingPublish === intent && generation === selectionGeneration && versionBound(binding) && publicationPair(intent);
+  }
+  function publicationReceiptOk(intent, value) {
+    const r = intent.request;
+    return immutableVersionSummaryOk({typeId: r.typeId, contextId: r.parentId}, value) &&
+      value.draft_revision === r.draftRevision && value.context_revision === r.contextRevision &&
+      value.type_name === r.typeName && value.context_name === r.contextName;
   }
   function clearVersionDetail() {
     ++versionDetailGeneration; versionReading = false; displayedVersion = null;
@@ -135,6 +161,14 @@
   }
   function updateVersions() {
     const bound = versionBound(), busy = !bound || writing || reading;
+    versionUi("publish").hidden = !bound || !canPublish;
+    versionUi("publish").disabled = !publicationEligible();
+    versionUi("publish-recover").hidden = !pendingPublish;
+    versionUi("publish-recover").disabled = !canRecoverPublication();
+    versionUi("publish-abandon").hidden = !pendingPublish;
+    versionUi("publish-abandon").disabled = !pendingPublish || writing || reading || confirming || approvedDeparture || pageInactive;
+    versionUi("refresh-draft").hidden = !bound || !canPublish;
+    versionUi("refresh-draft").disabled = busy || !canPublish || confirming;
     versionUi("section").hidden = !bound;
     versionUi("refresh").disabled = busy || versionListing;
     versionUi("more").hidden = versionCursor === null;
@@ -188,6 +222,16 @@
       if (binding === versionBinding && generation === versionListGeneration) { versionListing = false; updateVersions(); }
     }
   }
+  function renderVersion(record) {
+    versionEditor.setValue(clone(record.schema.fields), {inherited: []}); versionEditor.setReadonly(true);
+    versionUi("reference").textContent = `Tipo: ${record.type_id} · Versão: ${record.version} · SHA-256: ${record.schema_sha256}`;
+    versionUi("meta").textContent = `Contexto: ${record.context_name} · Tipo: ${record.type_name} · draft_revision: ${record.draft_revision} · context_revision: ${record.context_revision} · schema_version: ${record.schema_version} · Criada em ${ui.date(record.created_at)}`;
+    const lifecycle = record.lifecycle;
+    versionUi("lifecycle").textContent = `${lifecycle.state === "published" ? "Publicada" : "Descontinuada — não disponível para novos vínculos; consulta permitida"} · Revisão ${lifecycle.revision} · Alterada em ${ui.date(lifecycle.changed_at)}. Situação consultada nesta abertura; selecione a versão novamente para atualizar.`;
+    versionUi("count").textContent = `${record.schema.fields.length} campo(s) no esquema histórico: ${record.schema.common_fields.length} comuns e ${record.schema.specific_fields.length} específicos. Independente do rascunho atual.`;
+    displayedVersion = record.version; versionUi("detail").hidden = false;
+    renderVersions();
+  }
   async function openVersion(item) {
     if (!versionBound() || writing || reading) return;
     const binding = versionBinding, summary = freeze(clone(item));
@@ -201,14 +245,8 @@
         valid: (value) => versionRecordOk(binding, summary, value),
       });
       if (!currentDetail()) return;
-      versionEditor.setValue(clone(record.schema.fields), {inherited: []}); versionEditor.setReadonly(true);
-      versionUi("reference").textContent = `Tipo: ${record.type_id} · Versão: ${record.version} · SHA-256: ${record.schema_sha256}`;
-      versionUi("meta").textContent = `Contexto: ${record.context_name} · Tipo: ${record.type_name} · draft_revision: ${record.draft_revision} · context_revision: ${record.context_revision} · schema_version: ${record.schema_version} · Criada em ${ui.date(record.created_at)}`;
-      const lifecycle = record.lifecycle;
-      versionUi("lifecycle").textContent = `${lifecycle.state === "published" ? "Publicada" : "Descontinuada — não disponível para novos vínculos; consulta permitida"} · Revisão ${lifecycle.revision} · Alterada em ${ui.date(lifecycle.changed_at)}. Situação consultada nesta abertura; selecione a versão novamente para atualizar.`;
-      versionUi("count").textContent = `${record.schema.fields.length} campo(s) no esquema histórico: ${record.schema.common_fields.length} comuns e ${record.schema.specific_fields.length} específicos. Independente do rascunho atual.`;
-      displayedVersion = record.version; versionUi("detail").hidden = false;
-      versionUi("detail-status").textContent = `Versão ${record.version} carregada para consulta.`; renderVersions();
+      renderVersion(record);
+      versionUi("detail-status").textContent = `Versão ${record.version} carregada para consulta.`;
     } catch (_) {
       if (currentDetail()) {
         clearVersionDetail(); renderVersions();
@@ -224,6 +262,92 @@
     if (!versionBound() || writing || reading) return;
     clearVersionDetail(); renderVersions();
   });
+  async function publishVersion() {
+    if (!publicationEligible()) return;
+    const generation = selectionGeneration, id = selected, revision = originalRevision;
+    const parent = parentContext, snapshot = savedSnapshot;
+    let accepted;
+    confirming = true; update();
+    try {
+      accepted = await ui.confirmAction({title: "Publicar versão imutável?",
+        body: `Será criada uma versão imutável de ${snapshot.name} a partir da revisão ${revision} do tipo e da revisão ${parent.revision} do contexto ${parent.body.name}. O rascunho não será salvo nem alterado.`,
+        confirmLabel: "Publicar versão"});
+    } finally { confirming = false; update(); }
+    if (!accepted || !publicationEligible() || generation !== selectionGeneration || selected !== id ||
+      originalRevision !== revision || parentContext !== parent || savedSnapshot !== snapshot) return;
+    let key;
+    try { key = crypto.randomUUID(); }
+    catch (_) { publicationStatus("Não foi possível preparar a publicação. Use um navegador com conexão segura."); return; }
+    pendingPublish = {request: freeze({path: `/api/v1/document-types/${id}/versions`,
+      body: JSON.stringify({expected_revision: revision, expected_context_revision: parent.revision}), key,
+      typeId: id, parentId: parent.context_id, draftRevision: revision, contextRevision: parent.revision,
+      typeName: snapshot.name, contextName: parent.body.name, parentSnapshot: parent}), everAmbiguous: false, receipt: null};
+    await sendPublication();
+  }
+  async function sendPublication() {
+    if (!canRecoverPublication()) return;
+    const intent = pendingPublish, generation = selectionGeneration, binding = versionBinding;
+    writing = true; ++versionListGeneration; versionListing = false; clearVersionDetail();
+    publicationStatus(intent.receipt ? "Consultando publicação recebida…" : "Publicando versão imutável…"); update();
+    let confirmed = false;
+    try {
+      if (!intent.receipt) {
+        const receipt = await request(intent.request.path, {method: "POST", body: intent.request.body,
+          key: intent.request.key, valid: (value) => publicationReceiptOk(intent, value)});
+        intent.receipt = freeze(clone(receipt));
+      }
+      if (!publicationCurrent(intent, generation, binding)) return;
+      const record = await request(`${intent.request.path}/${intent.receipt.version}`, {
+        valid: (value) => versionRecordOk(binding, intent.receipt, value, true),
+      });
+      if (!publicationCurrent(intent, generation, binding)) return;
+      clearVersionDetail(); renderVersion(record); pendingPublish = null;
+      publicationStatus(`Versão ${record.version} confirmada. Situação atual: ${record.lifecycle.state === "published" ? "Publicada" : "Descontinuada"}.`);
+      confirmed = true;
+    } catch (error) {
+      if (error.ambiguous) intent.everAmbiguous = true;
+      if (!publicationCurrent(intent, generation, binding)) {
+        if (expired && pendingPublish === intent && !pageInactive) publicationStatus("Sessão expirada. O pedido de publicação e sua recuperação foram preservados.");
+        return;
+      }
+      const preAdmission = !intent.receipt && !intent.everAmbiguous && (
+        (error.status === 422 && ["invalid_type_schema", "validation_error"].includes(error.code)) ||
+        (error.status === 413 && error.code === "request_too_large") ||
+        (error.status === 429 && error.code === "type_version_quota_exceeded") ||
+        (error.status === 409 && ["type_revision_conflict", "context_revision_conflict"].includes(error.code)));
+      if (preAdmission) {
+        pendingPublish = null;
+        if (error.status === 409) publicationStale = true;
+        publicationStatus(error.status === 409
+          ? "A revisão do tipo ou do contexto mudou. Use Atualizar rascunho e revise as revisões antes de publicar novamente."
+          : error.status === 429 ? "O limite de versões foi atingido. O rascunho foi preservado; publique novamente quando houver disponibilidade."
+          : error.status === 413 ? "A publicação não foi admitida porque o pedido excedeu o limite permitido. O rascunho foi preservado."
+          : "A publicação não foi admitida. Revise as condições, os nomes duplicados e a composição dos campos do tipo e do contexto. O rascunho foi preservado.");
+      } else publicationStatus(intent.receipt
+        ? "A publicação foi recebida, mas não foi possível confirmar seus detalhes. Recuperar publicação apenas consulta a versão recebida."
+        : "O pedido foi preservado e pode já ter sido registrado. Use Recuperar publicação para repetir exatamente o mesmo pedido, sem criar uma nova solicitação.");
+    } finally { writing = false; update(); }
+    if (confirmed && versionBound(binding)) await loadVersions();
+  }
+  async function abandonPublication() {
+    if (!pendingPublish || writing || reading || confirming || approvedDeparture || pageInactive) return;
+    const intent = pendingPublish, generation = selectionGeneration;
+    let accepted;
+    confirming = true; update();
+    try {
+      accepted = await ui.confirmAction({title: "Abandonar recuperação da publicação?",
+        body: "A versão pode já ter sido criada. Confira a lista de versões antes de publicar novamente. Seu rascunho será preservado; nenhum pedido será enviado.",
+        confirmLabel: "Abandonar recuperação da publicação", danger: true});
+    } finally { confirming = false; update(); }
+    if (!accepted || pendingPublish !== intent || generation !== selectionGeneration || !publicationPair(intent) ||
+      writing || reading || approvedDeparture || pageInactive) return;
+    pendingPublish = null;
+    publicationStatus("Recuperação da publicação abandonada. Confira as versões antes de publicar novamente."); update();
+  }
+  versionUi("publish").addEventListener("click", publishVersion);
+  versionUi("publish-recover").addEventListener("click", sendPublication);
+  versionUi("publish-abandon").addEventListener("click", abandonPublication);
+  versionUi("refresh-draft").addEventListener("click", () => selectType(selected, true));
   function update() {
     if (pageInactive) return;
     updateVersions();
@@ -420,11 +544,13 @@
     renderList(); renderTypes(); update();
     void loadTypes();
   }
-  async function selectType(id) {
+  async function selectType(id, force = false) {
     if (!active() || writing || reading || !parentContext || !idOk(id)) return;
-    if (activeKind === "type" && selected === id && !pendingCreate) return;
+    const targetCurrent = () => !force || (canPublish && activeKind === "type" && selected === id);
+    if (!targetCurrent()) return;
+    if (!force && activeKind === "type" && selected === id && !pendingCreate) return;
     const parent = parentContext, before = selectionGeneration;
-    if (!await confirmDeparture() || before !== selectionGeneration || parent !== parentContext || writing || reading || !active()) return;
+    if (!await confirmDeparture() || before !== selectionGeneration || parent !== parentContext || writing || reading || !active() || !targetCurrent()) return;
     const generation = ++selectionGeneration, parentId = parent.context_id;
     reading = true; status("Carregando tipo de documento…"); update();
     try {
@@ -432,9 +558,9 @@
         request(entityPath(contextKind, null, parentId), {valid: (value) => recordOk(value) && value.context_id === parentId}),
         request(entityPath("type", parentId, id), {valid: (value) => entityRecordOk("type", parentId, value) && value.type_id === id}),
       ]);
-      if (generation !== selectionGeneration || parentContext !== parent || !active()) return;
+      if (generation !== selectionGeneration || parentContext !== parent || !active() || !targetCurrent()) return;
       hydrateType(record, authoritativeParent);
-      status(canWrite ? "Tipo de documento carregado." : "Tipo de documento carregado. Consulta somente para leitura.");
+      status(force ? "Rascunho atualizado. Revise as revisões do tipo e do contexto antes de publicar." : canWrite ? "Tipo de documento carregado." : "Tipo de documento carregado. Consulta somente para leitura.");
     } catch (_) {
       if (generation === selectionGeneration && active()) status("Não foi possível abrir o tipo de documento. O formulário anterior foi preservado. Selecione o tipo para tentar novamente.");
     } finally {
@@ -471,14 +597,15 @@
   async function confirmDeparture(force = false) {
     if (confirming || approvedDeparture || pageInactive) return false;
     if (!force && !protectedState()) return true;
-    confirming = true;
+    confirming = true; update();
     try {
-      return await ui.confirmAction({title: "Sair deste rascunho?", body: pendingCreate || uncertainUpdate || writing ? "Existe uma operação pendente ou com resultado incerto. Ela pode ter sido gravada no servidor. Sair abandona a recuperação e as alterações locais; confira a lista antes de criar novamente." : "As alterações não salvas serão descartadas.", confirmLabel: "Descartar e continuar", danger: true});
-    } finally { confirming = false; }
+      return await ui.confirmAction({title: "Sair deste rascunho?", body: pendingCreate || uncertainUpdate || pendingPublish || writing ? "Existe uma operação pendente ou com resultado incerto. Ela pode ter sido gravada no servidor. Sair abandona a recuperação e as alterações locais; confira as listas antes de criar ou publicar novamente." : "As alterações não salvas serão descartadas.", confirmLabel: "Descartar e continuar", danger: true});
+    } finally { confirming = false; update(); }
   }
   function abandonState() {
     ++selectionGeneration; reading = false;
-    pendingCreate = null; uncertainUpdate = null; conflict = false; dirty = false; clearComparison();
+    pendingCreate = null; pendingPublish = null; publicationStale = false; publicationStatus("");
+    uncertainUpdate = null; conflict = false; dirty = false; clearComparison();
   }
   async function select(id) {
     if (!active() || writing || reading || !idOk(id)) return;
@@ -655,10 +782,10 @@
   async function useCurrent() {
     if (!current || !active() || writing || reading || confirming) return;
     const candidate = current, generation = selectionGeneration;
-    confirming = true;
+    confirming = true; update();
     let accepted;
     try { accepted = await ui.confirmAction({title: "Usar versão atual?", body: "Seu rascunho será descartado e substituído pela versão consultada. Uma operação com resultado incerto pode já ter sido gravada. Nenhuma gravação será repetida.", confirmLabel: "Usar versão atual", danger: true}); }
-    finally { confirming = false; }
+    finally { confirming = false; update(); }
     if (accepted && generation === selectionGeneration && candidate === current && !writing && !reading && active() && samePair(candidate.kind, candidate.parentSnapshot) && selected === candidate.record[entities[candidate.kind].idKey]) {
       hydrateEntity(candidate.kind, candidate.record, candidate.parentSnapshot);
       status("Versão consultada carregada. Novas alterações usarão esta revisão.");
@@ -682,7 +809,8 @@
       }
       const me = await request("/api/v1/me", {valid: (value) => object(value) && Array.isArray(value.scopes) && value.scopes.every((scope) => typeof scope === "string")});
       if (expired) return;
-      canRead = me.scopes.includes("contexts:read"); canWrite = canRead && me.scopes.includes("contexts:write"); ready = true;
+      canRead = me.scopes.includes("contexts:read"); canWrite = canRead && me.scopes.includes("contexts:write");
+      canPublish = canRead && me.scopes.includes("contexts:publish"); ready = true;
       if (!canRead) { status("Sua sessão não tem a permissão contexts:read para consultar contextos. Saia e entre novamente para atualizar uma sessão antiga. As permissões continuam sendo definidas pelo servidor."); listStatus("Sem permissão para consultar contextos."); }
       else { status(canWrite ? "Selecione um contexto ou crie um novo." : "Você tem permissão somente para leitura. Para editar, são necessárias contexts:read e contexts:write."); await loadList(); }
     } catch (error) {
