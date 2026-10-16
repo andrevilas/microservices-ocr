@@ -607,6 +607,64 @@
         "title": "ContextSummary",
         "type": "object"
       },
+      "ContextTemplateList": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ContextTemplateRecord"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ContextTemplateList",
+        "type": "object"
+      },
+      "ContextTemplateRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/ContextCreate"
+          },
+          "template_id": {
+            "title": "Template Id",
+            "type": "string"
+          },
+          "template_sha256": {
+            "title": "Template Sha256",
+            "type": "string"
+          },
+          "template_version": {
+            "minimum": 1.0,
+            "title": "Template Version",
+            "type": "integer"
+          },
+          "types": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateTypeDefinition"
+            },
+            "maxItems": 1,
+            "minItems": 1,
+            "title": "Types",
+            "type": "array"
+          }
+        },
+        "required": [
+          "template_id",
+          "template_version",
+          "context",
+          "types",
+          "template_sha256"
+        ],
+        "title": "ContextTemplateRecord",
+        "type": "object"
+      },
       "CredentialInput": {
         "additionalProperties": false,
         "examples": [
@@ -2235,6 +2293,103 @@
           "duration_ms"
         ],
         "title": "StageReport",
+        "type": "object"
+      },
+      "TemplateCloneReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "context_id": {
+            "title": "Context Id",
+            "type": "string"
+          },
+          "context_revision": {
+            "const": 1,
+            "title": "Context Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "template_id": {
+            "title": "Template Id",
+            "type": "string"
+          },
+          "template_sha256": {
+            "title": "Template Sha256",
+            "type": "string"
+          },
+          "template_version": {
+            "minimum": 1.0,
+            "title": "Template Version",
+            "type": "integer"
+          },
+          "types": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateClonedType"
+            },
+            "maxItems": 1,
+            "minItems": 1,
+            "title": "Types",
+            "type": "array"
+          }
+        },
+        "required": [
+          "template_id",
+          "template_version",
+          "template_sha256",
+          "context_id",
+          "context_revision",
+          "types",
+          "created_at"
+        ],
+        "title": "TemplateCloneReceipt",
+        "type": "object"
+      },
+      "TemplateClonedType": {
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "const": 1,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "type_id": {
+            "title": "Type Id",
+            "type": "string"
+          },
+          "type_key": {
+            "maxLength": 64,
+            "title": "Type Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type_key",
+          "type_id",
+          "revision"
+        ],
+        "title": "TemplateClonedType",
+        "type": "object"
+      },
+      "TemplateTypeDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "$ref": "#/components/schemas/TypeDraft"
+          },
+          "type_key": {
+            "maxLength": 64,
+            "title": "Type Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type_key",
+          "body"
+        ],
+        "title": "TemplateTypeDefinition",
         "type": "object"
       },
       "TextChunk": {
@@ -4864,6 +5019,1608 @@
         ],
         "x-human-admin-required": false,
         "x-required-scopes": []
+      }
+    },
+    "/api/v1/context-templates": {
+      "get": {
+        "description": "Get all three full templates in fixed order. Templates are editable starting points, not document conformity approvals. Reading never clones or publishes anything.",
+        "operationId": "ocr_list_context_templates",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "context": {
+                        "common_fields": [
+                          {
+                            "cardinality": "one",
+                            "critical": false,
+                            "description": "Título informado no documento.",
+                            "destination": "sidecar",
+                            "enum": null,
+                            "evidence_required": false,
+                            "examples": [],
+                            "indexable": false,
+                            "label": null,
+                            "max_items": 20,
+                            "name": "titulo",
+                            "normalization": "type-default",
+                            "required": false,
+                            "required_when": null,
+                            "sensitivity": "internal",
+                            "type": "string"
+                          },
+                          {
+                            "cardinality": "one",
+                            "critical": false,
+                            "description": "Identificador registrado no documento, sem normalização destrutiva.",
+                            "destination": "sidecar",
+                            "enum": null,
+                            "evidence_required": false,
+                            "examples": [],
+                            "indexable": false,
+                            "label": null,
+                            "max_items": 20,
+                            "name": "identificador_documento",
+                            "normalization": "type-default",
+                            "required": false,
+                            "required_when": null,
+                            "sensitivity": "internal",
+                            "type": "identifier"
+                          },
+                          {
+                            "cardinality": "one",
+                            "critical": false,
+                            "description": "Data explicitamente informada; não inferir pela data de processamento.",
+                            "destination": "sidecar",
+                            "enum": null,
+                            "evidence_required": false,
+                            "examples": [],
+                            "indexable": false,
+                            "label": null,
+                            "max_items": 20,
+                            "name": "data_documento",
+                            "normalization": "type-default",
+                            "required": false,
+                            "required_when": null,
+                            "sensitivity": "internal",
+                            "type": "date"
+                          }
+                        ],
+                        "description": "Ponto de partida editável para organização documental. Não comprova validade jurídica, autenticidade ou conformidade do documento.",
+                        "name": "Genérico"
+                      },
+                      "template_id": "generic",
+                      "template_sha256": "e038ec4affbd83be91fddfda0435094f9e393fb8053187a743ce17f09e2b6800",
+                      "template_version": 1,
+                      "types": [
+                        {
+                          "body": {
+                            "description": "",
+                            "name": "Documento",
+                            "specific_fields": [
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Pessoa ou organização emissora declarada.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "emissor",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "restricted",
+                                "type": "string"
+                              },
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Assunto descrito pelo documento.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "assunto",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "restricted",
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "type_key": "document"
+                        }
+                      ]
+                    },
+                    {
+                      "context": {
+                        "common_fields": [
+                          {
+                            "cardinality": "one",
+                            "critical": false,
+                            "description": "Identificador do documento.",
+                            "destination": "sidecar",
+                            "enum": null,
+                            "evidence_required": false,
+                            "examples": [],
+                            "indexable": false,
+                            "label": null,
+                            "max_items": 20,
+                            "name": "identificador_documento",
+                            "normalization": "type-default",
+                            "required": false,
+                            "required_when": null,
+                            "sensitivity": "internal",
+                            "type": "identifier"
+                          },
+                          {
+                            "cardinality": "one",
+                            "critical": false,
+                            "description": "Município relacionado ao imóvel conforme texto.",
+                            "destination": "sidecar",
+                            "enum": null,
+                            "evidence_required": false,
+                            "examples": [],
+                            "indexable": false,
+                            "label": null,
+                            "max_items": 20,
+                            "name": "municipio",
+                            "normalization": "type-default",
+                            "required": false,
+                            "required_when": null,
+                            "sensitivity": "internal",
+                            "type": "string"
+                          },
+                          {
+                            "cardinality": "one",
+                            "critical": false,
+                            "description": "Unidade federativa tal como informada; sem enum jurisdicional.",
+                            "destination": "sidecar",
+                            "enum": null,
+                            "evidence_required": false,
+                            "examples": [],
+                            "indexable": false,
+                            "label": null,
+                            "max_items": 20,
+                            "name": "unidade_federativa",
+                            "normalization": "type-default",
+                            "required": false,
+                            "required_when": null,
+                            "sensitivity": "internal",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "Ponto de partida editável para organização documental. Não comprova validade jurídica, autenticidade ou conformidade do documento.",
+                        "name": "Imobiliário"
+                      },
+                      "template_id": "real-estate-deed",
+                      "template_sha256": "a63dcd15308f51c167fcab302de32ed3381fa78156ea1283c62aa40c716580af",
+                      "template_version": 1,
+                      "types": [
+                        {
+                          "body": {
+                            "description": "",
+                            "name": "Escritura de imóvel",
+                            "specific_fields": [
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Data de lavratura explicitamente informada.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "data_lavratura",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "internal",
+                                "type": "date"
+                              },
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Nome da serventia indicado no documento.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "serventia",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "internal",
+                                "type": "string"
+                              },
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Referência de livro; preservar caracteres e zeros.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "livro",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "internal",
+                                "type": "identifier"
+                              },
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Referência de folhas; pode conter intervalo, não presumir inteiro.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "folhas",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "internal",
+                                "type": "identifier"
+                              },
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Referência de matrícula.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "matricula_imovel",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "restricted",
+                                "type": "identifier"
+                              },
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Endereço declarado.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "endereco_imovel",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "restricted",
+                                "type": "string"
+                              },
+                              {
+                                "cardinality": "many",
+                                "critical": false,
+                                "description": "Nomes/identificações textuais das partes, sem presumir papéis.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "partes",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "restricted",
+                                "type": "string"
+                              },
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Quantia expressamente declarada, sem conversão.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "valor_declarado",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "restricted",
+                                "type": "decimal"
+                              },
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Moeda explicitamente informada para a quantia, sem assumir BRL.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "moeda",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "internal",
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "type_key": "deed"
+                        }
+                      ]
+                    },
+                    {
+                      "context": {
+                        "common_fields": [
+                          {
+                            "cardinality": "one",
+                            "critical": false,
+                            "description": "Número do processo, preservando zeros e separadores.",
+                            "destination": "sidecar",
+                            "enum": null,
+                            "evidence_required": false,
+                            "examples": [],
+                            "indexable": false,
+                            "label": null,
+                            "max_items": 20,
+                            "name": "numero_processo",
+                            "normalization": "type-default",
+                            "required": false,
+                            "required_when": null,
+                            "sensitivity": "internal",
+                            "type": "identifier"
+                          },
+                          {
+                            "cardinality": "one",
+                            "critical": false,
+                            "description": "Entidade responsável declarada no documento.",
+                            "destination": "sidecar",
+                            "enum": null,
+                            "evidence_required": false,
+                            "examples": [],
+                            "indexable": false,
+                            "label": null,
+                            "max_items": 20,
+                            "name": "entidade_responsavel",
+                            "normalization": "type-default",
+                            "required": false,
+                            "required_when": null,
+                            "sensitivity": "internal",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "Ponto de partida editável para organização documental. Não comprova validade jurídica, autenticidade ou conformidade do documento.",
+                        "name": "Licitações"
+                      },
+                      "template_id": "procurement-notice",
+                      "template_sha256": "3293cbe57b75f20dfac76e50c718676f66960a9b4a1d3d07de39852ec3556581",
+                      "template_version": 1,
+                      "types": [
+                        {
+                          "body": {
+                            "description": "",
+                            "name": "Edital",
+                            "specific_fields": [
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Identificação do edital.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "numero_edital",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "internal",
+                                "type": "identifier"
+                              },
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Modalidade tal como informada; não normalizar para taxonomia legal fixa.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "modalidade",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "internal",
+                                "type": "string"
+                              },
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Descrição do objeto no documento.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "objeto",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "internal",
+                                "type": "string"
+                              },
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Data de publicação indicada.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "data_publicacao",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "internal",
+                                "type": "date"
+                              },
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Data de abertura indicada; este campo não representa horário/fuso nem agenda operacional.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "data_abertura",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "internal",
+                                "type": "date"
+                              },
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Quantia estimada expressamente declarada, sem conversão.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "valor_estimado",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "internal",
+                                "type": "decimal"
+                              },
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Moeda explicitamente informada; não assumir BRL.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "moeda",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "internal",
+                                "type": "string"
+                              },
+                              {
+                                "cardinality": "one",
+                                "critical": false,
+                                "description": "Critério de julgamento informado, sem conclusão de regularidade.",
+                                "destination": "sidecar",
+                                "enum": null,
+                                "evidence_required": false,
+                                "examples": [],
+                                "indexable": false,
+                                "label": null,
+                                "max_items": 20,
+                                "name": "criterio_julgamento",
+                                "normalization": "type-default",
+                                "required": false,
+                                "required_when": null,
+                                "sensitivity": "internal",
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "type_key": "notice"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ContextTemplateList"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "upload_timeout",
+                    "details": [],
+                    "message": "Upload deadline exceeded."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Upload deadline exceeded.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "artifact_unavailable",
+                    "details": [],
+                    "message": "Artifact is not available."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact is not available.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "file_too_large",
+                    "details": [],
+                    "message": "Upload exceeds the accepted size."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Upload exceeds the accepted size.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "unsupported_media_type",
+                    "details": [],
+                    "message": "Unsupported content type."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported content type.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "storage_quota_exceeded",
+                    "details": [],
+                    "message": "Input quota is exhausted."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Input quota is exhausted.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "storage_unavailable",
+                    "details": [],
+                    "message": "Storage is unavailable."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Storage is unavailable.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "List Context Templates",
+        "tags": [
+          "Catalog"
+        ],
+        "x-human-admin-required": false,
+        "x-required-scopes": [
+          "contexts:read"
+        ]
+      }
+    },
+    "/api/v1/context-templates/{template_id}/clone": {
+      "post": {
+        "description": "Clone the expected template edition into caller-owned context/type drafts at revision 1. Never publishes. Returns 201 on creation or 200 with the original receipt on replay, including after later edits or publication. No automatic retry: reuse the same key and body after an uncertain outcome.",
+        "operationId": "ocr_clone_context_template",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+              "title": "Template Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "ASCII idempotency key, 8-128 characters.",
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "description": "ASCII idempotency key, 8-128 characters.",
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "examples": [
+                  {
+                    "expected_sha256": "e038ec4affbd83be91fddfda0435094f9e393fb8053187a743ce17f09e2b6800",
+                    "expected_version": 1
+                  }
+                ],
+                "properties": {
+                  "expected_sha256": {
+                    "title": "Expected Sha256",
+                    "type": "string"
+                  },
+                  "expected_version": {
+                    "minimum": 1,
+                    "title": "Expected Version",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "expected_version",
+                  "expected_sha256"
+                ],
+                "title": "TemplateCloneInput",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "context_id": "11111111111111111111111111111111",
+                  "context_revision": 1,
+                  "created_at": "2026-10-16T12:00:00Z",
+                  "template_id": "generic",
+                  "template_sha256": "e038ec4affbd83be91fddfda0435094f9e393fb8053187a743ce17f09e2b6800",
+                  "template_version": 1,
+                  "types": [
+                    {
+                      "revision": 1,
+                      "type_id": "22222222222222222222222222222222",
+                      "type_key": "document"
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateCloneReceipt"
+                }
+              }
+            },
+            "description": "Original receipt replayed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "true when the original persisted receipt for this identity/key is replayed.",
+                "schema": {
+                  "enum": [
+                    "true",
+                    "false"
+                  ],
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "context_id": "11111111111111111111111111111111",
+                  "context_revision": 1,
+                  "created_at": "2026-10-16T12:00:00Z",
+                  "template_id": "generic",
+                  "template_sha256": "e038ec4affbd83be91fddfda0435094f9e393fb8053187a743ce17f09e2b6800",
+                  "template_version": 1,
+                  "types": [
+                    {
+                      "revision": 1,
+                      "type_id": "22222222222222222222222222222222",
+                      "type_key": "document"
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateCloneReceipt"
+                }
+              }
+            },
+            "description": "Created.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "true when the original persisted receipt for this identity/key is replayed.",
+                "schema": {
+                  "enum": [
+                    "true",
+                    "false"
+                  ],
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "upload_timeout",
+                    "details": [],
+                    "message": "Upload deadline exceeded."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Upload deadline exceeded.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "artifact_unavailable",
+                    "details": [],
+                    "message": "Artifact is not available."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact is not available.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "file_too_large",
+                    "details": [],
+                    "message": "Upload exceeds the accepted size."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Upload exceeds the accepted size.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "unsupported_media_type",
+                    "details": [],
+                    "message": "Unsupported content type."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported content type.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "storage_quota_exceeded",
+                    "details": [],
+                    "message": "Input quota is exhausted."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Input quota is exhausted.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "storage_unavailable",
+                    "details": [],
+                    "message": "Storage is unavailable."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Storage is unavailable.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "Clone Context Template",
+        "tags": [
+          "Catalog"
+        ],
+        "x-human-admin-required": false,
+        "x-required-scopes": [
+          "contexts:read",
+          "contexts:write"
+        ]
       }
     },
     "/api/v1/contexts": {

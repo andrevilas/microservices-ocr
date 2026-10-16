@@ -33,6 +33,8 @@ CTX2 = {**CTX, "name": "Contratos revisados",
         "common_fields": [*CTX["common_fields"], {"name": "data", "type": "date", "description": "Data."}]}
 TYP2 = {**TYP, "name": "Contrato revisado"}
 OPERATIONS = {
+    "ocr_list_context_templates": ("get", "/api/v1/context-templates", ["contexts:read"]),
+    "ocr_clone_context_template": ("post", "/api/v1/context-templates/{template_id}/clone", ["contexts:read", "contexts:write"]),
     "ocr_list_contexts": ("get", "/api/v1/contexts", ["contexts:read"]),
     "ocr_create_context": ("post", "/api/v1/contexts", ["contexts:read", "contexts:write"]),
     "ocr_get_context": ("get", "/api/v1/contexts/{context_id}", ["contexts:read"]),
@@ -506,6 +508,7 @@ def test_openapi_contract_and_wire_name(api):
         for method, operation in methods.items():
             if operation["operationId"] in OPERATIONS:
                 found[operation["operationId"]] = (method, path, operation)
+    assert len(found) == len(OPERATIONS) == 14
     assert set(found) == set(OPERATIONS)
     for operation_id, (method, path, scopes) in OPERATIONS.items():
         found_method, found_path, operation = found[operation_id]
@@ -516,10 +519,49 @@ def test_openapi_contract_and_wire_name(api):
             assert status in operation["responses"]
         if method in ("post", "put"):
             assert "application/json" in operation["requestBody"]["content"]
-    for operation_id in ("ocr_create_context", "ocr_create_document_type", "ocr_publish_document_type"):
+    for operation_id in ("ocr_create_context", "ocr_create_document_type", "ocr_publish_document_type", "ocr_clone_context_template"):
         responses = found[operation_id][2]["responses"]
         assert "200" in responses and "201" in responses
         assert "Idempotency-Replayed" in responses["200"]["headers"] and "Idempotency-Replayed" in responses["201"]["headers"]
+    listing = found["ocr_list_context_templates"][2]
+    assert not listing.get("parameters")
+    assert "requestBody" not in listing
+    clone = found["ocr_clone_context_template"][2]
+    parameters = clone["parameters"]
+    clone_keys = [p for p in parameters if p["name"].lower() == "idempotency-key"]
+    assert len(clone_keys) == 1
+    assert clone_keys[0]["required"] and clone_keys[0]["in"] == "header"
+    assert clone_keys[0]["schema"]["minLength"] == 8
+    assert clone_keys[0]["schema"]["maxLength"] == 128
+    identifier = next(p for p in parameters if p["name"] == "template_id")
+    assert identifier["in"] == "path" and identifier["required"]
+    assert identifier["schema"]["maxLength"] == 64
+    assert identifier["schema"]["pattern"] == r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    clone_input = clone["requestBody"]["content"]["application/json"]["schema"]
+    assert "$ref" not in clone_input and clone_input["additionalProperties"] is False
+    assert set(clone_input["required"]) == {"expected_version", "expected_sha256"}
+    assert set(clone_input["properties"]) == {"expected_version", "expected_sha256"}
+    assert len(clone_input["examples"]) == 1
+    Draft202012Validator({"components": h.schema["components"], **clone_input}).validate(clone_input["examples"][0])
+    template_example = listing["responses"]["200"]["content"]["application/json"]["example"]
+    assert len(template_example["items"]) == 3
+    selected = template_example["items"][0]
+    assert clone_input["examples"][0] == {"expected_version": selected["template_version"],
+                                          "expected_sha256": selected["template_sha256"]}
+    from app.context_templates import ContextTemplateList, TemplateCloneReceipt
+    ContextTemplateList.model_validate_json(json.dumps(template_example))
+    for status in ("200", "201"):
+        success = clone["responses"][status]["content"]["application/json"]
+        assert success["schema"]["$ref"].endswith("/TemplateCloneReceipt")
+        example = success["example"]
+        assert example["template_id"] == selected["template_id"]
+        assert example["template_version"] == selected["template_version"]
+        assert example["template_sha256"] == selected["template_sha256"]
+        assert example["created_at"] == "2026-10-16T12:00:00Z"
+        TemplateCloneReceipt.model_validate_json(json.dumps(example))
+        Draft202012Validator({"components": h.schema["components"], **success["schema"]}).validate(example)
+    for status in ("404", "409", "429", "503"):
+        assert status in clone["responses"]
     deprecation = found["ocr_deprecate_document_type_version"][2]
     assert "200" in deprecation["responses"] and "201" not in deprecation["responses"]
     success = deprecation["responses"]["200"]

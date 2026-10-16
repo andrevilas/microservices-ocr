@@ -1,7 +1,7 @@
 # Contrato HTTP v1
 
 Entrega OCR-AM-04, atividade LPM `hkKLY54xl4fHElZsRNdK`. O contrato atual tem
-42 operações sob `/api/v1`, incluindo 12 do catálogo local, versão de contrato `1.6.0`, após a AM-05 de
+44 operações sob `/api/v1`, incluindo 14 do catálogo local, versão de contrato `1.6.0`, após a AM-05 de
 [uploads persistentes e admissão idempotente](uploads.md) e a AM-06 de
 [texto por página e relatórios](results.md) e AM-07 de
 [opções e capacidades](capabilities.md) e AM-09 de [lotes/exportação](batches-exports.md). A AM-10 acrescenta [cancelamento e reprocessamento](job-control.md), e a AM-11 [retenção e exclusão](retention.md). Administração ampla continua no backlog.
@@ -84,6 +84,49 @@ desconhecidas também recebem o envelope. MCP mantém os erros de protocolo e
 resultados de ferramenta; não recebe envelope HTTP v1 dentro do JSON-RPC.
 As rotas legadas mantêm seu próprio formato.
 
+## Templates locais de contexto
+
+`GET /api/v1/context-templates` (`ocr_list_context_templates`) exige
+`contexts:read` e retorna `ContextTemplateList`: exatamente três registros
+completos, estáticos e em ordem fixa. Não há filtros, paginação ou criação
+implícita de contextos, tipos ou versões. O catálogo é global e igual para os
+proprietários autorizados.
+
+`POST /api/v1/context-templates/{template_id}/clone`
+(`ocr_clone_context_template`) exige `contexts:read` e `contexts:write`;
+`contexts:publish` não é necessário. O identificador usa ASCII minúsculo,
+sintaxe `^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$` e no máximo 64 caracteres; não é UUID.
+Um identificador válido desconhecido retorna 404 `context_template_not_found`.
+O corpo fechado `TemplateCloneInput` contém somente `expected_version`, inteiro
+estrito positivo, e `expected_sha256`, exatamente 64 caracteres hexadecimais
+minúsculos. Não aceita proprietário: a identidade autenticada determina a posse.
+`Idempotency-Key` é obrigatório, com as regras existentes do catálogo
+(8–128 caracteres ASCII). Os dois escopos são verificados antes de ler o corpo,
+com limite de 2 MiB durante o streaming.
+
+O serviço cria atomicamente um contexto e seus tipos como rascunhos editáveis,
+todos na revisão 1, sem publicar versões. Retorna 201 com
+`Idempotency-Replayed: false`, ou 200 com `true` e o recibo original persistido
+`TemplateCloneReceipt`. O recibo identifica a edição/hash do template, o contexto,
+os tipos e a data UTC; não representa o estado atual dos rascunhos.
+Replay não desfaz edições nem publicações e continua válido quando a quota está
+cheia. Uma chave nova cria outra cópia, sujeita à quota.
+
+Edição/hash divergentes retornam 409; outra requisição sob a mesma
+identidade/chave retorna 409 `idempotency_conflict`. Quota excedida retorna 429;
+corrupção ou indisponibilidade de armazenamento retorna 503, sem conteúdo
+interno. A política e a transação pertencem ao serviço existente. Não há retry
+automático: após resultado incerto, repita a mesma chave e o mesmo corpo.
+Os envelopes, `Cache-Control: no-store`, `X-Request-ID` e a política existente
+de concessão de escopos a serviços continuam aplicáveis.
+
+Templates são pontos de partida editáveis, sem aprovação de conformidade
+documental. Esta etapa entrega apenas HTTP local: o inventário passa a 44
+operações HTTP e permanece com 32 ferramentas MCP. Templates via OAuth/MCP
+vêm na próxima etapa; o ciclo de vida de versões já tem OAuth/MCP aceitos.
+Não representa conclusão de UI, integração com DocumentService, homologação
+de clientes externos ou implantação em produção.
+
 ## Catálogo e ciclo de vida de versões
 
 `POST /api/v1/document-types/{type_id}/versions/{version}/deprecate`
@@ -120,8 +163,7 @@ publicação nasce com ciclo de vida `published`, revisão 1.
 A ação está exposta no HTTP local, na ferramenta MCP
 `ocr_deprecate_document_type_version` e na rota explícita do gateway OAuth
 `POST /api/v1/document-types/{type_id}/versions/{version}/deprecate`, com os
-mesmos requisitos de escopo, proprietário, CAS e replay. O contrato permanece
-com 42 operações HTTP; o MCP anuncia 32 ferramentas, sendo 12 do catálogo e
+mesmos requisitos de escopo, proprietário, CAS e replay. Com os templates locais, o contrato passa a 44 operações HTTP; o MCP anuncia 32 ferramentas, sendo 12 do catálogo e
 20 legadas. A matriz SDK validada cobre HTTP e stdio nos modos auto e legacy;
 a validação em aplicações desktop/CLI reais, com emissor externo e DNS/TLS,
 continua pendente. Isso não anuncia implantação em produção nem conclusão de
@@ -137,9 +179,18 @@ e as cinco operações de upload/admissão em `tests/test_upload_admission.py`.
 Cobre 401/403/404/405/409/422/500, PDF inteiro,
 Range 206/400/416, ausência de valores privados, request_id, cache e export sem
 runtime. A suíte de identidades mantém a autorização real HTTP/MCP.
-`tests/test_catalog_http.py` acrescenta o inventário exato das 12 operações de
+`tests/test_catalog_http.py` acrescenta o inventário exato das 14 operações de
 catálogo e casos de depreciação sobre ASGI e SQLite reais: recibos, ciclo de
-vida, CAS, replay persistido, integridade, limites e isolamento. O inventário
+vida, CAS, replay persistido, integridade, limites e isolamento.
+`tests/test_context_templates_http.py` propõe cobertura HTTP/SQLite real para
+listagem sem escrita, clone de cada template, revisões iniciais, replay após
+edição/publicação, conflitos, entradas inválidas, escopos antes do corpo,
+limite em streaming, posse e isolamento do provider. Usa override explícito
+de principal; não comprova autenticação por credenciais reais.
+As verificações gerais de inventário HTTP passam de 42 para 44.
+A execução das suítes afetadas e a regeneração/verificação offline de
+`docs/openapi-v1.json` cabem ao coordenador; esta proposta não executou testes.
+O inventário
 MCP permanece independente, com 12 ferramentas de catálogo (32 no total).
 `tests/test_catalog_lifecycle_mcp_vertical.py` verifica
 recibos, replay, conflitos, preservação do snapshot e autorização por clientes

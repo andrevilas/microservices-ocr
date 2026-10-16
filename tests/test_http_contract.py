@@ -76,7 +76,7 @@ def test_all_published_examples_and_security(contract):
                 model = schema["components"]["schemas"][body["$ref"].rsplit("/", 1)[1]] if "$ref" in body else body
                 for example in model["examples"]:
                     Draft202012Validator({"components": schema["components"], **model}).validate(example)
-    assert len(operations) == len(set(operations)) == 42
+    assert len(operations) == len(set(operations)) == 44
 
 
 def test_real_success_exchanges_match_openapi(contract):

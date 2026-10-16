@@ -15,6 +15,10 @@ from app.catalog_models import (
     TypeInput, TypePage, TypePublishInput, TypeReceipt, TypeRecord, TypeSummary, TypeUpdateInput,
     TypeVersionPage, TypeVersionRecord, TypeVersionSummary, TypeVersionViewSummary,
 )
+from app.context_templates import (
+    ContextTemplateList, TemplateCloneInput, TemplateCloneReceipt,
+    list_context_templates as template_catalog_snapshot,
+)
 from app.document_models import ContextCreate, TypeDraft, compose_schema
 from app.http_contract import error_responses, operation
 from app.routes.uploads import json_contract, json_input
@@ -38,7 +42,17 @@ _VERSION = TypeVersionSummary(type_id=_TYPE_ID, context_id=_CONTEXT_ID, version=
                               schema_sha256=_COMPOSED.sha256, created_at=_NOW)
 _VERSION_VIEW = TypeVersionViewSummary(**_VERSION.model_dump(),
                                        lifecycle={"state": "published", "revision": 1, "changed_at": _NOW})
+_TEMPLATES = template_catalog_snapshot()
+_TEMPLATE = _TEMPLATES.items[0]
+_CLONE_INPUT = TemplateCloneInput(expected_version=_TEMPLATE.template_version,
+                                  expected_sha256=_TEMPLATE.template_sha256)
 _EXAMPLES = {
+    ContextTemplateList: _TEMPLATES,
+    TemplateCloneReceipt: TemplateCloneReceipt(
+        template_id=_TEMPLATE.template_id, template_version=_TEMPLATE.template_version,
+        template_sha256=_TEMPLATE.template_sha256, context_id=_CONTEXT_ID, context_revision=1,
+        types=[{"type_key": _TEMPLATE.types[0].type_key, "type_id": _TYPE_ID, "revision": 1}],
+        created_at=_NOW),
     ContextReceipt: ContextReceipt(context_id=_CONTEXT_ID, created_at=_NOW),
     ContextSummary: ContextSummary(context_id=_CONTEXT_ID, name=_CONTEXT.name, revision=1, created_at=_NOW, updated_at=_NOW),
     ContextRecord: ContextRecord(context_id=_CONTEXT_ID, revision=2, created_at=_NOW, updated_at=_NOW, body=_CONTEXT),
@@ -79,6 +93,45 @@ def _key():
 
 def _limit():
     return Query(25, ge=1, le=100, description="Page size, 1-100.")
+
+
+def _template_clone_contract():
+    contract = _contract(TemplateCloneInput, "contexts:read", "contexts:write")
+    media = contract["requestBody"]["content"]["application/json"]
+    media["schema"]["examples"] = [_CLONE_INPUT.model_dump(mode="json")]
+    return contract
+
+
+# -- global templates; cloning is an explicit, caller-owned write
+@router.get("/context-templates", response_model=ContextTemplateList,
+            operation_id="ocr_list_context_templates", openapi_extra=operation("contexts:read"),
+            responses=_reply(ContextTemplateList, 200))
+def list_context_templates(principal: Principal = Depends(require_principal),
+                           services: CatalogServices = Depends(get_catalog_services)):
+    """Get all three full templates in fixed order. Templates are editable starting points, not document conformity approvals. Reading never clones or publishes anything."""
+    principal.require("contexts:read")
+    return services.templates.list(principal)
+
+
+@router.post("/context-templates/{template_id}/clone", response_model=TemplateCloneReceipt,
+             status_code=201, operation_id="ocr_clone_context_template",
+             openapi_extra=_template_clone_contract(),
+             responses=_reply(TemplateCloneReceipt, 201, 200, idempotent=True))
+async def clone_context_template(
+        request: Request, response: Response,
+        template_id: str = Path(..., max_length=64, pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"),
+        idempotency_key: str = _key(), principal: Principal = Depends(require_principal),
+        services: CatalogServices = Depends(get_catalog_services)):
+    """Clone the expected template edition into caller-owned context/type drafts at revision 1. Never publishes. Returns 201 on creation or 200 with the original receipt on replay, including after later edits or publication. No automatic retry: reuse the same key and body after an uncertain outcome."""
+    principal.require("contexts:read")
+    principal.require("contexts:write")
+    body = await json_input(request, TemplateCloneInput, max_bytes=MAX_BODY_BYTES)
+    receipt, replayed = await run_in_threadpool(
+        services.templates.clone, principal=principal, template_id=template_id,
+        body=body, key=idempotency_key)
+    response.status_code = 200 if replayed else 201
+    response.headers["Idempotency-Replayed"] = "true" if replayed else "false"
+    return receipt
 
 
 # -- contexts
