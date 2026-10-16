@@ -1,6 +1,8 @@
 """Explicit document scopes for service credentials and OAuth bindings (synthetic; issuer is mocked)."""
 import asyncio
+import hashlib
 import json
+import sqlite3
 import time
 from types import SimpleNamespace
 from uuid import uuid4
@@ -354,12 +356,16 @@ def test_discovery_lists_eleven_and_routes_stay_private(config, tmp_path):
                     ("GET", type_path + "/versions"),
                     ("POST", type_path + "/versions"),
                     ("GET", type_path + "/versions/1"),
+                    ("POST", type_path + "/versions/1/deprecate"),
                 )
                 for method, path in allowed:
                     response = await client.request(method, path)
                     assert response.status_code == 401, (method, path, response.text)
                     assert response.headers["www-authenticate"] == full.challenge
                 response = await client.get(type_path + "/versions/9223372036854775807")
+                assert response.status_code == 401
+                assert response.headers["www-authenticate"] == full.challenge
+                response = await client.post(type_path + "/versions/9223372036854775807/deprecate")
                 assert response.status_code == 401
                 assert response.headers["www-authenticate"] == full.challenge
 
@@ -380,6 +386,13 @@ def test_discovery_lists_eleven_and_routes_stay_private(config, tmp_path):
                     response = await client.request(method, path, headers=auth)
                     assert response.status_code == 404, (method, path)
 
+                for method in ("GET", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"):
+                    response = await client.request(method, type_path + "/versions/1/deprecate", headers=auth)
+                    assert response.status_code == 404, method
+                for path in (type_path + "/versions/deprecate", type_path + "/versions/1/deprecate/",
+                             type_path + "/versions/1/deprecate/extra", type_path + "/1/deprecate"):
+                    assert (await client.post(path, headers=auth)).status_code == 404, path
+
                 for bad_id in ("A" * 32, "a" * 31, "a" * 33, "g" * 32):
                     for path in (
                         "/api/v1/contexts/" + bad_id,
@@ -387,6 +400,7 @@ def test_discovery_lists_eleven_and_routes_stay_private(config, tmp_path):
                         "/api/v1/document-types/" + bad_id,
                         "/api/v1/document-types/" + bad_id + "/versions",
                         "/api/v1/document-types/" + bad_id + "/versions/1",
+                        "/api/v1/document-types/" + bad_id + "/versions/1/deprecate",
                     ):
                         for method in ("GET", "POST", "PUT"):
                             response = await client.request(method, path, headers=auth)
@@ -395,6 +409,8 @@ def test_discovery_lists_eleven_and_routes_stay_private(config, tmp_path):
                     path = type_path + "/versions/" + version
                     response = await client.get(path, headers=auth)
                     assert response.status_code == 404, path
+                    response = await client.post(path + "/deprecate", headers=auth)
+                    assert response.status_code == 404, path + "/deprecate"
         finally:
             try:
                 await verifier.close()
@@ -407,6 +423,179 @@ def test_discovery_lists_eleven_and_routes_stay_private(config, tmp_path):
 
 def catalog_headers():
     return {**bearer("synthetic-access-token"), "Idempotency-Key": uuid4().hex}
+
+
+def oauth_catalog_snapshot(root):
+    """Logical SQLite rows, including lifecycle and persisted idempotency ledger rows."""
+    snapshot = {}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        with path.open("rb") as stream:
+            if stream.read(16) != b"SQLite format 3\x00":
+                continue
+        connection = sqlite3.connect(path)
+        try:
+            for (table,) in connection.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
+                quoted = '"' + table.replace('"', '""') + '"'
+                cursor = connection.execute(f"SELECT * FROM {quoted}")
+                snapshot[(str(path.relative_to(root)), table)] = tuple(sorted(cursor.fetchall(), key=repr))
+        finally:
+            connection.close()
+    assert snapshot
+    return snapshot
+
+
+def test_oauth_deprecation_lifecycle_replays_denials_and_owner_isolation(config, tmp_path):
+    cutoff = time.time() - 1000
+    full = RemoteConfig(
+        config.origin, config.issuer, config.introspection_client_id, config.secret_file,
+        {subject: {"user_id": user_id, "scopes": sorted(OAUTH_SCOPES),
+                   "document_scopes_not_before": cutoff}
+         for subject, user_id in (("subject-one", 1), ("subject-two", 2))},
+        config.allowed_clients,
+    )
+    token_claims = claims(full, iat=cutoff)
+    verifier, users = verifier_for(full, token_claims)
+    users[2] = {"id": 2, "role": "admin"}
+    root = tmp_path / "data"
+    jobs = JobStore(root)
+    app = create_remote_app(full, verifier=verifier, service_provider=lambda: JobApplication(jobs))
+    ctx = ContextInput.model_config['json_schema_extra']['examples'][0]
+    typ = TypeInput.model_config['json_schema_extra']['examples'][0]
+    auth = bearer("synthetic-access-token")
+    body = {"expected_lifecycle_revision": 1}
+
+    async def run():
+        try:
+            await verifier.start()
+            async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url=full.origin) as client:
+                response = await client.post("/api/v1/contexts", json=ctx, headers=catalog_headers())
+                assert response.status_code == 201, response.text
+                context_path = "/api/v1/contexts/" + response.json()["context_id"]
+                response = await client.post(context_path + "/types", json=typ, headers=catalog_headers())
+                assert response.status_code == 201, response.text
+                type_id = response.json()["type_id"]
+                versions_path = "/api/v1/document-types/" + type_id + "/versions"
+                publish_body = {"expected_revision": 1, "expected_context_revision": 1}
+                publish_headers = catalog_headers()
+                response = await client.post(versions_path, json=publish_body, headers=publish_headers)
+                assert response.status_code == 201, response.text
+                published = response.json()
+                assert "lifecycle" not in published
+                version_path = versions_path + "/1"
+                path = version_path + "/deprecate"
+                response = await client.get(version_path, headers=auth)
+                assert response.status_code == 200, response.text
+                original = response.json()
+                canonical = json.dumps(original["schema"], sort_keys=True, separators=(",", ":"),
+                                       ensure_ascii=False).encode()
+                assert hashlib.sha256(canonical).hexdigest() == original["schema_sha256"] == published["schema_sha256"]
+                before = oauth_catalog_snapshot(root)
+                immutable = {(table, row) for table, rows in before.items() for row in rows
+                             if canonical in row or canonical.decode("utf-8") in row}
+                assert immutable
+                row_counts = {table: len(rows) for table, rows in before.items()}
+
+                response = await client.post(path, json=body)
+                assert response.status_code == 401
+                assert response.headers["www-authenticate"] == full.challenge
+                # Both the binding and token must grant read + publish; old tokens retain only legacy scopes.
+                for binding_scopes, token_scopes, issued_at in (
+                    (["contexts:read", "contexts:write"], sorted(OAUTH_SCOPES), cutoff),
+                    (sorted(OAUTH_SCOPES), ["contexts:read", "contexts:write"], cutoff),
+                    (["contexts:publish"], sorted(OAUTH_SCOPES), cutoff),
+                    (sorted(OAUTH_SCOPES), ["contexts:publish"], cutoff),
+                    (sorted(LEGACY_SCOPES), sorted(OAUTH_SCOPES), cutoff),
+                    (sorted(OAUTH_SCOPES), sorted(OAUTH_SCOPES), cutoff - 1),
+                ):
+                    verifier.config = bound(config, binding_scopes, cutoff)
+                    token_claims.update(scope=" ".join(token_scopes), iat=issued_at)
+                    for payload in (json.dumps(body), '{"PRIVATE-SENTINEL":'):
+                        response = await client.post(
+                            path, content=payload,
+                            headers={**catalog_headers(), "Content-Type": "application/json"})
+                        assert response.status_code == 403, response.text
+                        assert response.json()["error"]["code"] == "insufficient_scope"
+                        assert "PRIVATE" not in response.text and "synthetic-access-token" not in response.text
+                    assert oauth_catalog_snapshot(root) == before
+
+                verifier.config = full
+                token_claims.update(scope=" ".join(sorted(OAUTH_SCOPES)), iat=cutoff, sub="subject-two")
+                response = await client.post(path, json=body, headers=catalog_headers())
+                assert response.status_code == 404, response.text
+                assert response.json()["error"]["code"] == "type_version_not_found"
+                token_claims["sub"] = "subject-one"
+                for missing in (versions_path + "/2/deprecate",
+                                "/api/v1/document-types/" + "0" * 32 + "/versions/1/deprecate"):
+                    response = await client.post(missing, json=body, headers=catalog_headers())
+                    assert response.status_code == 404, response.text
+                    assert response.json()["error"]["code"] == "type_version_not_found"
+                for version in ("9223372036854775808", "9999999999999999999"):
+                    response = await client.post(versions_path + "/" + version + "/deprecate",
+                                                 json=body, headers=catalog_headers())
+                    assert response.status_code == 422, response.text
+                for revision in (True, "1", 0, -1, 2**31, None):
+                    response = await client.post(path, json={"expected_lifecycle_revision": revision},
+                                                 headers=catalog_headers())
+                    assert response.status_code == 422, response.text
+                assert oauth_catalog_snapshot(root) == before
+                assert {table: len(rows) for table, rows in oauth_catalog_snapshot(root).items()} == row_counts
+
+                deprecate_headers = catalog_headers()
+                response = await client.post(path, json=body, headers=deprecate_headers)
+                assert response.status_code == 200, response.text
+                assert response.headers["idempotency-replayed"] == "false"
+                assert response.headers["cache-control"] == "no-store"
+                receipt = response.json()
+                assert set(receipt) == {"type_id", "version", "schema_sha256", "lifecycle"}
+                assert (receipt["type_id"], receipt["version"], receipt["schema_sha256"]) == (type_id, 1, published["schema_sha256"])
+                lifecycle = receipt["lifecycle"]
+                assert set(lifecycle) == {"state", "revision", "changed_at"}
+                assert lifecycle["state"] == "deprecated" and lifecycle["revision"] == 2
+                assert lifecycle["changed_at"].endswith(("Z", "+00:00"))
+                response = await client.get(version_path, headers=auth)
+                assert response.status_code == 200, response.text
+                assert response.json() == {**original, "lifecycle": lifecycle}
+                assert json.dumps(response.json()["schema"], sort_keys=True, separators=(",", ":"),
+                                  ensure_ascii=False).encode() == canonical
+                response = await client.get(versions_path, headers=auth)
+                assert response.status_code == 200, response.text
+                assert response.json() == {"items": [{**published, "lifecycle": lifecycle}], "next_cursor": None}
+                persisted = oauth_catalog_snapshot(root)
+                assert {(table, row) for table, rows in persisted.items() for row in rows
+                        if canonical in row or canonical.decode("utf-8") in row} == immutable
+
+                response = await client.post(path, json=body, headers=deprecate_headers)
+                assert response.status_code == 200 and response.json() == receipt
+                assert response.headers["idempotency-replayed"] == "true"
+                assert oauth_catalog_snapshot(root) == persisted  # No extra ledger row on replay.
+                for headers, revision, code in (
+                    (catalog_headers(), 1, "type_lifecycle_revision_conflict"),
+                    (catalog_headers(), 2, "type_version_already_deprecated"),
+                    (deprecate_headers, 2, "idempotency_conflict"),
+                ):
+                    response = await client.post(path, json={"expected_lifecycle_revision": revision}, headers=headers)
+                    assert response.status_code == 409, response.text
+                    assert response.json()["error"]["code"] == code
+                    assert "synthetic-access-token" not in response.text
+                    assert oauth_catalog_snapshot(root) == persisted
+                response = await client.post(versions_path, json=publish_body, headers=publish_headers)
+                assert response.status_code == 200 and response.json() == published
+                assert response.headers["idempotency-replayed"] == "true"
+                token_claims["sub"] = "subject-two"
+                response = await client.post(path, json=body, headers=deprecate_headers)
+                assert response.status_code == 404, response.text
+                assert response.json()["error"]["code"] == "type_version_not_found"
+                response = await client.get(version_path, headers=auth)
+                assert response.status_code == 404, response.text
+                assert oauth_catalog_snapshot(root) == persisted
+        finally:
+            try:
+                await verifier.close()
+            finally:
+                jobs._conn.close()
+    asyncio.run(run())
 
 
 def test_oauth_catalog_eleven_operations_and_owner_isolation(config, tmp_path):

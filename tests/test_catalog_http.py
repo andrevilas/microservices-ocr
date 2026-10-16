@@ -530,9 +530,11 @@ def test_openapi_contract_and_wire_name(api):
     assert len(keys) == 1
     key = keys[0]
     assert key["required"] and key["in"] == "header"
-    schemas = h.schema["components"]["schemas"]
-    assert schemas["TypeDeprecateInput"]["additionalProperties"] is False
-    assert schemas["TypeDeprecateInput"]["examples"] == [{"expected_lifecycle_revision": 1}]
+    request_schema = deprecation["requestBody"]["content"]["application/json"]["schema"]
+    assert request_schema["additionalProperties"] is False
+    assert request_schema["examples"] == [{"expected_lifecycle_revision": 1}]
+    assert request_schema["required"] == ["expected_lifecycle_revision"]
+    Draft202012Validator({"components": h.schema["components"], **request_schema}).validate(request_schema["examples"][0])
     example = success["content"]["application/json"]["example"]
     assert set(example) == {"type_id", "version", "schema_sha256", "lifecycle"}
     assert example["lifecycle"] == {"state": "deprecated", "revision": 2, "changed_at": "2026-10-16T12:00:00Z"}
