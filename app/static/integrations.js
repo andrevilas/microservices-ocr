@@ -7,7 +7,8 @@
   const $ = (id) => document.getElementById(id);
   const BASE = "/api/v1/service-principals";
   const SCOPES = {"jobs:read": "Consultar jobs", "artifacts:read": "Ler resultados", "jobs:submit": "Enviar documentos",
-    "jobs:cancel": "Cancelar jobs", "artifacts:delete": "Excluir arquivos"};
+    "jobs:cancel": "Cancelar jobs", "artifacts:delete": "Excluir arquivos", "contexts:read": "Consultar contextos",
+    "contexts:write": "Editar rascunhos de contextos", "metadata:read": "Consultar metadados", "metadata:write": "Salvar rascunhos de metadados"};
   const PAGE = 100;
   // Actions stay disabled until the session and first service page load (ready) and while any operation runs (busy),
   // so a click is never swallowed by the busy guard in run(). Text inputs stay editable; typed values are never reset on failure.
