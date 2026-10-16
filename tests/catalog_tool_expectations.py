@@ -1,6 +1,6 @@
 """Independent, literal expectations for the currently advertised MCP tools."""
 
-EXPECTED_TOOL_COUNT = 31
+EXPECTED_TOOL_COUNT = 32
 EXPECTED_TOOL_NAMES = frozenset({
     "ocr_whoami",
     "ocr_list_jobs",
@@ -33,6 +33,7 @@ EXPECTED_TOOL_NAMES = frozenset({
     "ocr_publish_document_type",
     "ocr_list_document_type_versions",
     "ocr_get_document_type_version",
+    "ocr_deprecate_document_type_version",
 })
 
 CATALOG_READ_TOOL_NAMES = frozenset({
@@ -49,10 +50,14 @@ CATALOG_WRITE_TOOL_NAMES = frozenset({
     "ocr_create_document_type",
     "ocr_update_document_type",
     "ocr_publish_document_type",
+    "ocr_deprecate_document_type_version",
 })
 CATALOG_UPDATE_TOOL_NAMES = frozenset({
     "ocr_update_context",
     "ocr_update_document_type",
+})
+CATALOG_DEPRECATE_TOOL_NAMES = frozenset({
+    "ocr_deprecate_document_type_version",
 })
 OTHER_WRITE_TOOL_NAMES = frozenset({
     "ocr_prepare_upload",
@@ -79,5 +84,5 @@ def assert_catalog_annotations(tools):
     for name in CATALOG_READ_TOOL_NAMES | CATALOG_WRITE_TOOL_NAMES:
         hints = by_name[name].annotations
         assert hints.open_world_hint is False
-        assert hints.destructive_hint is (name in CATALOG_UPDATE_TOOL_NAMES)
+        assert hints.destructive_hint is (name in CATALOG_UPDATE_TOOL_NAMES | CATALOG_DEPRECATE_TOOL_NAMES)
         assert hints.idempotent_hint is (name not in CATALOG_UPDATE_TOOL_NAMES)

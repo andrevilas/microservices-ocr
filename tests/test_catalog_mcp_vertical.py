@@ -30,7 +30,8 @@ READ_TOOLS = frozenset({"ocr_list_contexts", "ocr_get_context", "ocr_list_docume
                         "ocr_get_document_type", "ocr_list_document_type_versions", "ocr_get_document_type_version"})
 CREATE_TOOLS = frozenset({"ocr_create_context", "ocr_create_document_type", "ocr_publish_document_type"})
 UPDATE_TOOLS = frozenset({"ocr_update_context", "ocr_update_document_type"})
-CATALOG_TOOLS = READ_TOOLS | CREATE_TOOLS | UPDATE_TOOLS
+DEPRECATE_TOOLS = frozenset({"ocr_deprecate_document_type_version"})
+CATALOG_TOOLS = READ_TOOLS | CREATE_TOOLS | UPDATE_TOOLS | DEPRECATE_TOOLS
 
 CTX = ContextInput.model_config["json_schema_extra"]["examples"][0]
 TYP = TypeInput.model_config["json_schema_extra"]["examples"][0]
@@ -135,7 +136,7 @@ class Tools:
 
 def check_discovery(listing):
     tools = {t.name: t for t in listing.tools}
-    assert len(listing.tools) == len(tools) == 31
+    assert len(listing.tools) == len(tools) == 32
     assert set(tools) == LEGACY_TOOLS | CATALOG_TOOLS
     assert all(t.output_schema for t in tools.values())
     assert all(t.input_schema["additionalProperties"] is False for t in tools.values())
@@ -146,8 +147,11 @@ def check_discovery(listing):
             assert hints.read_only_hint and hints.idempotent_hint and not hints.destructive_hint, name
         elif name in CREATE_TOOLS:
             assert not hints.read_only_hint and hints.idempotent_hint and not hints.destructive_hint, name
-        else:
+        elif name in UPDATE_TOOLS:
             assert not hints.read_only_hint and not hints.idempotent_hint and hints.destructive_hint, name
+        else:
+            assert name in DEPRECATE_TOOLS
+            assert not hints.read_only_hint and hints.idempotent_hint and hints.destructive_hint, name
     return listing.tools
 
 
@@ -281,6 +285,16 @@ async def catalog_flow(runtime, accounts, client):
         assert (await get_version(tools, http, tid, 1, summary)) == before
         await get_version(tools, http, tid, 2, summary2)
 
+        # Deprecate only after all publication and immutable-snapshot assertions above.
+        deprecated = await tools("ocr_deprecate_document_type_version", {
+            "type_id": tid, "version": 1, "body": {"expected_lifecycle_revision": 1},
+            "idempotency_key": owner_key + "-dep1"})
+        assert deprecated["schema_sha256"] == before["schema_sha256"]
+        assert deprecated["lifecycle"]["state"] == "deprecated" and deprecated["lifecycle"]["revision"] == 2
+        current = await tools("ocr_get_document_type_version", {"type_id": tid, "version": 1})
+        assert current == {**before, "lifecycle": deprecated["lifecycle"]}
+        assert await tools("ocr_publish_document_type", publish) == summary
+
         # -- the other user owns nothing here
         async with connected(runtime, "http", "auto", accounts.other) as other_client:
             other_tools = Tools(other_client, (await other_client.list_tools()).tools)
@@ -290,14 +304,14 @@ async def catalog_flow(runtime, accounts, client):
 
 
 @pytest.mark.parametrize("transport,mode", [("http", "auto"), ("http", "legacy"), ("stdio", "auto"), ("stdio", "legacy")])
-def test_catalog_eleven_tools_through_real_clients(runtime, catalog_accounts, transport, mode):  # noqa: F811
+def test_catalog_twelve_tools_through_real_clients(runtime, catalog_accounts, transport, mode):  # noqa: F811
     async def scenario():
         async with asyncio.timeout(SCENARIO_TIMEOUT):
             async with connected(runtime, transport, mode, catalog_accounts.owner) as client:
                 return await catalog_flow(runtime, catalog_accounts, client)
 
     called = asyncio.run(scenario())
-    assert len(called) == 11 and called == CATALOG_TOOLS
+    assert len(called) == 12 and called == CATALOG_TOOLS
     assert not (runtime.root / "stdio-must-not-create").exists()
 
 

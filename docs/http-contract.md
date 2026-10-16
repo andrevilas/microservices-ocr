@@ -117,11 +117,17 @@ continuam legíveis e listadas; bytes canônicos, schema e hash não mudam.
 Depreciar não libera quota, exclui versões ou permite reativação. Uma nova
 publicação nasce com ciclo de vida `published`, revisão 1.
 
-Esta entrega L2a expõe a ação no HTTP local. A ferramenta MCP e a rota no
-gateway OAuth ficam para os próximos incrementos; não há anúncio de suporte
-remoto, em clientes ou em produção. A vinculação efetiva no DocumentService
-ainda não foi integrada, portanto esta entrega não garante o bloqueio de novas
-associações de documentos de ponta a ponta.
+A ação está exposta no HTTP local, na ferramenta MCP
+`ocr_deprecate_document_type_version` e na rota explícita do gateway OAuth
+`POST /api/v1/document-types/{type_id}/versions/{version}/deprecate`, com os
+mesmos requisitos de escopo, proprietário, CAS e replay. O contrato permanece
+com 42 operações HTTP; o MCP anuncia 32 ferramentas, sendo 12 do catálogo e
+20 legadas. A matriz SDK validada cobre HTTP e stdio nos modos auto e legacy;
+a validação em aplicações desktop/CLI reais, com emissor externo e DNS/TLS,
+continua pendente. Isso não anuncia implantação em produção nem conclusão de
+Contexts ou UI. A vinculação efetiva no DocumentService ainda não foi
+integrada, portanto esta entrega não garante o bloqueio de novas associações
+de documentos de ponta a ponta.
 
 ## Validação
 
@@ -134,7 +140,13 @@ runtime. A suíte de identidades mantém a autorização real HTTP/MCP.
 `tests/test_catalog_http.py` acrescenta o inventário exato das 12 operações de
 catálogo e casos de depreciação sobre ASGI e SQLite reais: recibos, ciclo de
 vida, CAS, replay persistido, integridade, limites e isolamento. O inventário
-MCP permanece independente, com 11 ferramentas de catálogo (31 no total).
+MCP permanece independente, com 12 ferramentas de catálogo (32 no total).
+`tests/test_catalog_lifecycle_mcp_vertical.py` verifica
+recibos, replay, conflitos, preservação do snapshot e autorização por clientes
+SDK reais HTTP/stdio, em auto e legacy. A validação independente de 16/10/2026
+executou oito suítes: 150 testes passaram e três verificações existentes de
+aplicativos reais foram ignoradas por falta dos respectivos binários no
+contêiner de testes. Isso não substitui a homologação desses aplicativos.
 
 Referências consultadas em 15/10/2026:
 [respostas adicionais do FastAPI](https://fastapi.tiangolo.com/advanced/additional-responses/)

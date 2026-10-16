@@ -27,7 +27,7 @@ from app.services.context_service import ContextService
 from app.services.storage_service import JobStore
 from app.services.type_service import TypeService
 from test_catalog_http import legacy_token
-from test_catalog_mcp_vertical import (CATALOG_TOOLS, CREATE_TOOLS, CTX, CTX2, CTX3, READ_TOOLS, SCENARIO_TIMEOUT,  # noqa: F401
+from test_catalog_mcp_vertical import (CATALOG_TOOLS, CREATE_TOOLS, CTX, CTX2, CTX3, DEPRECATE_TOOLS, READ_TOOLS, SCENARIO_TIMEOUT,  # noqa: F401
                                        TYP, TYP2, UPDATE_TOOLS, catalog_accounts, rest)
 from test_mcp_vertical import connected, runtime  # noqa: F401  (fixtures)
 
@@ -79,6 +79,9 @@ def catalog_calls(cid, tid, tag):
                                       "idempotency_key": tag + "-publish"},
         "ocr_list_document_type_versions": {"type_id": tid},
         "ocr_get_document_type_version": {"type_id": tid, "version": 1},
+        "ocr_deprecate_document_type_version": {"type_id": tid, "version": 1,
+                                               "body": {"expected_lifecycle_revision": 1},
+                                               "idempotency_key": tag + "-deprecate"},
     }
     assert set(calls) == CATALOG_TOOLS
     return calls
@@ -164,8 +167,8 @@ def reduced_token(token, scopes, secret):
 
 
 @pytest.mark.parametrize("scopes,denied", [
-    (frozenset({"contexts:read"}), CREATE_TOOLS | UPDATE_TOOLS),
-    (frozenset({"contexts:read", "contexts:write"}), {"ocr_publish_document_type"}),
+    (frozenset({"contexts:read"}), CREATE_TOOLS | UPDATE_TOOLS | DEPRECATE_TOOLS),
+    (frozenset({"contexts:read", "contexts:write"}), {"ocr_publish_document_type", "ocr_deprecate_document_type_version"}),
 ], ids=["read-only", "read-write"])
 @pytest.mark.parametrize("transport,mode", TRANSPORTS)
 def test_reduced_scope_users_cannot_exceed_their_scopes(runtime, catalog_accounts, transport, mode, scopes, denied):  # noqa: F811
@@ -270,6 +273,22 @@ def test_invalid_inputs_are_validation_errors_without_echo_or_writes(runtime, ca
             ("ocr_update_document_type", type_update(owner=SENTINEL)),
             ("ocr_update_document_type", type_update(expected_revision=True)),
             ("ocr_update_document_type", type_update(expected_revision="1" + SENTINEL)),
+            ("ocr_deprecate_document_type_version", {"type_id": tid, "version": True,
+                                                     "body": {"expected_lifecycle_revision": 1}, "idempotency_key": key}),
+            ("ocr_deprecate_document_type_version", {"type_id": tid, "version": "1",
+                                                     "body": {"expected_lifecycle_revision": 1}, "idempotency_key": key}),
+            ("ocr_deprecate_document_type_version", {"type_id": tid, "version": 1,
+                                                     "body": {"expected_lifecycle_revision": True}, "idempotency_key": key}),
+            ("ocr_deprecate_document_type_version", {"type_id": tid, "version": 1,
+                                                     "body": {"expected_lifecycle_revision": "1"}, "idempotency_key": key}),
+            ("ocr_deprecate_document_type_version", {"type_id": tid, "version": 1,
+                                                     "body": {"expected_lifecycle_revision": 2**31}, "idempotency_key": key}),
+            ("ocr_deprecate_document_type_version", {"type_id": tid, "version": 1,
+                                                     "body": {"expected_lifecycle_revision": 1, "owner": SENTINEL},
+                                                     "idempotency_key": key}),
+            ("ocr_deprecate_document_type_version", {"type_id": tid, "version": 1,
+                                                     "body": {"expected_lifecycle_revision": 1},
+                                                     "idempotency_key": "bad key " + SENTINEL}),
             ("ocr_publish_document_type", {"type_id": tid, "idempotency_key": key,
                                            "body": {"expected_revision": 1, "expected_context_revision": True}}),
             ("ocr_publish_document_type", {"type_id": tid, "idempotency_key": key,

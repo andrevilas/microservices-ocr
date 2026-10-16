@@ -14,7 +14,7 @@ import pytest
 
 from app.application import JobApplication
 from app.catalog_mcp_tools import CATALOG_OPERATIONS, register_catalog_tools
-from app.catalog_models import (ContextInput, ContextUpdateInput, TypeInput, TypePublishInput,
+from app.catalog_models import (ContextInput, ContextUpdateInput, TypeDeprecateInput, TypeInput, TypePublishInput,
                                 TypeUpdateInput)
 from app.main import create_app
 from app.mcp_stdio import ApiClient, MAX_RESPONSE_BYTES
@@ -27,6 +27,7 @@ from test_mcp_vertical import ROOT
 READ_ONLY = {"ocr_list_contexts", "ocr_get_context", "ocr_list_document_types", "ocr_get_document_type",
              "ocr_list_document_type_versions", "ocr_get_document_type_version"}
 UPDATES = {"ocr_update_context", "ocr_update_document_type"}
+DEPRECATIONS = {"ocr_deprecate_document_type_version"}
 INVOKE_ARGS = {  # tool -> positional arguments seen by invoke, in matrix order
     "ocr_list_contexts": ("list_contexts", 25, None),
     "ocr_create_context": ("create_context", ContextInput, "create-context-1"),
@@ -39,6 +40,8 @@ INVOKE_ARGS = {  # tool -> positional arguments seen by invoke, in matrix order
     "ocr_publish_document_type": ("publish_document_type", "a" * 32, TypePublishInput, "publish-0000001"),
     "ocr_list_document_type_versions": ("list_document_type_versions", "a" * 32, 25, None),
     "ocr_get_document_type_version": ("get_document_type_version", "a" * 32, 1),
+    "ocr_deprecate_document_type_version": ("deprecate_document_type_version", "a" * 32, 1,
+                                             TypeDeprecateInput, "deprecate-000001"),
 }
 ARGUMENTS = {
     "ocr_list_contexts": {},
@@ -53,6 +56,9 @@ ARGUMENTS = {
     "ocr_publish_document_type": {"type_id": "a" * 32, "body": {"expected_revision": 1, "expected_context_revision": 1},
                                   "idempotency_key": "publish-0000001"},
     "ocr_get_document_type_version": {"type_id": "a" * 32, "version": 1},
+    "ocr_deprecate_document_type_version": {"type_id": "a" * 32, "version": 1,
+                                           "body": {"expected_lifecycle_revision": 1},
+                                           "idempotency_key": "deprecate-000001"},
 }
 
 
@@ -66,18 +72,18 @@ def isolated_server(invoke):
     return server
 
 
-def test_registry_lists_exactly_eleven_tools_with_schemas_and_annotations():
+def test_registry_lists_exactly_twelve_tools_with_schemas_and_annotations():
     async def scenario():
         async with Client(isolated_server(lambda *a: None)) as client:
             return (await client.list_tools()).tools
     tools = {tool.name: tool for tool in run(scenario())}
-    assert set(tools) == set(INVOKE_ARGS) == set(ARGUMENTS) and len(tools) == 11
-    assert len(CATALOG_OPERATIONS) == 11 and {a[0] for a in INVOKE_ARGS.values()} == CATALOG_OPERATIONS
+    assert set(tools) == set(INVOKE_ARGS) == set(ARGUMENTS) and len(tools) == 12
+    assert len(CATALOG_OPERATIONS) == 12 and {a[0] for a in INVOKE_ARGS.values()} == CATALOG_OPERATIONS
     for name, tool in tools.items():
         hints = tool.annotations
         assert hints.open_world_hint is False
         assert hints.read_only_hint is (name in READ_ONLY)
-        assert hints.destructive_hint is (name in UPDATES)
+        assert hints.destructive_hint is (name in UPDATES | DEPRECATIONS)
         assert hints.idempotent_hint is (name not in UPDATES)
         assert tool.output_schema and tool.input_schema["additionalProperties"] is False
         assert "untrusted" in tool.description
@@ -86,6 +92,15 @@ def test_registry_lists_exactly_eleven_tools_with_schemas_and_annotations():
     assert "idempotency_key" in tools["ocr_create_context"].input_schema["required"]
     assert "idempotency_key" not in tools["ocr_update_context"].input_schema["properties"]
     assert tools["ocr_list_contexts"].input_schema["properties"]["limit"]["maximum"] == 100
+    deprecate = tools["ocr_deprecate_document_type_version"]
+    schema = deprecate.input_schema
+    assert set(schema["required"]) == {"type_id", "version", "body", "idempotency_key"}
+    assert schema["properties"]["version"]["minimum"] == 1
+    assert schema["properties"]["version"]["maximum"] == 2**63 - 1
+    assert set(deprecate.output_schema["properties"]) == {"type_id", "version", "schema_sha256", "lifecycle"}
+    assert "historical" in tools["ocr_publish_document_type"].description
+    assert "current lifecycle" in tools["ocr_get_document_type_version"].description
+    assert "deprecated" in tools["ocr_list_document_type_versions"].description
 
 
 def test_version_record_keeps_schema_alias_in_output_schema_and_structured_content():
@@ -120,7 +135,7 @@ def test_tools_pass_typed_arguments_to_invoke_in_matrix_order():
                 assert result.is_error
         return seen
     seen = run(scenario())
-    assert len(seen) == 11 and [call[0] for call in seen] == [expected[0] for expected in INVOKE_ARGS.values()]
+    assert len(seen) == 12 and [call[0] for call in seen] == [expected[0] for expected in INVOKE_ARGS.values()]
     for (operation, *args), (name, expected) in zip(seen, INVOKE_ARGS.items()):
         assert operation == expected[0] and len(args) == len(expected) - 1, name
         for got, want in zip(args, expected[1:]):
@@ -142,6 +157,32 @@ def test_registry_rejects_extra_arguments_and_body_properties():
                    await client.call_tool("ocr_create_context", {"body": CTX, "idempotency_key": "short"})]
             return [extra, body, *bad]
     assert all(result.is_error for result in run(scenario()))
+
+
+@pytest.mark.parametrize("override", [
+    {"type_id": "A" * 32}, {"type_id": "../private"},
+    {"version": True}, {"version": "1"}, {"version": 0}, {"version": 2**63},
+    {"body": {}}, {"body": {"expected_lifecycle_revision": True}},
+    {"body": {"expected_lifecycle_revision": "1"}},
+    {"body": {"expected_lifecycle_revision": 0}},
+    {"body": {"expected_lifecycle_revision": 2**31}},
+    {"body": {"expected_lifecycle_revision": 1, "owner": "PRIVATE"}},
+    {"idempotency_key": "short"}, {"idempotency_key": "x" * 129},
+    {"idempotency_key": "nonascii-é"}, {"owner": "PRIVATE"},
+])
+def test_deprecation_invalid_arguments_never_invoke(override):
+    seen = []
+
+    async def scenario():
+        async def invoke(ctx, operation, *args):
+            seen.append(operation)
+            raise ToolError("unexpected invocation")
+        async with Client(isolated_server(invoke)) as client:
+            result = await client.call_tool("ocr_deprecate_document_type_version", {
+                **ARGUMENTS["ocr_deprecate_document_type_version"], **override})
+            assert result.is_error
+    run(scenario())
+    assert seen == []
 
 
 # -- real ASGI app + real stores: every mapping, alias, replay and CAS through ApiClient and the MCP registry
@@ -167,7 +208,7 @@ def live(tmp_path):
     instance.store._conn.close()
 
 
-def test_api_client_exercises_all_eleven_operations_over_real_http(live):
+def test_api_client_exercises_all_twelve_operations_over_real_http(live):
     async def scenario():
         async with live.http() as http:
             api = ApiClient("http://testserver", http)
@@ -218,6 +259,16 @@ def test_api_client_exercises_all_eleven_operations_over_real_http(live):
                 result = await client.call_tool("ocr_get_document_type_version", {"type_id": tid, "version": 1})
                 assert not result.is_error and result.structured_content["schema"] == record["schema"]
                 assert "schema_document" not in result.structured_content
+            deprecate = TypeDeprecateInput(expected_lifecycle_revision=1)
+            receipt = await invoke(None, "deprecate_document_type_version", tid, 1, deprecate, "deprecate-000001")
+            assert set(receipt) == {"type_id", "version", "schema_sha256", "lifecycle"}
+            assert receipt["type_id"] == tid and receipt["version"] == 1
+            assert receipt["schema_sha256"] == record["schema_sha256"]
+            assert receipt["lifecycle"]["state"] == "deprecated" and receipt["lifecycle"]["revision"] == 2
+            assert await invoke(None, "deprecate_document_type_version", tid, 1, deprecate, "deprecate-000001") == receipt
+            current = await invoke(None, "get_document_type_version", tid, 1)
+            assert current["schema"] == record["schema"] and current["lifecycle"] == receipt["lifecycle"]
+            assert await invoke(None, "publish_document_type", tid, publish, "publish-0000001") == summary
         return cid, tid
 
     cid, tid = run(scenario())
@@ -226,7 +277,8 @@ def test_api_client_exercises_all_eleven_operations_over_real_http(live):
                      ("PUT", f"/api/v1/contexts/{cid}"), ("GET", f"/api/v1/contexts/{cid}/types"),
                      ("POST", f"/api/v1/contexts/{cid}/types"), ("GET", f"/api/v1/document-types/{tid}"),
                      ("PUT", f"/api/v1/document-types/{tid}"), ("POST", f"/api/v1/document-types/{tid}/versions"),
-                     ("GET", f"/api/v1/document-types/{tid}/versions"), ("GET", f"/api/v1/document-types/{tid}/versions/1")]:
+                     ("GET", f"/api/v1/document-types/{tid}/versions"), ("GET", f"/api/v1/document-types/{tid}/versions/1"),
+                     ("POST", f"/api/v1/document-types/{tid}/versions/1/deprecate")]:
         assert expected in seen
     for request in live.requests:
         assert request.headers.get("content-type", "application/json") == "application/json"
@@ -238,6 +290,12 @@ def test_api_client_exercises_all_eleven_operations_over_real_http(live):
             body = request.content
             assert b'"idempotency' not in body and b": " not in body and b", " not in body  # compact, key only in header
             assert json.loads(body)
+    deprecations = [r for r in live.requests if r.url.path == f"/api/v1/document-types/{tid}/versions/1/deprecate"]
+    assert len(deprecations) == 2
+    for request in deprecations:
+        assert request.method == "POST" and not request.url.params
+        assert request.headers["idempotency-key"] == "deprecate-000001"
+        assert request.content == b'{"expected_lifecycle_revision":1}'
     queries = [dict(r.url.params) for r in live.requests if r.method == "GET" and r.url.path == "/api/v1/contexts"]
     assert len(queries) == 2 and queries[0] == {"limit": "1"}  # explicit limit, after=None omitted
     assert set(queries[1]) == {"limit", "after"} and queries[1]["limit"] == "1" and queries[1]["after"]
@@ -269,6 +327,8 @@ def mock_client(handler):
     ("update_context", ("a" * 32, ContextUpdateInput(body=CTX, expected_revision=1)), "read the current revision"),
     ("update_document_type", ("a" * 32, TypeUpdateInput(body=TYP, expected_revision=1)), "read the current revision"),
     ("create_context", (ContextInput(**CTX), "create-context-1"), "same key"),
+    ("deprecate_document_type_version", ("a" * 32, 1, TypeDeprecateInput(expected_lifecycle_revision=1),
+                                           "deprecate-000001"), "same key"),
 ])
 def test_timeout_is_sanitized_and_hint_matches_operation(operation, args, hint):
     def handler(request):
@@ -359,11 +419,11 @@ import app.catalog_mcp_tools, app.mcp_stdio, app.mcp_tools
 from mcp.server import MCPServer
 server = MCPServer('test')
 app.catalog_mcp_tools.register_catalog_tools(server, lambda *a: None)
-assert len(asyncio.run(server.list_tools())) == 11
+assert len(asyncio.run(server.list_tools())) == 12
 shared = MCPServer('test')
 app.mcp_tools.register_tools(shared, lambda *a: None)
 names = [tool.name for tool in asyncio.run(shared.list_tools())]
-assert len(names) == len(set(names)) == 31, len(names)
+assert len(names) == len(set(names)) == 32, len(names)
 app.mcp_stdio.register_tools(MCPServer('test'), lambda *a: None)
 blocked = {'app.main', 'app.config', 'app.application', 'app.services.storage_service', 'app.services.job_queue',
            'app.services.catalog_runtime', 'app.services.context_service', 'app.services.type_service', 'app.routes.catalog'}
