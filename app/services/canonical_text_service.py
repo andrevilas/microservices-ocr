@@ -186,7 +186,8 @@ class PreparedCanonicalText:
                 self._ensure_open()
                 yield bytes(view[start:start + STREAM_CHUNK_BYTES])
             del view, line
-        if size != self._manifest["size_bytes"] or digest.hexdigest() != self._manifest["sha256"]:
+        self._ensure_open()
+        if size !=self._manifest["size_bytes"] or digest.hexdigest() != self._manifest["sha256"]:
             raise _integrity()
 
     def page_chunk(self, page: int, offset: int = 0, max_chars: int = 8000) -> dict:

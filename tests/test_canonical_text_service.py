@@ -265,6 +265,18 @@ def test_lease_released_after_error_iteration_error_and_early_exit(store):
         prepared.manifest
 
 
+def test_resume_after_last_chunk_on_closed_context_raises_runtime_error(store):
+    job, _ = make_job(store, pages=["única"])
+    service = CanonicalTextService(store)
+    with service.open(OWNER, job.job_id) as prepared:
+        stream = prepared.iter_jsonl()
+        assert len(next(stream)) > 0
+        assert store._artifact_leases == {job.job_id: 1}
+    assert not store._artifact_leases
+    with pytest.raises(RuntimeError):
+        next(stream)
+
+
 def test_deletion_while_open_keeps_files_until_exit_then_410(store):
     job, report = make_job(store)
     service = CanonicalTextService(store)
