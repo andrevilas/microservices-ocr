@@ -116,10 +116,48 @@ def normalize_value(field: FieldSpec, value):
     return _normalize(_revalidated(field), value)
 
 
+def _normalize_field(field: FieldSpec, raw):
+    """Apply cardinality on top of the scalar normalization; None stays absence."""
+    if raw is None or field.cardinality == "one":
+        return _normalize(field, raw)
+    if type(raw) is not list:
+        _fail(field, "must be a list")
+    if len(raw) > field.max_items:
+        _fail(field, f"exceeds {field.max_items} items")
+    out = []
+    for item in raw:
+        if item is None:
+            _fail(field, "items must not be null")
+        out.append(_normalize(field, item))
+    return out
+
+
+def _conditions(specs: list[FieldSpec]) -> dict:
+    """Validate every required_when and return {field name: (target spec, normalized equals)}."""
+    by_name = {s.name: s for s in specs}
+    out = {}
+    for s in specs:
+        cond = s.required_when
+        if cond is None:
+            continue
+        target = by_name.get(cond.field)
+        if target is None or target.name == s.name:
+            _fail(s, "required_when references an unknown or own field")
+        if target.cardinality != "one":
+            _fail(s, "required_when must reference a single-valued field")
+        out[s.name] = (target, _normalize(target, cond.equals))
+    return out
+
+
+def _missing(raw) -> bool:
+    return raw is None or (type(raw) is str and not raw.strip()) or (type(raw) is list and not raw)
+
+
 def validate_values(fields: Sequence[FieldSpec], values: dict, *, complete: bool = False) -> dict:
     """Validate a mapping of values against a schema; return a new dict, never mutating the input.
 
-    complete=True only checks that required fields are structurally present and non-blank.
+    complete=True only checks that required fields (required, or required_when whose present target
+    equals the normalized literal, with exact type) are structurally present and non-blank.
     """
     if isinstance(fields, (str, bytes)) or not isinstance(fields, Sequence):
         raise ValueError("Fields must be a sequence of FieldSpec.")
@@ -137,16 +175,21 @@ def validate_values(fields: Sequence[FieldSpec], values: dict, *, complete: bool
         raise ValueError("Duplicate field name in schema.")
     if set(values) - set(names):
         raise ValueError("Unknown fields in values.")
+    conditions = _conditions(specs)
     result: dict = {}
     for spec in specs:
-        present = spec.name in values
-        raw = values.get(spec.name)
-        if complete and spec.required:
-            if raw is None or (type(raw) is str and not raw.strip()):
+        if spec.name in values:
+            result[spec.name] = _normalize_field(spec, values[spec.name])
+    if complete:
+        for spec in specs:
+            needed = spec.required
+            cond = conditions.get(spec.name)
+            if not needed and cond is not None:
+                target, expected = cond
+                actual = result.get(target.name)
+                needed = actual is not None and type(actual) is type(expected) and actual == expected
+            if needed and _missing(values.get(spec.name)):
                 _fail(spec, "required value is missing")
-        if not present:
-            continue
-        result[spec.name] = _normalize(spec, raw)
     try:
         size = len(json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8"))
     except (ValueError, UnicodeEncodeError):

@@ -218,6 +218,104 @@ def test_ensure_ascii_false_and_description_changes_hash():
     assert compose_schema([f("a", description="Acao")], []).sha256 != base.sha256
 
 
+def test_new_field_defaults():
+    fs = f()
+    assert (fs.label, fs.sensitivity, fs.indexable, fs.cardinality) == (None, "internal", False, "one")
+    assert (fs.max_items, fs.normalization, fs.destination, fs.examples, fs.required_when) == (
+        20, "type-default", "sidecar", [], None)
+
+
+def test_label_default_is_materialized_in_composition():
+    env = json.loads(compose_schema([f("a")], [f("b", label="Rótulo B")]).canonical)
+    assert [x["label"] for x in env["fields"]] == ["a", "Rótulo B"]
+    # explicit label equal to name is the same resolved schema
+    assert compose_schema([f("a")], []).sha256 == compose_schema([f("a", label="a")], []).sha256
+
+
+@pytest.mark.parametrize("kw", [{"sensitivity": "restricted"}, {"sensitivity": "public"}, {"indexable": True},
+                                {"cardinality": "many"}, {"destination": "xmp"}, {"max_items": 5},
+                                {"examples": ["amostra sintética"]}, {"label": "Outro"}])
+def test_new_attributes_change_hash(kw):
+    assert compose_schema([f("a", **kw)], []).sha256 != compose_schema([f("a")], []).sha256
+
+
+@pytest.mark.parametrize("kw", [
+    {"sensitivity": "secret"}, {"indexable": 1}, {"indexable": "true"}, {"cardinality": "few"},
+    {"max_items": 0}, {"max_items": 101}, {"max_items": True}, {"max_items": 1.0}, {"max_items": "3"},
+    {"normalization": "custom"}, {"destination": "db"}, {"examples": ["a", "b", "c", "d"]},
+    {"examples": "abc"}, {"examples": [1]}, {"examples": [None]}, {"examples": ["x" * 4001]},
+    {"examples": ["a\x00"]}, {"label": ""}, {"label": " x"}, {"label": "x" * 121}, {"unknown": 1},
+])
+def test_new_attribute_constraints(kw):
+    with pytest.raises(ValidationError):
+        f(**kw)
+
+
+def test_new_attribute_boundaries_accepted():
+    f(max_items=1)
+    f(max_items=100)
+    f(examples=["a", "b", "c"], label="x" * 120)
+
+
+def test_new_fields_count_toward_byte_limit():
+    big = [f(f"f{i}", examples=["é" * 4000] * 3) for i in range(12)]  # ~288KB through examples only
+    with pytest.raises(ValidationError, match="exceeds"):
+        TypeDraft(name="n", specific_fields=big)
+    with pytest.raises(ValueError, match="exceeds"):
+        compose_schema(big[:6], big[6:])
+
+
+def test_required_when_valid_and_roundtrip():
+    fs = f("b", required_when={"field": "a", "equals": "x"})
+    assert fs.required_when.field == "a"
+    assert FieldSpec.model_validate(fs.model_dump(mode="json")) == fs
+    compose_schema([f("a")], [fs])
+    compose_schema([f("a"), f("c")], [fs, f("d", required_when={"field": "a", "equals": 3})])
+
+
+@pytest.mark.parametrize("equals", [None, [], ["a"], {}, {"a": 1}, 1.5, "x" * 4001, "a\x00", "\ud800",
+                                    2**53, -(2**53), b"x"])
+def test_required_when_equals_invalid(equals):
+    with pytest.raises(ValidationError):
+        f("b", required_when={"field": "a", "equals": equals})
+
+
+@pytest.mark.parametrize("equals", ["", "x" * 4000, "a\tb\n", True, False, 0, 2**53 - 1, -(2**53 - 1)])
+def test_required_when_equals_valid(equals):
+    got = f("b", required_when={"field": "a", "equals": equals}).required_when.equals
+    assert got == equals and type(got) is type(equals)
+
+
+@pytest.mark.parametrize("cond", [{"field": "a"}, {"equals": 1}, {"field": "A", "equals": 1},
+                                  {"field": "a", "equals": 1, "extra": 1}, {"field": "a", "equals": 1, "op": "ne"},
+                                  "a", ["a", 1]])
+def test_required_when_shape_closed(cond):
+    with pytest.raises(ValidationError):
+        f("b", required_when=cond)
+
+
+def test_required_when_self_reference_rejected():
+    with pytest.raises(ValidationError):
+        f("a", required_when={"field": "a", "equals": 1})
+
+
+def test_required_when_composition_references():
+    dep = f("b", required_when={"field": "a", "equals": "x"})
+    with pytest.raises(ValueError):
+        compose_schema([dep], [])  # unknown target
+    with pytest.raises(ValueError):
+        compose_schema([f("a", cardinality="many"), dep], [])  # many target
+    compose_schema([f("a")], [dep])
+    compose_schema([dep], [f("a")])  # target may come later
+
+
+def test_required_when_changes_hash():
+    base = compose_schema([f("a"), f("b")], []).sha256
+    cond = compose_schema([f("a"), f("b", required_when={"field": "a", "equals": 1})], []).sha256
+    other = compose_schema([f("a"), f("b", required_when={"field": "a", "equals": True})], []).sha256
+    assert len({base, cond, other}) == 3
+
+
 def test_snapshot_independent_of_later_mutation():
     fs = f("a", "enum", enum=["x", "y"])
     common = [fs]

@@ -236,6 +236,158 @@ def test_aggregate_limit_counts_utf8_bytes():
         validate_values(fields, values)
 
 
+def mspec(type_="string", name="m", **kw):
+    return FieldSpec(name=name, type=type_, description="d", cardinality="many", **kw)
+
+
+def test_many_requires_strict_list():
+    m = mspec("integer")
+    for bad in (1, "1", (1,), {1}, {"a": 1}, b"x"):
+        with pytest.raises(ValueError):
+            validate_values([m], {"m": bad})
+    assert validate_values([m], {"m": [1, 2]}) == {"m": [1, 2]}
+
+
+def test_many_none_and_empty_are_absence_in_draft():
+    m = mspec()
+    assert validate_values([m], {"m": None}) == {"m": None}
+    assert validate_values([m], {"m": []}) == {"m": []}
+    assert validate_values([m], {}) == {}
+
+
+def test_many_max_items_and_items_validated():
+    m = mspec("integer", max_items=2)
+    assert validate_values([m], {"m": [1, 2]}) == {"m": [1, 2]}
+    for bad in ([1, 2, 3], [1, None], [None], [True], ["1"], [[1]], [2**53]):
+        with pytest.raises(ValueError):
+            validate_values([m], {"m": bad})
+
+
+def test_many_normalizes_each_item_without_mutation():
+    m = mspec("decimal")
+    values = {"m": ["01.00", "+2.50"]}
+    snapshot = copy.deepcopy(values)
+    out = validate_values([m], values)
+    assert out == {"m": ["1", "2.5"]}
+    assert out["m"] is not values["m"] and values == snapshot
+
+
+def test_normalize_value_stays_scalar_for_many():
+    assert normalize_value(mspec("integer"), 3) == 3
+    with pytest.raises(ValueError):
+        normalize_value(mspec("integer"), [3])
+
+
+def test_many_complete_requires_non_empty_when_required():
+    m = mspec(required=True)
+    for missing in ({}, {"m": None}, {"m": []}):
+        with pytest.raises(ValueError):
+            validate_values([m], missing, complete=True)
+    assert validate_values([m], {"m": ["a"]}, complete=True) == {"m": ["a"]}
+    assert validate_values([mspec()], {"m": []}, complete=True) == {"m": []}
+
+
+def cond(equals, target_type="string", **kw):
+    return [
+        spec(target_type, "a", **kw),
+        FieldSpec(name="b", type="string", description="d", required_when={"field": "a", "equals": equals}),
+    ]
+
+
+def test_required_when_invalid_references_raise_even_in_draft():
+    dep = FieldSpec(name="b", type="string", description="d", required_when={"field": "zz", "equals": "x"})
+    with pytest.raises(ValueError):
+        validate_values([dep], {})
+    with pytest.raises(ValueError):
+        validate_values([mspec(name="a"), FieldSpec(name="b", type="string", description="d",
+                                                   required_when={"field": "a", "equals": "x"})], {})
+    bad_self = FieldSpec.model_construct(name="b", type="string", description="d",
+                                         required_when={"field": "b", "equals": "x"})
+    with pytest.raises(ValueError):
+        validate_values([bad_self], {})
+
+
+@pytest.mark.parametrize("target_type,equals", [("integer", "1"), ("integer", True), ("boolean", 0),
+                                                ("boolean", "true"), ("decimal", 1), ("date", "2024-02-30"),
+                                                ("decimal", "abc"), ("enum", "zz")])
+def test_required_when_incompatible_equals_raises(target_type, equals):
+    fields = cond(equals, target_type, enum=["x"] if target_type == "enum" else None)
+    for complete in (False, True):
+        with pytest.raises(ValueError):
+            validate_values(fields, {}, complete=complete)
+
+
+def test_required_when_invalid_condition_does_not_change_payload():
+    fields = cond("1", "integer")
+    values = {"a": 1}
+    snapshot = copy.deepcopy(values)
+    with pytest.raises(ValueError):
+        validate_values(fields, values)
+    assert values == snapshot
+
+
+def test_required_when_draft_never_requires():
+    assert validate_values(cond("x"), {"a": "x"}) == {"a": "x"}
+
+
+def test_required_when_complete_conditional():
+    fields = cond("x")
+    with pytest.raises(ValueError):
+        validate_values(fields, {"a": "x"}, complete=True)
+    for blank in (None, "", "  "):
+        with pytest.raises(ValueError):
+            validate_values(fields, {"a": "x", "b": blank}, complete=True)
+    assert validate_values(fields, {"a": "x", "b": "v"}, complete=True) == {"a": "x", "b": "v"}
+    # different value, absent target, or null target do not activate the condition
+    assert validate_values(fields, {"a": "y"}, complete=True) == {"a": "y"}
+    assert validate_values(fields, {}, complete=True) == {}
+    assert validate_values(fields, {"a": None}, complete=True) == {"a": None}
+
+
+def test_required_when_compares_normalized_decimal():
+    fields = cond("01.00", "decimal")
+    with pytest.raises(ValueError):
+        validate_values(fields, {"a": "1.0"}, complete=True)
+    with pytest.raises(ValueError):
+        validate_values(fields, {"a": "+001"}, complete=True)
+    assert validate_values(fields, {"a": "2"}, complete=True) == {"a": "2"}
+
+
+def test_required_when_bool_is_not_int():
+    off = cond(False, "boolean")
+    with pytest.raises(ValueError):
+        validate_values(off, {"a": False}, complete=True)
+    assert validate_values(off, {"a": True}, complete=True) == {"a": True}
+    zero = cond(0, "integer")
+    with pytest.raises(ValueError):
+        validate_values(zero, {"a": 0}, complete=True)
+    assert validate_values(zero, {"a": 1}, complete=True) == {"a": 1}
+
+
+def test_required_when_two_dependents_and_required_or_condition():
+    fields = [
+        spec("string", "a"),
+        FieldSpec(name="b", type="string", description="d", required_when={"field": "a", "equals": "x"}),
+        FieldSpec(name="c", type="string", description="d", required_when={"field": "a", "equals": "x"}),
+        spec("string", "d", required=True),
+    ]
+    with pytest.raises(ValueError):
+        validate_values(fields, {"a": "x", "b": "1", "d": "1"}, complete=True)
+    assert validate_values(fields, {"a": "x", "b": "1", "c": "2", "d": "1"}, complete=True)["c"] == "2"
+    with pytest.raises(ValueError):
+        validate_values(fields, {"a": "y"}, complete=True)  # d still unconditionally required
+
+
+def test_required_when_many_dependent_needs_non_empty_list():
+    fields = [
+        spec("boolean", "a"),
+        mspec(name="b", required_when={"field": "a", "equals": True}),
+    ]
+    with pytest.raises(ValueError):
+        validate_values(fields, {"a": True, "b": []}, complete=True)
+    assert validate_values(fields, {"a": True, "b": ["v"]}, complete=True)["b"] == ["v"]
+
+
 def test_errors_do_not_echo_values():
     secret = "SEGREDO-123456"
     cases = [

@@ -14,6 +14,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictBool,
+    StrictInt,
     StrictStr,
     StringConstraints,
     model_validator,
@@ -71,7 +72,35 @@ CatalogName = Annotated[
 ]
 FieldName = Annotated[StrictStr, StringConstraints(max_length=64), AfterValidator(_field_name_ok)]
 
+MAX_INT = 2**53 - 1
+MAX_EXAMPLES = 3
+MAX_ITEMS_LIMIT = 100
+
+
+def _equals_ok(value):
+    if type(value) is str:
+        if len(value) > MAX_TEXT:
+            raise ValueError("equals text is too long.")
+        _check_text(value, True)
+    elif type(value) is int:
+        if value > MAX_INT or value < -MAX_INT:
+            raise ValueError("equals integer out of range.")
+    elif type(value) is not bool:
+        raise ValueError("equals must be a string, boolean or integer.")
+    return value
+
+
+EqualsValue = Annotated[StrictStr | StrictBool | StrictInt, AfterValidator(_equals_ok)]
+
 _CONFIG = dict(extra="forbid", frozen=True, hide_input_in_errors=True, revalidate_instances="always")
+
+
+class RequiredWhen(BaseModel):
+    """Closed structural condition: the field is required when another (single-valued) field equals a literal."""
+
+    model_config = ConfigDict(**_CONFIG)
+    field: FieldName
+    equals: EqualsValue
 
 
 class FieldSpec(BaseModel):
@@ -79,9 +108,23 @@ class FieldSpec(BaseModel):
     name: FieldName
     type: FieldType
     description: Description
+    # None means "use name as label"; composition materializes the resolved label.
+    label: CatalogName | None = None
     required: StrictBool = False
     critical: StrictBool = False
     evidence_required: StrictBool = False
+    # sensitivity/indexable/destination are contracts for E4; nothing is inferred from them here.
+    sensitivity: Literal["public", "internal", "restricted"] = "internal"
+    indexable: StrictBool = False
+    cardinality: Literal["one", "many"] = "one"
+    max_items: Annotated[int, Field(strict=True, ge=1, le=MAX_ITEMS_LIMIT)] = 20
+    normalization: Literal["type-default"] = "type-default"
+    destination: Literal["sidecar", "xmp"] = "sidecar"
+    # Synthetic, descriptive text samples only; never proven values.
+    examples: Annotated[list[Text], BeforeValidator(_must_be_list), Field(max_length=MAX_EXAMPLES)] = Field(
+        default_factory=list
+    )
+    required_when: RequiredWhen | None = None
     enum: (
         Annotated[
             list[EnumValue],
@@ -90,6 +133,12 @@ class FieldSpec(BaseModel):
         ]
         | None
     ) = None
+
+    @model_validator(mode="after")
+    def _self_reference(self):
+        if self.required_when is not None and self.required_when.field == self.name:
+            raise ValueError("required_when must not reference its own field.")
+        return self
 
     @model_validator(mode="after")
     def _enum_rules(self):
@@ -173,8 +222,25 @@ def _snapshot(fields: Sequence[FieldSpec]) -> list[dict]:
         if not isinstance(f, FieldSpec):
             raise ValueError("Fields must be FieldSpec instances.")
         # Re-validate from a dump so later mutation of the source or model_construct bypasses are caught.
-        out.append(FieldSpec.model_validate(f.model_dump(mode="json")).model_dump(mode="json", exclude_none=True))
+        dumped = FieldSpec.model_validate(f.model_dump(mode="json")).model_dump(mode="json", exclude_none=True)
+        dumped.setdefault("label", dumped["name"])
+        out.append(dumped)
     return out
+
+
+def _check_conditions(fields: list[dict]) -> None:
+    by_name = {f["name"]: f for f in fields}
+    for f in fields:
+        cond = f.get("required_when")
+        if cond is None:
+            continue
+        target = by_name.get(cond["field"])
+        if target is None:
+            raise ValueError("required_when references an unknown field.")
+        if target["name"] == f["name"]:
+            raise ValueError("required_when must not reference its own field.")
+        if target["cardinality"] != "one":
+            raise ValueError("required_when must reference a single-valued field.")
 
 
 def compose_schema(common: Sequence[FieldSpec], specific: Sequence[FieldSpec]) -> ComposedSchema:
@@ -187,6 +253,7 @@ def compose_schema(common: Sequence[FieldSpec], specific: Sequence[FieldSpec]) -
     names = [f["name"] for f in fields]
     if len(set(names)) != len(names):
         raise ValueError("Duplicate field name in composition.")
+    _check_conditions(fields)
     envelope = {
         "schema_version": SCHEMA_VERSION,
         "common_fields": common_s,
