@@ -14,7 +14,7 @@ import json
 import re
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from uuid import uuid4
 
@@ -25,6 +25,7 @@ MAX_REVISIONS_PER_JOB = 32
 MAX_JOB_BYTES = 32 * 1024 * 1024
 MAX_OWNER_BYTES = 128 * 1024 * 1024
 MAX_GLOBAL_BYTES = 512 * 1024 * 1024
+PURGED_METADATA_HISTORY_TTL = timedelta(days=30)
 _OPERATION = "save-v1"
 _AUTH_SOURCES = frozenset(("unknown", "local_jwt", "service", "oauth", "legacy"))
 _READ_SCOPES = ("jobs:read", "artifacts:read", "metadata:read")
@@ -418,10 +419,123 @@ class MetadataStore:
                  and p.charged_bytes == p.size_bytes + p.approval_bytes)
         return p
 
+    @staticmethod
+    def _purge_marker(removed, purged, now):
+        """Only a canonical, durable SQL purge marker releases capacity."""
+        if purged is None:
+            # Logical removal alone is normal and still consumes capacity.
+            return None
+        _require(removed is not None)
+        removed, purged = _stored_time(removed), _stored_time(purged)
+        _require(removed <= purged <= now)
+        return purged
+
+    def _validate_purged_ledger_locked(self, conn, owner, job_id):
+        """Bound materialization before checking the complete save-v1 ledger.
+
+        C5 must extend these checks before introducing approved revisions.
+        Caller owns the transaction and has validated global accounting integrity.
+        """
+        for table, maximum in (("metadata_revisions", MAX_REVISIONS_PER_JOB),
+                               ("metadata_operations", MAX_REVISIONS_PER_JOB),
+                               ("metadata_audit", MAX_REVISIONS_PER_JOB),
+                               ("metadata_heads", 1), ("metadata_pending", 1)):
+            count = conn.execute("SELECT COUNT(*) FROM " + table + " WHERE job_id=?",
+                                 (job_id,)).fetchone()[0]
+            _require(type(count) is int and 0 <= count <= maximum)
+        # Other jobs must not retain references to revisions being collected.
+        for table, column in (("metadata_operations", "revision_id"),
+                              ("metadata_audit", "revision_id"),
+                              ("metadata_heads", "revision_id"),
+                              ("metadata_revisions", "parent_revision_id"),
+                              ("metadata_pending", "expected_head"),
+                              ("metadata_pending", "revision_id")):
+            _require(conn.execute(
+                "SELECT 1 FROM " + table + " m JOIN metadata_revisions r ON m." +
+                column + "=r.revision_id WHERE r.job_id=? AND "
+                "(m.job_id<>r.job_id OR m.owner<>r.owner) LIMIT 1",
+                (job_id,)).fetchone() is None)
+        self._head(conn, owner, job_id)
+        revisions = {}
+        for row in conn.execute("SELECT " + _REVISION_COLUMNS +
+                                " FROM metadata_revisions WHERE job_id=?", (job_id,)):
+            revision = self._revision_row(row)
+            _require(revision.owner == owner and revision.job_id == job_id
+                     and revision.state == "draft")
+            revisions[revision.revision_id] = revision
+        operations = set()
+        for row in conn.execute(
+                "SELECT owner,job_id,operation,key_hash,request_hash,revision_id "
+                "FROM metadata_operations WHERE job_id=?", (job_id,)):
+            stored_owner, stored_job, operation, key, request, revision_id = row
+            _require((stored_owner, stored_job, operation) == (owner, job_id, _OPERATION)
+                     and _hex(key, 64) and _hex(request, 64)
+                     and revision_id in revisions and revision_id not in operations)
+            # Strict receipt, revision/hash and canonical timestamp validation.
+            _require(self._replay(conn, owner, job_id, key, request) is not None)
+            operations.add(revision_id)
+        audits = set()
+        for row in conn.execute(
+                "SELECT owner,job_id,revision_id,parent_revision_id,sha256,action,"
+                "actor,auth_source,created_at FROM metadata_audit WHERE job_id=?",
+                (job_id,)):
+            stored_owner, stored_job, revision_id, parent, sha256, action, actor, auth, created = row
+            _require(revision_id in revisions and revision_id not in audits)
+            revision = revisions[revision_id]
+            _require((stored_owner, stored_job, parent, sha256, action, actor) ==
+                     (owner, job_id, revision.parent_revision_id, revision.sha256, "save", owner))
+            _require(_owner(actor) and type(auth) is str and auth in _AUTH_SOURCES
+                     and _stored_time(created) == revision.created_at)
+            audits.add(revision_id)
+        _require(operations == audits == set(revisions))
+        row = conn.execute("SELECT pending_id FROM metadata_pending WHERE job_id=?",
+                           (job_id,)).fetchone()
+        if row is not None:
+            pending = self._pending(conn, row[0])
+            _require(pending is not None and pending.owner == owner and pending.job_id == job_id
+                     and pending.pending_id not in self._active_writes
+                     and self._revision(conn, pending.revision_id) is None)
+
     @_guard
-    def _quota(self, conn, owner, job_id, *, add_slots=0, add_bytes=0):
-        # Validate only jobs referenced by metadata, including historical
-        # revisions. Retention/tombstones do not release physical capacity.
+    def reconcile_purged_job(self, job_id, *, now=None) -> bool:
+        """Trusted, single-job SQL collection after durable physical purge.
+
+        No admission, filesystem inspection or recovery is performed. Pending
+        rows can be released immediately; the complete committed ledger survives
+        for thirty days. Construction never invokes this collector.
+        """
+        _input(_hex(job_id, 32))
+        now = _input_time(datetime.now(timezone.utc) if now is None else now)
+        with self._transaction() as conn:
+            row = conn.execute(
+                "SELECT owner_principal_id,owner_user_id,artifacts_removed_at,"
+                "artifacts_purged_at FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            if row is None:
+                for table in ("metadata_heads", "metadata_revisions", "metadata_operations",
+                              "metadata_audit", "metadata_pending"):
+                    _require(conn.execute("SELECT 1 FROM " + table +
+                                          " WHERE job_id=? LIMIT 1", (job_id,)).fetchone() is None)
+                return False
+            purged = self._purge_marker(row[2], row[3], now)
+            if purged is None:
+                return False
+            owner = row[0] or ("user:" + str(row[1])
+                              if type(row[1]) is int and row[1] > 0 else None)
+            _require(_owner(owner))
+            # Integrity remains mandatory even if unrelated live jobs exceed quotas.
+            self._quota(conn, owner, job_id, _check_limits=False)
+            self._validate_purged_ledger_locked(conn, owner, job_id)
+            tables = (("metadata_pending", "metadata_operations", "metadata_audit",
+                       "metadata_heads", "metadata_revisions")
+                      if now >= purged + PURGED_METADATA_HISTORY_TTL else ("metadata_pending",))
+            for table in tables:
+                conn.execute("DELETE FROM " + table + " WHERE job_id=?", (job_id,))
+        return True
+
+    @_guard
+    def _quota(self, conn, owner, job_id, *, add_slots=0, add_bytes=0, _check_limits=True):
+        # Validate every metadata-referenced durable job. Logical removal does
+        # not release capacity; only a validated durable physical-purge marker does.
         # NULLIF reproduces effective_owner's Python `or`; the legacy fallback
         # accepts positive SQLite INTEGERs only, never coerced TEXT or REALs.
         effective_owner = (
@@ -434,7 +548,8 @@ class MetadataStore:
             "AND substr(m.owner,6) NOT GLOB '*[^0-9]*') OR "
             "(substr(m.owner,1,8)='service:' AND length(m.owner)=40 "
             "AND substr(m.owner,9) NOT GLOB '*[^0-9a-f]*'))")
-        for table in ('metadata_revisions', 'metadata_heads', 'metadata_pending'):
+        for table in ('metadata_revisions', 'metadata_heads', 'metadata_pending',
+                      'metadata_operations', 'metadata_audit'):
             bad = conn.execute(
                 "SELECT 1 FROM " + table + " m WHERE NOT (" + valid_owner + ") "
                 "OR NOT EXISTS (SELECT 1 FROM jobs j WHERE j.job_id=m.job_id "
@@ -442,6 +557,21 @@ class MetadataStore:
                 "AND j.job_id NOT GLOB '*[^0-9a-f]*' "
                 "AND m.owner=" + effective_owner + ") LIMIT 1").fetchone()
             _require(bad is None)
+        referenced = " OR ".join(
+            "EXISTS (SELECT 1 FROM " + table + " m WHERE m.job_id=j.job_id)"
+            for table in ("metadata_revisions", "metadata_heads", "metadata_pending",
+                          "metadata_operations", "metadata_audit"))
+        now = datetime.now(timezone.utc)
+        # Stream markers rather than retaining an unbounded collection of jobs.
+        for removed, purged in conn.execute(
+                "SELECT j.artifacts_removed_at,j.artifacts_purged_at FROM jobs j WHERE " +
+                referenced):
+            self._purge_marker(removed, purged, now)
+        for pending_id, in conn.execute(
+                "SELECT p.pending_id FROM metadata_pending p JOIN jobs j ON j.job_id=p.job_id "
+                "WHERE j.artifacts_purged_at IS NOT NULL"):
+            # An active writer must hold an artifact lease, preventing purge.
+            _require(pending_id not in self._active_writes)
         _require(conn.execute(
             "SELECT 1 FROM metadata_revisions r WHERE "
             "NOT EXISTS (SELECT 1 FROM metadata_heads h WHERE "
@@ -488,10 +618,14 @@ class MetadataStore:
             ("metadata_heads", "approval_bytes", "approval_slots", head_bad),
             ("metadata_pending", "charged_bytes", "charged_slots", pending_bad),
         ):
-            sql = ("SELECT COALESCE(SUM(" + byte_column + "),0), "
-                   "COALESCE(SUM(CASE WHEN owner=? THEN " + byte_column + " ELSE 0 END),0), "
-                   "COALESCE(SUM(CASE WHEN job_id=? THEN " + byte_column + " ELSE 0 END),0), "
-                   "COALESCE(SUM(CASE WHEN job_id=? THEN " + slot_column + " ELSE 0 END),0), "
+            charged = ("NOT EXISTS (SELECT 1 FROM jobs j WHERE j.job_id=" + table +
+                       ".job_id AND j.artifacts_purged_at IS NOT NULL)")
+            charged_bytes = "CASE WHEN " + charged + " THEN " + byte_column + " ELSE 0 END"
+            charged_slots = "CASE WHEN " + charged + " THEN " + slot_column + " ELSE 0 END"
+            sql = ("SELECT COALESCE(SUM(" + charged_bytes + "),0), "
+                   "COALESCE(SUM(CASE WHEN owner=? THEN " + charged_bytes + " ELSE 0 END),0), "
+                   "COALESCE(SUM(CASE WHEN job_id=? THEN " + charged_bytes + " ELSE 0 END),0), "
+                   "COALESCE(SUM(CASE WHEN job_id=? THEN " + charged_slots + " ELSE 0 END),0), "
                    "COALESCE(SUM(CASE WHEN " + bad + " THEN 1 ELSE 0 END),0) FROM " + table)
             row = conn.execute(sql, (owner, job_id, job_id)).fetchone()
             _require(len(row) == 5 and all(type(value) is int and value >= 0 for value in row)
@@ -499,7 +633,7 @@ class MetadataStore:
             for index in range(4):
                 totals[index] += row[index]
         global_bytes, owner_bytes, job_bytes, job_slots = totals
-        if (global_bytes + add_bytes > MAX_GLOBAL_BYTES
+        if _check_limits and (global_bytes + add_bytes > MAX_GLOBAL_BYTES
                 or owner_bytes + add_bytes > MAX_OWNER_BYTES
                 or job_bytes + add_bytes > MAX_JOB_BYTES
                 or job_slots + add_slots > MAX_REVISIONS_PER_JOB):
@@ -507,7 +641,10 @@ class MetadataStore:
 
     @_guard
     def _reserved_disk_bytes_locked(self, conn, owner, job_id):
-        """All head and pending disk reserves, including cleanup and expired jobs.
+        """Head and pending disk reserves without a confirmed durable purge.
+
+        Cleanup and expired jobs remain charged until physical purge is durably
+        recorded. Historical head fields remain intact for integrity validation.
 
         Own pending capacity is already included. Other pending files may already
         occupy disk; counting their full reserve again deliberately trades write
@@ -518,8 +655,10 @@ class MetadataStore:
         self._quota(conn, owner, job_id)
         row = conn.execute(
             "SELECT COALESCE(SUM(bytes),0) FROM ("
-            "SELECT approval_bytes AS bytes FROM metadata_heads UNION ALL "
-            "SELECT charged_bytes AS bytes FROM metadata_pending)").fetchone()
+            "SELECT approval_bytes AS bytes FROM metadata_heads h WHERE NOT EXISTS "
+            "(SELECT 1 FROM jobs j WHERE j.job_id=h.job_id AND j.artifacts_purged_at IS NOT NULL) "
+            "UNION ALL SELECT charged_bytes AS bytes FROM metadata_pending p WHERE NOT EXISTS "
+            "(SELECT 1 FROM jobs j WHERE j.job_id=p.job_id AND j.artifacts_purged_at IS NOT NULL))").fetchone()
         _require(row is not None and len(row) == 1
                  and type(row[0]) is int and row[0] >= 0)
         return row[0]
