@@ -61,7 +61,11 @@ def _guard(method):
             failure = ApplicationError(exc.status, exc.code, exc.message)
         except Exception:
             failure = _error("metadata_unavailable")
-        raise failure from None
+        try:
+            raise failure from None
+        finally:
+            failure.__context__ = None
+            failure.__cause__ = None
     return guarded
 
 
@@ -284,7 +288,14 @@ class MetadataStore:
                         # Preserve the already sanitized failure, including its code.
                         pass
         if failure is not None:
-            raise failure from None
+            # contextlib throws the caller's exception into this generator.
+            # Clear the implicit context AFTER raising attaches it, including
+            # when __exit__ is running with that original exception active.
+            try:
+                raise failure from None
+            finally:
+                failure.__context__ = None
+                failure.__cause__ = None
 
     def _connection_locked(self, conn):
         # Private callers MUST hold jobs._lock; Lock has no ownership inspection.
@@ -408,6 +419,36 @@ class MetadataStore:
 
     @_guard
     def _quota(self, conn, owner, job_id, *, add_slots=0, add_bytes=0):
+        # Validate only jobs referenced by metadata, including historical
+        # revisions. Retention/tombstones do not release physical capacity.
+        # NULLIF reproduces effective_owner's Python `or`; the legacy fallback
+        # accepts positive SQLite INTEGERs only, never coerced TEXT or REALs.
+        effective_owner = (
+            "COALESCE(NULLIF(j.owner_principal_id,''), CASE WHEN "
+            "typeof(j.owner_user_id)='integer' AND j.owner_user_id>0 "
+            "THEN 'user:' || j.owner_user_id END)")
+        valid_owner = (
+            "typeof(m.owner)='text' AND ("
+            "(substr(m.owner,1,5)='user:' AND substr(m.owner,6,1) GLOB '[1-9]' "
+            "AND substr(m.owner,6) NOT GLOB '*[^0-9]*') OR "
+            "(substr(m.owner,1,8)='service:' AND length(m.owner)=40 "
+            "AND substr(m.owner,9) NOT GLOB '*[^0-9a-f]*'))")
+        for table in ('metadata_revisions', 'metadata_heads', 'metadata_pending'):
+            bad = conn.execute(
+                "SELECT 1 FROM " + table + " m WHERE NOT (" + valid_owner + ") "
+                "OR NOT EXISTS (SELECT 1 FROM jobs j WHERE j.job_id=m.job_id "
+                "AND typeof(j.job_id)='text' AND length(j.job_id)=32 "
+                "AND j.job_id NOT GLOB '*[^0-9a-f]*' "
+                "AND m.owner=" + effective_owner + ") LIMIT 1").fetchone()
+            _require(bad is None)
+        _require(conn.execute(
+            "SELECT 1 FROM metadata_revisions r WHERE "
+            "NOT EXISTS (SELECT 1 FROM metadata_heads h WHERE "
+            "h.job_id=r.job_id AND h.owner=r.owner) OR "
+            "(r.parent_revision_id IS NOT NULL AND NOT EXISTS "
+            "(SELECT 1 FROM metadata_revisions p WHERE "
+            "p.revision_id=r.parent_revision_id AND p.revision_id<>r.revision_id "
+            "AND p.owner=r.owner AND p.job_id=r.job_id)) LIMIT 1").fetchone() is None)
         # Each query returns small aggregates only. SUM overflow is an error,
         # never a floating-point or wrapped capacity estimate.
         revision_bad = ("typeof(size_bytes)<>'integer' OR size_bytes<1 OR size_bytes>1048576 "
@@ -424,7 +465,22 @@ class MetadataStore:
                        "NOT ((approval_slots=0 AND approval_bytes=0) OR "
                        "(approval_slots=1 AND approval_bytes=1048576)) OR "
                        "charged_slots<>1+approval_slots OR charged_bytes<>size_bytes+approval_bytes OR "
-                       "state NOT IN ('active','cleanup') OR operation<>'save-v1'")
+                       "state NOT IN ('active','cleanup') OR operation<>'save-v1' OR "
+                       "NOT ((expected_head IS NULL AND expected_sha256 IS NULL "
+                       "AND approval_slots=1 AND approval_bytes=1048576 "
+                       "AND NOT EXISTS (SELECT 1 FROM metadata_heads h WHERE "
+                       "h.job_id=metadata_pending.job_id)) OR "
+                       "EXISTS (SELECT 1 FROM metadata_heads h "
+                       "JOIN metadata_revisions r ON r.revision_id=h.revision_id "
+                       "WHERE h.job_id=metadata_pending.job_id "
+                       "AND h.owner=metadata_pending.owner AND r.owner=h.owner "
+                       "AND r.job_id=h.job_id AND r.sha256=h.sha256 "
+                       "AND h.revision_id=metadata_pending.expected_head "
+                       "AND h.sha256=metadata_pending.expected_sha256 AND "
+                       "((r.state='draft' AND metadata_pending.approval_slots=0 "
+                       "AND metadata_pending.approval_bytes=0) OR "
+                       "(r.state='approved' AND metadata_pending.approval_slots=1 "
+                       "AND metadata_pending.approval_bytes=1048576))))")
         totals = [0, 0, 0, 0]
         for table, byte_column, slot_column, bad in (
             ("metadata_revisions", "size_bytes", "1", revision_bad),
@@ -472,7 +528,17 @@ class MetadataStore:
             if receipt is not None:
                 return MetadataAdmission(head, receipt)
             self._cas(head, expected_head, expected_sha256)
-            if conn.execute("SELECT 1 FROM metadata_pending WHERE job_id=?", (job_id,)).fetchone():
+            existing = conn.execute(
+                "SELECT pending_id FROM metadata_pending WHERE job_id=?", (job_id,)).fetchone()
+            if existing is not None:
+                pending = self._pending(conn, existing[0])
+                _require(pending is not None and pending.owner == owner and pending.job_id == job_id)
+                actual = (head.revision_id, head.sha256) if head is not None else (None, None)
+                # Cleanup uncertainty never authorizes discarding a reservation.
+                _require((pending.expected_head, pending.expected_sha256) == actual)
+                _require((pending.charged_slots, pending.charged_bytes,
+                          pending.approval_slots, pending.approval_bytes)
+                         == self._charges(head, pending.size_bytes))
                 _fail("metadata_write_pending")
             if (conn.execute("SELECT 1 FROM metadata_revisions WHERE revision_id=?", (revision_id,)).fetchone()
                     or conn.execute("SELECT 1 FROM metadata_pending WHERE revision_id=?", (revision_id,)).fetchone()):

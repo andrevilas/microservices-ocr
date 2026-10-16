@@ -1,7 +1,7 @@
 """Real SQLite index tests; private commits do not prove physical file durability.
 
-The two P2 regression tests intentionally assert contracts the current product
-violates. They are neither skipped nor marked xfail.
+Corruption regressions use fixture-local SQL mutations and require unchanged
+rows and charges on failure.
 """
 from contextlib import contextmanager
 from dataclasses import replace
@@ -354,17 +354,72 @@ def test_corrupt_committed_index_is_unavailable(h, principal, damage):
     assert state(h) == before
 
 
-@pytest.mark.parametrize('damage', ['owner', 'charged_bytes'])
+@pytest.mark.parametrize('damage', ['owner', 'charged_bytes', 'sha256',
+                                  'expected_sha256', 'underreserved'])
 def test_p2_corrupt_pending_must_fail_closed_before_pending_conflict(h, principal, damage):
     reserve(h, principal, args())
     if damage == 'owner':
         sql(h, 'UPDATE metadata_pending SET owner=?', ('user:2',))
-    else:
+    elif damage == 'charged_bytes':
         sql(h, 'UPDATE metadata_pending SET charged_bytes=charged_bytes+1')
+    elif damage == 'sha256':
+        sql(h, 'UPDATE metadata_pending SET sha256=?', ('SENSITIVE_MARKER',))
+    elif damage == 'expected_sha256':
+        sql(h, 'UPDATE metadata_pending SET expected_sha256=?', ('a' * 64,))
+    else:
+        # Arithmetic remains consistent, but the first draft's approval
+        # reservation has disappeared without any head owning that capacity.
+        sql(h, '''UPDATE metadata_pending SET approval_slots=0,
+                  approval_bytes=0, charged_slots=1, charged_bytes=size_bytes''')
     before = state(h)
+    charged = totals(h)
     with error(503, 'metadata_unavailable'):
         reserve(h, principal, args())
-    assert state(h) == before
+    assert state(h) == before and totals(h) == charged
+
+
+@pytest.mark.parametrize('pending_state', ['active', 'cleanup'])
+def test_pending_expected_hash_must_match_current_head(h, principal, pending_state):
+    save(h, principal, args())
+    head = h.svc.get_head(principal, h.job.job_id)
+    reserve(h, principal, args(head))
+    wrong_hash = 'f' * 64 if head.sha256 != 'f' * 64 else 'e' * 64
+    sql(h, 'UPDATE metadata_pending SET expected_sha256=?, state=?',
+        (wrong_hash, pending_state))
+    before, charged = state(h), totals(h)
+    with error(503, 'metadata_unavailable'):
+        reserve(h, principal, args(head))
+    assert state(h) == before and totals(h) == charged
+
+
+@pytest.mark.parametrize('damage', ['underreserved', 'owner', 'expected_sha256'])
+def test_foreign_job_pending_corruption_blocks_new_reservation(h, principal, damage):
+    other = h.jobs.create('synthetic.pdf', b'synthetic', owner_user_id=2)
+    h.jobs.update(other.job_id, status='completed', progress_percent=100)
+    foreign = replace(principal, subject='user:2', user_id=2)
+    h.svc.reserve(foreign, other.job_id, **args())
+    if damage == 'underreserved':
+        sql(h, '''UPDATE metadata_pending SET approval_slots=0,
+                  approval_bytes=0, charged_slots=1, charged_bytes=size_bytes''')
+    elif damage == 'owner':
+        sql(h, 'UPDATE metadata_pending SET owner=?', ('user:1',))
+    else:
+        sql(h, 'UPDATE metadata_pending SET expected_sha256=?', ('a' * 64,))
+    before, charged = state(h), totals(h)
+    with error(503, 'metadata_unavailable'):
+        reserve(h, principal, args())
+    assert state(h) == before and totals(h) == charged
+
+
+def test_legitimate_foreign_history_keeps_separate_owner_accounting(h, principal):
+    other = h.jobs.create('synthetic.pdf', b'synthetic', owner_user_id=2)
+    h.jobs.update(other.job_id, status='completed', progress_percent=100)
+    foreign = replace(principal, subject='user:2', user_id=2)
+    pending = h.svc.reserve(foreign, other.job_id, **args(size_bytes=456)).pending
+    commit(h, foreign, pending)
+    save(h, principal, args())
+    assert totals(h) == (4, 579 + 2 * MIB)
+    assert h.svc.get_head(foreign, other.job_id).revision_id == pending.revision_id
 
 
 def test_p2_old_revision_owner_cannot_shift_accounting_to_another_owner(h, principal):
