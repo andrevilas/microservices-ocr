@@ -118,6 +118,7 @@ def test_tools_pass_typed_arguments_to_invoke_in_matrix_order():
                 assert result.is_error
         return seen
     seen = run(scenario())
+    assert len(seen) == 11 and [call[0] for call in seen] == [expected[0] for expected in INVOKE_ARGS.values()]
     for (operation, *args), (name, expected) in zip(seen, INVOKE_ARGS.items()):
         assert operation == expected[0] and len(args) == len(expected) - 1, name
         for got, want in zip(args, expected[1:]):
@@ -232,7 +233,9 @@ def test_api_client_exercises_all_eleven_operations_over_real_http(live):
             body = request.content
             assert b'"idempotency' not in body and b": " not in body and b", " not in body  # compact, key only in header
             assert json.loads(body)
-    assert any(r.url.path == "/api/v1/contexts" and r.method == "GET" and not r.url.params for r in live.requests)
+    queries = [dict(r.url.params) for r in live.requests if r.method == "GET" and r.url.path == "/api/v1/contexts"]
+    assert len(queries) == 2 and queries[0] == {"limit": "1"}  # explicit limit, after=None omitted
+    assert set(queries[1]) == {"limit", "after"} and queries[1]["limit"] == "1" and queries[1]["after"]
 
 
 def test_invalid_ids_and_versions_never_reach_the_network(live):
@@ -346,10 +349,16 @@ import sqlite3, threading, sys
 def forbidden(*a, **kw): raise AssertionError('Local database or worker created')
 sqlite3.connect = forbidden
 threading.Thread.start = forbidden
-import app.catalog_mcp_tools, app.mcp_stdio
+import asyncio
+import app.catalog_mcp_tools, app.mcp_stdio, app.mcp_tools
 from mcp.server import MCPServer
 server = MCPServer('test')
 app.catalog_mcp_tools.register_catalog_tools(server, lambda *a: None)
+assert len(asyncio.run(server.list_tools())) == 11
+shared = MCPServer('test')
+app.mcp_tools.register_tools(shared, lambda *a: None)
+names = [tool.name for tool in asyncio.run(shared.list_tools())]
+assert len(names) == len(set(names)) == 31, len(names)
 app.mcp_stdio.register_tools(MCPServer('test'), lambda *a: None)
 blocked = {'app.main', 'app.config', 'app.application', 'app.services.storage_service', 'app.services.job_queue',
            'app.services.catalog_runtime', 'app.services.context_service', 'app.services.type_service', 'app.routes.catalog'}

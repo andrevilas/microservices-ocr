@@ -48,7 +48,9 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
         return application.dependency_overrides.get(get_control_service, get_control_service)()
 
     mcp_server, mcp_app = build_mcp_server(service_provider, uploads, queue, batches, exports, controls,
-                                          request_authenticator=request_authenticator, transport_security=transport_security)
+                                          request_authenticator=request_authenticator, transport_security=transport_security,
+                                          # Same cached pair/store as the HTTP routes; only called after application exists.
+                                          catalog_provider=lambda: application.state.catalog_provider())
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):

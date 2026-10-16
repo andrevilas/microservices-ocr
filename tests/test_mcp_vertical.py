@@ -128,7 +128,7 @@ def test_real_clients_upload_submit_poll_text_pdf_and_isolation(runtime, transpo
         async with connected(runtime, transport, mode) as client:
             listing = await client.list_tools()
             tools = {t.name: t for t in listing.tools}
-            assert len(tools) == 20
+            assert len(listing.tools) == len(tools) == 31
             assert not tools["ocr_prepare_upload"].annotations.idempotent_hint
             assert tools["ocr_submit_job"].annotations.idempotent_hint
             assert all(t.output_schema for t in tools.values())

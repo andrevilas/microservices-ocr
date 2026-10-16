@@ -85,7 +85,7 @@ def test_generated_launcher_connects_from_unrelated_cwd_with_token_file(runtime,
         with (runtime.root / "stdio.log").open("w") as log:
             async with Client(stdio_client(params, errlog=log), mode=mode) as client:
                 listing = await client.list_tools()
-                assert len(listing.tools) == 20
+                assert len(listing.tools) == len({t.name for t in listing.tools}) == 31
                 result = await client.call_tool("ocr_whoami", {})
                 assert not result.is_error
                 assert result.structured_content["kind"] == "service"

@@ -232,8 +232,20 @@ def test_real_sdk_http_parity_and_cross_user_denial(fixture, mode):
                                           headers={"Authorization": f"Bearer {tokens[0]}"}) as http:
                 async with Client(streamable_http_client("http://localhost/mcp", http_client=http), mode=mode) as client:
                     tools = await client.list_tools()
-                    assert {t.name for t in tools.tools} == {"ocr_whoami", "ocr_list_jobs", "ocr_get_job", "ocr_get_metrics", "ocr_get_artifact", "ocr_get_text", "ocr_get_report", "ocr_get_capabilities", "ocr_prepare_upload", "ocr_get_upload", "ocr_submit_job", "ocr_create_batch", "ocr_list_batches", "ocr_get_batch", "ocr_create_export", "ocr_get_export", "ocr_cancel_job", "ocr_cancel_jobs", "ocr_retry_job", "ocr_delete_job_artifacts"}
-                    assert all(t.annotations.read_only_hint == (t.name not in {"ocr_prepare_upload", "ocr_submit_job", "ocr_create_batch", "ocr_create_export", "ocr_cancel_job", "ocr_cancel_jobs", "ocr_retry_job", "ocr_delete_job_artifacts"}) for t in tools.tools)
+                    catalog_reads = {"ocr_list_contexts", "ocr_get_context", "ocr_list_document_types", "ocr_get_document_type",
+                                     "ocr_list_document_type_versions", "ocr_get_document_type_version"}
+                    catalog_writes = {"ocr_create_context", "ocr_update_context", "ocr_create_document_type",
+                                      "ocr_update_document_type", "ocr_publish_document_type"}
+                    catalog_updates = {"ocr_update_context", "ocr_update_document_type"}
+                    assert len(tools.tools) == 31
+                    assert {t.name for t in tools.tools} == {"ocr_whoami", "ocr_list_jobs", "ocr_get_job", "ocr_get_metrics", "ocr_get_artifact", "ocr_get_text", "ocr_get_report", "ocr_get_capabilities", "ocr_prepare_upload", "ocr_get_upload", "ocr_submit_job", "ocr_create_batch", "ocr_list_batches", "ocr_get_batch", "ocr_create_export", "ocr_get_export", "ocr_cancel_job", "ocr_cancel_jobs", "ocr_retry_job", "ocr_delete_job_artifacts"} | catalog_reads | catalog_writes
+                    assert all(t.annotations.read_only_hint == (t.name not in {"ocr_prepare_upload", "ocr_submit_job", "ocr_create_batch", "ocr_create_export", "ocr_cancel_job", "ocr_cancel_jobs", "ocr_retry_job", "ocr_delete_job_artifacts"} | catalog_writes) for t in tools.tools)
+                    by_name = {t.name: t for t in tools.tools}
+                    for name in catalog_reads | catalog_writes:
+                        hints = by_name[name].annotations
+                        assert hints.open_world_hint is False
+                        assert hints.destructive_hint is (name in catalog_updates)
+                        assert hints.idempotent_hint is (name not in catalog_updates)
                     for name, args, path in [
                         ("ocr_whoami", {}, "/api/v1/me"),
                         ("ocr_get_capabilities", {}, "/api/v1/capabilities"),
