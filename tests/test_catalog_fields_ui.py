@@ -270,8 +270,10 @@ def test_hostile_text_and_layout(editor_page, width, height):
     )
     # Keep the hostile description within the DTO's code-point limit.
     original['description'] = original['description'][:4000]
-    load(page, [original])
+    load(page, [original], [field('referencia_futura', type='enum', enum=[hostile])])
     open_details(page)
+    expect(page.get_by_label('Opção da condição', exact=True)).to_be_visible()
+    expect(page.get_by_label('Texto da condição', exact=True)).to_have_value(hostile)
     assert value(page) == [original]
     assert page.locator('.catalog-fields img, .catalog-fields script').count() == 0
     assert page.evaluate('window.executed === undefined')
@@ -287,7 +289,7 @@ def test_hostile_text_and_layout(editor_page, width, height):
             return r.width > 0 && r.height > 0 && r.left >= 0 && r.right <= width
                 && (center === node || node.contains(center));
         }""")
-    screenshot(page, f'catalog-fields-u1a-{width}.png')
+    screenshot(page, f'catalog-fields-u1b-{width}.png')
 
 
 def test_destroy_removes_listeners_and_isolates_instances(editor_page):
@@ -308,3 +310,277 @@ def test_destroy_removes_listeners_and_isolates_instances(editor_page):
     expect(page.locator('#fields')).to_be_empty()
     assert page.evaluate('changes.length') == 0
     assert page.evaluate('secondEditor.getValue()[0].name') == 'outro'
+
+
+def condition_ui(page, index=0):
+    return page.locator('.catalog-fields__condition').nth(index)
+
+
+def enable_condition(page, index=0):
+    open_details(page)
+    ui = condition_ui(page, index)
+    ui.get_by_label('Ativar obrigatoriedade condicional', exact=True).check()
+    return ui
+
+
+@pytest.mark.parametrize('target_type,literal_type,literal', [
+    ('boolean', 'boolean', False),
+    ('integer', 'integer', 0),
+    ('integer', 'integer', -9007199254740991),
+    ('integer', 'integer', 9007199254740991),
+    ('string', 'string', ''),
+    ('decimal', 'string', '001.2300'),
+    ('identifier', 'string', '000123'),
+    ('date', 'string', '2026-10-16'),
+    ('enum', 'string', 'primeira\nsegunda'),
+])
+def test_author_condition_with_guided_target(editor_page, target_type, literal_type, literal):
+    page = editor_page
+    target = field('origem', type=target_type, enum=['primeira\nsegunda', 'outra'] if target_type == 'enum' else None)
+    original = field('dependente')
+    load(page, [original, target])
+    ui = enable_condition(page)
+    suggestions = ui.get_by_label('Campo de referência sugerido', exact=True)
+    assert suggestions.locator('option[value="dependente"]').count() == 0
+    suggestions.select_option('origem')
+    # Selecting a target never chooses or converts a literal for the author.
+    assert value(page)[0]['required_when'] == {'field': 'origem', 'equals': ''}
+    ui.get_by_label('Tipo do literal', exact=True).select_option(literal_type)
+    if literal_type == 'boolean':
+        ui.get_by_label('Sim ou não da condição', exact=True).select_option('true')
+        ui.get_by_label('Sim ou não da condição', exact=True).select_option('false')
+    elif literal_type == 'integer':
+        ui.get_by_label('Inteiro da condição', exact=True).fill(str(literal))
+    elif target_type == 'enum':
+        ui.get_by_label('Opção da condição', exact=True).select_option(literal)
+    else:
+        ui.get_by_label('Texto da condição', exact=True).fill(literal)
+    expected = copy.deepcopy(original)
+    expected['required_when'] = {'field': 'origem', 'equals': literal}
+    assert value(page) == [expected, target]
+    assert type(value(page)[0]['required_when']['equals']) is type(literal)
+    expect(ui.locator('.catalog-fields__condition-warning')).to_be_hidden()
+    # Toggle off and back on without losing false, zero, empty or exact text.
+    ui.get_by_label('Ativar obrigatoriedade condicional', exact=True).uncheck()
+    assert value(page)[0]['required_when'] is None
+    expect(ui.get_by_label('Chave do campo de referência', exact=True)).to_be_hidden()
+    ui.get_by_label('Ativar obrigatoriedade condicional', exact=True).check()
+    assert value(page) == [expected, target]
+
+
+@pytest.mark.parametrize('kind,literal', [('boolean', False), ('integer', 0), ('string', '')])
+def test_unknown_condition_can_be_authored_with_explicit_literal_type(editor_page, kind, literal):
+    page = editor_page
+    load(page, [field('comum')])
+    ui = enable_condition(page)
+    ui.get_by_label('Chave do campo de referência', exact=True).fill('especifico_futuro')
+    ui.get_by_label('Tipo do literal', exact=True).select_option(kind)
+    if kind == 'integer':
+        ui.get_by_label('Inteiro da condição', exact=True).fill('0')
+    expected = {'field': 'especifico_futuro', 'equals': literal}
+    assert value(page)[0]['required_when'] == expected
+    expect(ui.locator('.catalog-fields__condition-warning')).to_contain_text('desconhecido')
+    assert type(value(page)[0]['required_when']['equals']) is type(literal)
+
+
+def test_future_specific_and_inherited_union_resolve_without_mutating(editor_page):
+    page = editor_page
+    load(page, [field('comum')])
+    ui = enable_condition(page)
+    ui.get_by_label('Chave do campo de referência', exact=True).fill('especifico')
+    ui.get_by_label('Texto da condição', exact=True).fill('001.2300')
+    common = value(page)[0]
+    expect(ui.locator('.catalog-fields__condition-warning')).to_contain_text('desconhecido')
+    specific = field('especifico', type='decimal')
+    load(page, [common, specific])
+    open_details(page)
+    expect(condition_ui(page).locator('.catalog-fields__condition-warning')).to_be_hidden()
+    assert value(page) == [common, specific]
+    # Type-local conditions can resolve inherited common fields. Inherited data
+    # remains outside the editable list and outside the returned payload.
+    local = field('especifico', required_when={'field': 'comum', 'equals': ''})
+    page.evaluate('changes.length = 0')
+    load(page, [local], [common])
+    open_details(page)
+    expect(condition_ui(page).locator('.catalog-fields__condition-warning')).to_be_hidden()
+    assert value(page) == [local]
+    assert page.locator('.catalog-fields__card').count() == 1
+    assert page.evaluate('changes.length') == 0
+    condition_ui(page).get_by_label('Campo de referência sugerido', exact=True).select_option('comum')
+    assert value(page) == [local]
+    assert common['required_when'] == {'field': 'especifico', 'equals': '001.2300'}
+
+
+def test_target_changes_and_removal_preserve_condition_and_stable_card(editor_page):
+    page = editor_page
+    dependent = field('dependente', required_when={'field': 'origem', 'equals': '001.2300'})
+    target = field('origem', type='decimal')
+    load(page, [dependent, target])
+    open_details(page)
+    first = page.locator('.catalog-fields__card').first
+    dependent_key = first.get_attribute('data-key')
+    target_card = page.locator('.catalog-fields__card').nth(1)
+    ui = first.locator('.catalog-fields__condition')
+    target_card.get_by_label('Chave do campo', exact=True).fill('renomeado')
+    expect(ui.locator('.catalog-fields__condition-warning')).to_contain_text('desconhecido')
+    assert value(page)[0] == dependent
+    target_card.get_by_label('Chave do campo', exact=True).fill('origem')
+    target_card.get_by_label('Tipo', exact=True).select_option('boolean')
+    expect(ui.locator('.catalog-fields__condition-warning')).to_contain_text('não é compatível')
+    assert value(page)[0] == dependent
+    target_card.get_by_label('Quantidade de valores', exact=True).select_option('many')
+    expect(ui.locator('.catalog-fields__condition-warning')).to_contain_text('vários valores')
+    assert ui.get_by_label('Campo de referência sugerido', exact=True).locator('option[value="origem"]').count() == 0
+    assert value(page)[0] == dependent
+    page.get_by_role('button', name='Mover campo 1 para baixo', exact=True).click()
+    assert value(page)[1] == dependent
+    assert page.locator('.catalog-fields__card').nth(1).get_attribute('data-key') == dependent_key
+    page.get_by_role('button', name='Remover campo 1', exact=True).click()
+    assert value(page) == [dependent]
+    expect(condition_ui(page).locator('.catalog-fields__condition-warning')).to_contain_text('desconhecido')
+
+
+@pytest.mark.parametrize('literal', [False, 0, '', '001.2300'])
+def test_loaded_semantic_mismatch_is_readable_and_survives_label_edit_and_readonly(editor_page, literal):
+    page = editor_page
+    target = field('origem', type='enum', enum=['permitida'])
+    original = field('dependente', label='Antes', required_when={'field': 'origem', 'equals': literal})
+    load(page, [original], [target])
+    open_details(page)
+    ui = condition_ui(page)
+    expect(ui.locator('.catalog-fields__condition-warning')).to_contain_text('não é compatível')
+    if type(literal) is bool:
+        expect(ui.get_by_label('Sim ou não da condição', exact=True)).to_have_value('false')
+    elif type(literal) is int:
+        expect(ui.get_by_label('Inteiro da condição', exact=True)).to_have_value('0')
+    else:
+        expect(ui.get_by_label('Texto da condição', exact=True)).to_have_value(literal)
+    page.get_by_label('Rótulo', exact=True).fill('Depois')
+    edited = copy.deepcopy(original)
+    edited['label'] = 'Depois'
+    assert value(page) == [edited]
+    before_changes = page.evaluate('changes.length')
+    page.evaluate('editor.setReadonly(true)')
+    assert page.locator('.catalog-fields input:enabled, .catalog-fields textarea:enabled, .catalog-fields select:enabled, .catalog-fields button:enabled').count() == 0
+    assert value(page) == [edited]
+    page.evaluate('editor.setReadonly(false)')
+    assert value(page) == [edited]
+    assert page.evaluate('changes.length') == before_changes
+
+
+@pytest.mark.parametrize('raw', ['', '1.5', 'NaN', 'Infinity', '9007199254740992', '-9007199254740992', ' 0', '0 '])
+def test_condition_integer_drafts_are_strict_and_focusable(editor_page, raw):
+    page = editor_page
+    load(page, [field(required_when={'field': 'futuro', 'equals': 0})])
+    open_details(page)
+    number = condition_ui(page).get_by_label('Inteiro da condição', exact=True)
+    number.fill(raw)
+    invalid(page)
+    expect(number).to_have_value(raw)
+    expect(number).to_have_attribute('aria-invalid', 'true')
+    page.evaluate('editor.focusFirstError()')
+    expect(number).to_be_focused()
+    number.fill('0')
+    assert value(page)[0]['required_when'] == {'field': 'futuro', 'equals': 0}
+    assert number.get_attribute('aria-invalid') is None
+
+
+@pytest.mark.parametrize('condition', [
+    {'field': 'futuro', 'equals': 9007199254740992},
+    {'field': 'futuro', 'equals': 1.5},
+    {'field': 'futuro', 'equals': None},
+    {'field': 'futuro', 'equals': []},
+    {'field': 'futuro', 'equals': {}, 'extra': True},
+    {'field': 'futuro', 'equals': '', 'extra': True},
+    {'field': 'futuro'},
+    {'field': 'futuro', 'equals': '😀' * 4001},
+    {'field': 'futuro', 'equals': '\x00'},
+    {'field': 'futuro', 'equals': '\ud800'},
+    {'field': ' Chave', 'equals': ''},
+    {'field': 'á', 'equals': ''},
+    {'field': 'a' * 65, 'equals': ''},
+    {'field': 'documento', 'equals': False},
+])
+def test_condition_structural_validation_does_not_repair_loaded_data(editor_page, condition):
+    page = editor_page
+    original = field(label='Antes', required_when=condition)
+    load(page, [original])
+    open_details(page)
+    invalid(page)
+    page.get_by_label('Rótulo', exact=True).fill('Depois')
+    invalid(page)
+    # onChange receives the actual draft, including extra keys and invalid
+    # literals; unrelated edits must not silently repair or discard it.
+    assert page.evaluate('changes.at(-1)[0].required_when') == condition
+
+
+@pytest.mark.parametrize('expression', ['NaN', 'Infinity', '-Infinity'])
+def test_loaded_nonfinite_condition_is_invalid_and_not_coerced(editor_page, expression):
+    page = editor_page
+    page.evaluate(f"""() => editor.setValue([{{
+        name: 'documento', description: 'Descrição', label: 'Antes',
+        required_when: {{field: 'futuro', equals: {expression}}}
+    }}])""")
+    open_details(page)
+    invalid(page)
+    page.get_by_label('Rótulo', exact=True).fill('Depois')
+    assert page.evaluate(f'Object.is(changes.at(-1)[0].required_when.equals, {expression})')
+    expect(condition_ui(page).get_by_label('Inteiro da condição', exact=True)).to_have_value(expression)
+    page.evaluate('editor.focusFirstError()')
+    expect(condition_ui(page).get_by_label('Inteiro da condição', exact=True)).to_be_focused()
+
+
+def test_condition_authoring_validation_caret_and_copy_isolation(editor_page):
+    page = editor_page
+    load(page, [field()])
+    ui = enable_condition(page)
+    key = ui.get_by_label('Chave do campo de referência', exact=True)
+    key.fill('documento')
+    invalid(page)
+    expect(ui.locator('.catalog-fields__condition-warning')).to_contain_text('próprio campo')
+    page.evaluate('editor.focusFirstError()')
+    expect(key).to_be_focused()
+    key.fill(' Chave')
+    invalid(page)
+    expect(key).to_have_value(' Chave')
+    key.fill('ab')
+    key.evaluate('(node) => { window.conditionKey = node; node.setSelectionRange(1, 1); }')
+    key.press_sequentially('cd')
+    expect(key).to_have_value('acdb')
+    assert key.evaluate('(node) => node === conditionKey && node.selectionStart === 3 && document.activeElement === node')
+    text = ui.get_by_label('Texto da condição', exact=True)
+    text.fill('ab')
+    text.evaluate('(node) => { window.conditionText = node; node.setSelectionRange(1, 1); }')
+    text.press_sequentially('cd')
+    expect(text).to_have_value('acdb')
+    assert text.evaluate('(node) => node === conditionText && node.selectionStart === 3 && document.activeElement === node')
+    text.fill('😀' * 4001)
+    invalid(page)
+    page.evaluate('editor.focusFirstError()')
+    expect(text).to_be_focused()
+    expect(text).to_have_attribute('aria-invalid', 'true')
+    text.fill('😀' * 4000)
+    assert value(page)[0]['required_when']['equals'] == '😀' * 4000
+    page.evaluate("""() => {
+        const output = editor.getValue();
+        output[0].required_when.field = 'externo';
+        output[0].required_when.equals = false;
+        changes.at(-1)[0].required_when.equals = 'externo';
+    }""")
+    assert value(page)[0]['required_when'] == {'field': 'acdb', 'equals': '😀' * 4000}
+
+
+def test_condition_reference_edit_does_not_convert_literal(editor_page):
+    page = editor_page
+    target = field('booleano', type='boolean')
+    load(page, [field(required_when={'field': 'futuro', 'equals': '001.2300'})], [target])
+    open_details(page)
+    ui = condition_ui(page)
+    ui.get_by_label('Campo de referência sugerido', exact=True).select_option('booleano')
+    assert value(page)[0]['required_when'] == {'field': 'booleano', 'equals': '001.2300'}
+    expect(ui.get_by_label('Tipo do literal', exact=True)).to_have_value('string')
+    expect(ui.get_by_label('Texto da condição', exact=True)).to_have_value('001.2300')
+    expect(ui.locator('.catalog-fields__condition-warning')).to_contain_text('não é compatível')
+    ui.get_by_label('Tipo do literal', exact=True).select_option('boolean')
+    assert value(page)[0]['required_when'] == {'field': 'booleano', 'equals': False}
+    expect(ui.locator('.catalog-fields__condition-warning')).to_be_hidden()

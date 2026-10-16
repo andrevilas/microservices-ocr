@@ -495,7 +495,11 @@ body.is-busy .job-list, body.is-busy .detail-actions { cursor: progress; }
 .catalog-fields .catalog-fields__details { min-width: 0; border-top: 1px solid var(--border); padding-top: var(--s2); }
 .catalog-fields .catalog-fields__details > summary { min-height: var(--control); padding: var(--s2) 0; cursor: pointer; color: var(--text-2); font-weight: 500; overflow-wrap: anywhere; }
 .catalog-fields .catalog-fields__advanced { padding-top: var(--s2); }
-.catalog-fields .catalog-fields__condition { min-width: 0; }
+.catalog-fields .catalog-fields__condition { display: grid; gap: var(--s2); min-width: 0; }
+.catalog-fields .catalog-fields__condition-fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); min-width: 0; }
+.catalog-fields .catalog-fields__condition-warning { padding: var(--s2) var(--s3); border-left: 3px solid var(--warn); background: var(--warn-soft); color: var(--warn); font-size: 0.875rem; }
+.catalog-fields .catalog-fields__condition .catalog-fields__check { align-items: flex-start; }
+.catalog-fields .catalog-fields__condition .catalog-fields__check > input { flex: 0 0 18px; margin-top: 3px; }
 .catalog-fields h3,
 .catalog-fields h4,
 .catalog-fields p,

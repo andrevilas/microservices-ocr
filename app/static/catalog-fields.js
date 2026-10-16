@@ -82,6 +82,7 @@
         record.enumSection.hidden = record.data.type !== 'enum';
         record.exampleAdd.disabled = locked || (Array.isArray(record.data.examples) && record.data.examples.length >= 3);
         record.enumAdd.disabled = locked || (Array.isArray(record.data.enum) && record.data.enum.length >= 100);
+        record.refreshCondition();
       });
     }
     function makeRecord(value) {
@@ -150,12 +151,203 @@
       field('normalization', 'Normalização prevista', advanced, 'select', {'type-default': 'Padrão do tipo'});
       field('destination', 'Destino previsto dos metadados', advanced, 'select', {sidecar: 'Arquivo auxiliar (sidecar)', xmp: 'Metadados XMP'});
       advanced.append(el('p', {className: 'catalog-fields__hint', text: 'Estas opções registram intenção. Não confirmam gravação de metadados nem indexação.'}));
-      const condition = el('div', {className: 'catalog-fields__condition'}, [el('h4', {text: 'Obrigatoriedade condicional'})]);
-      condition.append(el('p', {className: 'catalog-fields__hint', text: 'Condição preservada; a edição de condições será disponibilizada em uma próxima etapa.'}));
-      condition.append(el('pre', {text: data.required_when === null ? 'Sem condição.' : JSON.stringify(data.required_when, null, 2)}));
+      const condition = el('div', {className: 'catalog-fields__condition'}, [el('h4', {text: 'Obrigatório quando'})]);
+      const conditionHelp = el('p', {
+        id: `${key}-condition-help`, className: 'catalog-fields__hint',
+        text: 'Este campo se torna obrigatório quando outro campo é igual ao literal informado. A referência e a compatibilidade do literal são verificadas na publicação.',
+      });
+      const enabled = el('input', {
+        type: 'checkbox', id: `${key}-condition-enabled`, checked: data.required_when !== null,
+      });
+      condition.append(conditionHelp, el('div', {className: 'catalog-fields__check'}, [
+        enabled, el('label', {htmlFor: enabled.id, text: 'Ativar obrigatoriedade condicional'}),
+      ]));
+      const conditionFields = el('div', {className: 'catalog-fields__condition-fields'});
+      function conditionControl(suffix, label, tag = 'input') {
+        const node = el(tag, {id: `${key}-condition-${suffix}`});
+        if (tag === 'input') node.type = 'text';
+        conditionFields.append(el('div', {className: 'catalog-fields__field'}, [
+          el('label', {htmlFor: node.id, text: label}), node,
+        ]));
+        return node;
+      }
+      const targetKey = conditionControl('field', 'Chave do campo de referência');
+      const suggestedTarget = conditionControl('target', 'Campo de referência sugerido', 'select');
+      const literalType = conditionControl('literal-type', 'Tipo do literal', 'select');
+      for (const [value, text] of Object.entries({'': 'Escolha um tipo de literal', string: 'Texto', integer: 'Inteiro', boolean: 'Sim ou não'})) {
+        literalType.append(el('option', {value, text}));
+      }
+      literalType.firstElementChild.disabled = true;
+      const textLiteral = conditionControl('text', 'Texto da condição', 'textarea');
+      const integerLiteral = conditionControl('integer', 'Inteiro da condição');
+      integerLiteral.inputMode = 'numeric';
+      const booleanLiteral = conditionControl('boolean', 'Sim ou não da condição', 'select');
+      booleanLiteral.append(el('option', {value: 'true', text: 'Sim (true)'}), el('option', {value: 'false', text: 'Não (false)'}));
+      const enumLiteral = conditionControl('enum', 'Opção da condição', 'select');
+      const literalHint = el('p', {id: `${key}-condition-literal-help`, className: 'catalog-fields__hint'});
+      const warning = el('p', {
+        id: `${key}-condition-warning`, className: 'catalog-fields__condition-warning',
+        role: 'status', 'aria-live': 'polite', hidden: true,
+      });
+      const preview = el('pre', {'aria-label': 'Condição atual, somente leitura'});
+      conditionFields.append(literalHint, warning);
+      condition.append(conditionFields, preview);
       advanced.append(condition);
-      record.controls.required_when = condition;
       condition.tabIndex = -1;
+      record.controls.required_when = condition;
+      record.controls['required_when.enabled'] = enabled;
+      record.controls['required_when.field'] = targetKey;
+      record.controls['required_when.target'] = suggestedTarget;
+      record.controls['required_when.literal_type'] = literalType;
+      record.controls['required_when.enum'] = enumLiteral;
+      let savedCondition = data.required_when === null ? null : copy(data.required_when);
+      const initialCondition = data.required_when;
+      const initialLiteral = initialCondition !== null && typeof initialCondition === 'object' ? initialCondition.equals : undefined;
+      const kindOf = value => typeof value === 'string' ? 'string' : typeof value === 'boolean' ? 'boolean' : typeof value === 'number' ? 'integer' : '';
+      targetKey.value = typeof initialCondition?.field === 'string' ? initialCondition.field : '';
+      textLiteral.value = typeof initialLiteral === 'string' ? initialLiteral : '';
+      integerLiteral.value = typeof initialLiteral === 'number' ? String(initialLiteral) : '';
+      booleanLiteral.value = initialLiteral === true ? 'true' : 'false';
+      let targetSignature = '', enumSignature = '';
+      function conditionObject() {
+        if (data.required_when === null || typeof data.required_when !== 'object' || Array.isArray(data.required_when)) {
+          data.required_when = {field: targetKey.value, equals: undefined};
+        }
+        // Keep unknown properties: validation must reject them until explicitly cleared.
+        return data.required_when;
+      }
+      function setLiteral(value) {
+        if (!editable(record) || data.required_when === null) return;
+        conditionObject().equals = value;
+        changed();
+      }
+      listen(enabled, 'change', () => {
+        if (!editable(record)) return;
+        if (enabled.checked) {
+          data.required_when = savedCondition === null ? {field: '', equals: ''} : copy(savedCondition);
+        } else {
+          savedCondition = copy(data.required_when);
+          data.required_when = null;
+        }
+        changed();
+      });
+      listen(targetKey, 'input', () => {
+        if (!editable(record) || data.required_when === null) return;
+        conditionObject().field = targetKey.value;
+        changed();
+      });
+      listen(suggestedTarget, 'change', () => {
+        if (!editable(record) || data.required_when === null || suggestedTarget.value === '') return;
+        targetKey.value = suggestedTarget.value;
+        conditionObject().field = targetKey.value;
+        changed();
+      });
+      listen(literalType, 'change', () => {
+        if (!editable(record) || data.required_when === null) return;
+        const kind = literalType.value;
+        if (kind === kindOf(data.required_when?.equals)) return;
+        if (kind === 'string') {
+          textLiteral.value = '';
+          setLiteral('');
+        } else if (kind === 'integer') {
+          integerLiteral.value = '';
+          setLiteral(NaN);
+        } else if (kind === 'boolean') {
+          booleanLiteral.value = 'false';
+          setLiteral(false);
+        }
+      });
+      listen(textLiteral, 'input', () => setLiteral(textLiteral.value));
+      listen(integerLiteral, 'input', () => {
+        const raw = integerLiteral.value;
+        const number = /^[+-]?[0-9]+$/.test(raw) ? Number(raw) : NaN;
+        setLiteral(Number.isSafeInteger(number) ? number : NaN);
+      });
+      listen(booleanLiteral, 'change', () => setLiteral(booleanLiteral.value === 'true'));
+      listen(enumLiteral, 'change', () => {
+        if (enumLiteral.selectedIndex > 0) {
+          textLiteral.value = enumLiteral.value;
+          setLiteral(enumLiteral.value);
+        }
+      });
+      function compatible(target, value) {
+        if (target.type === 'boolean') return typeof value === 'boolean';
+        if (target.type === 'integer') return typeof value === 'number' && Number.isSafeInteger(value);
+        if (!textOK(value, 0, 4000)) return false;
+        if (target.type === 'enum') return Array.isArray(target.enum) && target.enum.includes(value);
+        if (target.type === 'decimal') return /^[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)$/.test(value);
+        if (target.type === 'date') {
+          const match = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(value);
+          if (!match) return false;
+          const year = Number(match[1]), month = Number(match[2]), day = Number(match[3]);
+          const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+          const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+          return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1];
+        }
+        return true;
+      }
+      record.refreshCondition = () => {
+        const current = data.required_when, active = current !== null;
+        const object = active && typeof current === 'object' && !Array.isArray(current) ? current : null;
+        const literal = object?.equals;
+        const kind = active ? kindOf(literal) : 'string';
+        const fields = [...records.map(item => item.data), ...inherited];
+        const candidates = new Map();
+        for (const candidate of fields) {
+          if (validName(candidate.name) && candidate.name !== data.name && (candidate.cardinality ?? 'one') === 'one') candidates.set(candidate.name, candidate);
+        }
+        const suggestions = [...candidates.values()].map(candidate => [candidate.name, `${candidate.name} — ${TYPES[candidate.type] || candidate.type || 'Texto'}`]);
+        const signature = JSON.stringify(suggestions);
+        if (signature !== targetSignature) {
+          suggestedTarget.replaceChildren(el('option', {value: '', text: 'Selecione ou digite uma chave'}), ...suggestions.map(([value, text]) => el('option', {value, text})));
+          targetSignature = signature;
+        }
+        suggestedTarget.value = candidates.has(object?.field) ? object.field : '';
+        enabled.checked = active;
+        enabled.disabled = locked;
+        conditionFields.hidden = !active;
+        literalType.value = kind;
+        const matches = fields.filter(candidate => candidate.name === object?.field);
+        const target = matches.length === 1 ? matches[0] : null;
+        const showEnum = active && kind === 'string' && target?.type === 'enum';
+        const enumValues = showEnum && Array.isArray(target.enum) ? target.enum.filter(value => typeof value === 'string') : [];
+        const nextEnumSignature = JSON.stringify(enumValues);
+        if (enumSignature !== nextEnumSignature) {
+          enumLiteral.replaceChildren(el('option', {value: '', text: 'Selecione uma opção; o texto também pode ser editado'}), ...enumValues.map(value => el('option', {value, text: value})));
+          enumSignature = nextEnumSignature;
+        }
+        enumLiteral.selectedIndex = enumValues.includes(literal) ? enumValues.indexOf(literal) + 1 : 0;
+        for (const [node, visible] of [[textLiteral, kind === 'string'], [integerLiteral, kind === 'integer'], [booleanLiteral, kind === 'boolean'], [enumLiteral, showEnum]]) {
+          node.parentElement.hidden = !active || !visible;
+          node.disabled = locked || !active || !visible;
+        }
+        for (const node of [targetKey, suggestedTarget, literalType]) node.disabled = locked || !active;
+        record.controls['required_when.equals'] = kind === 'string' ? textLiteral : kind === 'integer' ? integerLiteral : kind === 'boolean' ? booleanLiteral : literalType;
+        const hints = {
+          string: 'Texto: preservado exatamente, inclusive vazio e quebras de linha.',
+          identifier: 'Identificador: use Texto; zeros à esquerda são preservados.',
+          decimal: 'Decimal: use Texto, por exemplo 001.2300. O valor não é convertido em número.',
+          date: 'Data: use Texto no formato AAAA-MM-DD, sem conversão de fuso horário.',
+          integer: 'Inteiro: selecione Inteiro e informe um valor entre -9007199254740991 e 9007199254740991. Vazio é inválido.',
+          boolean: 'Sim ou não: selecione o tipo Sim ou não e escolha um booleano.',
+          enum: 'Lista: escolha uma opção ou edite o texto exato, inclusive quebras de linha.',
+        };
+        literalHint.textContent = 'Mudar a referência não altera o literal. Mudar o tipo do literal inicia um novo valor. ' + (hints[target?.type] || 'Escolha explicitamente Texto, Inteiro ou Sim ou não para o literal.');
+        const warnings = [];
+        if (active) {
+          if (!object || Object.keys(object).length !== 2 || !Object.hasOwn(object, 'field') || !Object.hasOwn(object, 'equals')) warnings.push('Condição estruturalmente inválida; revise os controles e os avisos de validação.');
+          if (object?.field === data.name) warnings.push('A condição referencia o próprio campo.');
+          else if (matches.length === 0) warnings.push('Campo de referência desconhecido. A referência será verificada na publicação.');
+          else if (matches.length > 1) warnings.push('A chave de referência é ambígua. Revise as chaves antes da publicação.');
+          if (target) {
+            if ((target.cardinality ?? 'one') !== 'one') warnings.push('O campo de referência tem vários valores; a publicação exige um único valor.');
+            if (!compatible(target, literal)) warnings.push('O literal não é compatível com o tipo atual do campo de referência. Revise antes da publicação; o valor foi preservado.');
+          }
+        }
+        warning.textContent = warnings.join(' ');
+        warning.hidden = warnings.length === 0;
+        preview.textContent = active ? JSON.stringify(current, (_, value) => typeof value === 'number' && !Number.isFinite(value) ? `${value} (inválido)` : typeof value === 'bigint' ? `${value} (inválido)` : value, 2) : 'Sem condição.';
+      };
       function arrayEditor(property, heading, limit) {
         const section = el('section', {className: 'catalog-fields__values', 'aria-labelledby': `${key}-${property}-heading`});
         section.append(el('h4', {id: `${key}-${property}-heading`, text: heading}));
@@ -319,12 +511,14 @@
         } else if (f.enum !== null) fail('type', 'Opções de lista são permitidas apenas para o tipo lista de opções.');
         if (f.required_when !== null) {
           const condition = f.required_when;
-          if (typeof condition !== 'object' || Array.isArray(condition) || Object.keys(condition).length !== 2 || !Object.hasOwn(condition, 'field') || !Object.hasOwn(condition, 'equals') || !validName(condition.field)) {
-            fail('required_when', 'A condição preservada precisa de uma chave válida e um literal.');
+          if (typeof condition !== 'object' || Array.isArray(condition)) {
+            fail('required_when', 'A condição precisa de uma chave e um literal.');
           } else {
-            if (condition.field === f.name) fail('required_when', 'A condição não pode referenciar o próprio campo.');
+            if (Object.keys(condition).length !== 2 || !Object.hasOwn(condition, 'field') || !Object.hasOwn(condition, 'equals')) fail('required_when', 'A condição deve conter exatamente field e equals, sem propriedades adicionais.');
+            if (!validName(condition.field)) fail('required_when.field', 'Chave da condição: use uma letra minúscula seguida de letras minúsculas, números ou sublinhados, até 64 caracteres.');
+            if (condition.field === f.name) fail('required_when.field', 'A condição não pode referenciar o próprio campo.');
             const value = condition.equals;
-            if (!(typeof value === 'boolean' || (typeof value === 'number' && Number.isSafeInteger(value)) || textOK(value, 0, 4000))) fail('required_when', 'O literal da condição deve ser texto, booleano ou inteiro seguro.');
+            if (!(typeof value === 'boolean' || (typeof value === 'number' && Number.isSafeInteger(value)) || textOK(value, 0, 4000))) fail('required_when.equals', 'O literal da condição deve ser texto de até 4000 caracteres sem controles inválidos, booleano ou inteiro seguro; um inteiro vazio é inválido.');
           }
         }
         record.error.hidden = errors.length === 0;
