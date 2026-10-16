@@ -4,7 +4,7 @@
   function create({ui, get, getState, object, revisionOk, dateOk, fieldsOk, identityOk, clone, freeze, equal, onDetailChange}) {
     const versionUi = (id) => document.getElementById(`version-${id}`);
     const versionEditor = window.OcrCatalogFields.create(versionUi("fields"), {
-      idPrefix: "immutable-version", readonly: true,
+      idPrefix: "immutable-version", readonly: true, displayOnly: true,
     });
     let destroyed = false;
     let versionBinding = null, versionItems = [], versionCursor = null;

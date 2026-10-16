@@ -18,8 +18,8 @@
     const utc = (value) => typeof value === "string" && value.includes("T") &&
       /(?:Z|\+00:00)$/.test(value) && Number.isFinite(Date.parse(value));
     const listeners = [];
-    const commonEditor = window.OcrCatalogFields.create(node("common"), {idPrefix: "template-common-preview", readonly: true});
-    const specificEditor = window.OcrCatalogFields.create(node("specific"), {idPrefix: "template-specific-preview", readonly: true});
+    const commonEditor = window.OcrCatalogFields.create(node("common"), {idPrefix: "template-common-preview", readonly: true, displayOnly: true});
+    const specificEditor = window.OcrCatalogFields.create(node("specific"), {idPrefix: "template-specific-preview", readonly: true, displayOnly: true});
     function keys(value, expected) {
       return object(value) && Object.keys(value).length === expected.length && expected.every((key) => Object.hasOwn(value, key));
     }

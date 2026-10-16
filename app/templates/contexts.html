@@ -15,24 +15,33 @@
 </div>
 <section id="template-section" class="panel" aria-labelledby="template-title" aria-busy="false" hidden>
   <h2 id="template-title">Modelos de contexto</h2>
-  <p class="hint">Consulte modelos para organizar os campos dos seus documentos.</p>
+  <p class="hint">Escolha um modelo, confira os campos e crie um contexto para revisar.</p>
   <div class="catalog-actions"><button id="template-load" type="button" disabled>Carregar modelos</button></div>
   <p id="template-status" role="status" aria-live="polite">Aguardando sessão com permissão de leitura.</p>
   <ul id="template-list" class="entity-list"></ul>
   <section id="template-preview" aria-labelledby="template-preview-title" hidden>
     <h3 id="template-preview-title">Modelo selecionado</h3>
-    <p id="template-edition" class="hint"></p>
-    <p class="hint">Referência do modelo (SHA-256)</p>
-    <p id="template-hash" class="mono"></p>
+    <details>
+      <summary>Referência do modelo</summary>
+      <p id="template-edition" class="hint"></p>
+      <p class="hint">SHA-256</p>
+      <p id="template-hash" class="mono"></p>
+    </details>
     <h4 id="template-context-name"></h4>
     <p id="template-context-description" class="catalog-description"></p>
-    <h4 id="template-common-title">Campos comuns do modelo</h4>
-    <div id="template-common" class="catalog-fields" aria-labelledby="template-common-title"></div>
     <h4 id="template-type-name"></h4>
     <p id="template-type-description" class="catalog-description"></p>
-    <h4 id="template-specific-title">Campos específicos do tipo do modelo</h4>
-    <div id="template-specific" class="catalog-fields" aria-labelledby="template-specific-title"></div>
-    <button id="template-clone" type="button" aria-describedby="template-clone-status" hidden disabled>Criar contexto a partir deste modelo</button>
+    <div class="template-fields-grid">
+      <section aria-labelledby="template-common-title">
+        <h4 id="template-common-title">Campos comuns do modelo</h4>
+        <div id="template-common" class="catalog-fields" aria-labelledby="template-common-title"></div>
+      </section>
+      <section aria-labelledby="template-specific-title">
+        <h4 id="template-specific-title">Campos específicos do tipo do modelo</h4>
+        <div id="template-specific" class="catalog-fields" aria-labelledby="template-specific-title"></div>
+      </section>
+    </div>
+    <button id="template-clone" class="button button-primary" type="button" aria-describedby="template-clone-status" hidden disabled>Criar contexto a partir deste modelo</button>
   </section>
   <p id="template-clone-status" role="status" aria-live="polite"></p>
   <div class="catalog-actions">

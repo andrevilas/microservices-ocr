@@ -94,7 +94,7 @@
     },
   });
   const inheritedEditor = window.OcrCatalogFields.create(document.getElementById("type-common-fields"), {
-    idPrefix: "type-common", readonly: true,
+    idPrefix: "type-common", readonly: true, displayOnly: true,
   });
   const templates = window.OcrCatalogTemplates.create({
     get: (path, {valid} = {}) => request(path, {method: "GET", valid}),
