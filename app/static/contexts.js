@@ -72,6 +72,11 @@
   const typeSummaryOk = (parentId, value) => identityOk("type", parentId, value) && value.state === "draft" && typeof value.name === "string" && revisionOk(value.revision) && dateOk(value.created_at) && dateOk(value.updated_at);
   const typePageOk = (parentId, value) => object(value) && Array.isArray(value.items) && value.items.every((item) => typeSummaryOk(parentId, item)) && (value.next_cursor === null || typeof value.next_cursor === "string");
   const edgeWhitespace = /^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]$/u;
+  // Iterate code points, rejecting isolated UTF-16 surrogates, not valid pairs.
+  const forbidden = (text, multiline) => Array.from(text).some((char) => {
+    const code = char.codePointAt(0);
+    return (code >= 0xd800 && code <= 0xdfff) || ((code < 32 || (code >= 127 && code <= 159)) && !(multiline && (code === 9 || code === 10)));
+  });
   const status = (text) => { $("status").textContent = text; };
   const listStatus = (text) => { $("list-status").textContent = text; };
   const protectedState = () => dirty || !!pendingCreate || !!uncertainUpdate || !!pendingPublish || !!pendingDeprecation || writing;
@@ -89,6 +94,12 @@
   });
   const inheritedEditor = window.OcrCatalogFields.create(document.getElementById("type-common-fields"), {
     idPrefix: "type-common", readonly: true,
+  });
+  const templates = window.OcrCatalogTemplates.create({
+    get: (path, {valid} = {}) => request(path, {method: "GET", valid}),
+    getState: () => ({active: active(), writing, reading, confirming,
+      departing: approvedDeparture || pageInactive}),
+    object, clone, freeze, equal, forbidden, edgeWhitespace,
   });
   const versionUi = (id) => document.getElementById(`version-${id}`);
   const reader = window.OcrCatalogVersions.create({
@@ -357,6 +368,7 @@
   versionUi("refresh-draft").addEventListener("click", () => selectType(selected, true));
   function update() {
     if (pageInactive) return;
+    templates.update();
     updateVersions();
     const available = active();
     $("new").disabled = !available || !canWrite || writing || reading;
@@ -667,11 +679,6 @@
     if (activeKind === "type" && !parentContext) return null;
     resetErrors(); let first = null;
     function invalid(field, text) { $(field).setAttribute("aria-invalid", "true"); $(`${field}-error`).textContent = text; $(`${field}-error`).hidden = false; first ||= $(field); }
-    // Iterate code points, rejecting isolated UTF-16 surrogates, not valid pairs.
-    const forbidden = (text, multiline) => Array.from(text).some((char) => {
-      const code = char.codePointAt(0);
-      return (code >= 0xd800 && code <= 0xdfff) || ((code < 32 || (code >= 127 && code <= 159)) && !(multiline && (code === 9 || code === 10)));
-    });
     const length = Array.from(name.value).length;
     if (length < 1 || length > 120 || edgeWhitespace.test(name.value) || forbidden(name.value, false)) invalid("name", "Use de 1 a 120 caracteres, sem espaços nas bordas nem caracteres de controle.");
     if (Array.from(description.value).length > 4000 || forbidden(description.value, true)) invalid("description", "Use até 4.000 caracteres. Tabulação e quebra de linha são permitidas; outros controles não são.");
@@ -882,6 +889,7 @@
   }, true);
   window.addEventListener("pagehide", () => {
     pageInactive = true;
+    templates.destroy();
     reader.destroy();
     token = null; subject = null; editor.destroy(); inheritedEditor.destroy();
   }, {once: true});

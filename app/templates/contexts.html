@@ -13,6 +13,27 @@
   <a id="context-login" class="button" href="/login" hidden>Entrar novamente</a>
   <button id="context-session-logout" type="button" hidden>Sair para entrar novamente</button>
 </div>
+<section id="template-section" class="panel" aria-labelledby="template-title" aria-busy="false" hidden>
+  <h2 id="template-title">Modelos de contexto</h2>
+  <p class="hint">Consulte os modelos e seus campos. A validação completa dos campos é feita pelo servidor.</p>
+  <div class="catalog-actions"><button id="template-load" type="button" disabled>Carregar modelos</button></div>
+  <p id="template-status" role="status" aria-live="polite">Aguardando sessão com permissão de leitura.</p>
+  <ul id="template-list" class="entity-list"></ul>
+  <section id="template-preview" aria-labelledby="template-preview-title" hidden>
+    <h3 id="template-preview-title">Modelo selecionado</h3>
+    <p id="template-edition" class="hint"></p>
+    <p class="hint">SHA-256 informado pelo servidor como referência; não verificado pelo navegador.</p>
+    <p id="template-hash" class="mono"></p>
+    <h4 id="template-context-name"></h4>
+    <p id="template-context-description" class="catalog-description"></p>
+    <h4 id="template-common-title">Campos comuns do modelo</h4>
+    <div id="template-common" class="catalog-fields" aria-labelledby="template-common-title"></div>
+    <h4 id="template-type-name"></h4>
+    <p id="template-type-description" class="catalog-description"></p>
+    <h4 id="template-specific-title">Campos específicos do tipo do modelo</h4>
+    <div id="template-specific" class="catalog-fields" aria-labelledby="template-specific-title"></div>
+  </section>
+</section>
 <div class="catalog-layout">
   <section class="panel catalog-list" aria-labelledby="context-list-title">
     <div class="catalog-actions"><h2 id="context-list-title">Seus contextos</h2><button id="context-refresh" type="button" disabled>Atualizar lista</button></div>
@@ -96,6 +117,7 @@
 {% endblock %}
 {% block scripts %}
 <script src="/static/catalog-fields.js?v={{ static_asset_version }}" defer></script>
+<script src="/static/catalog-templates.js?v={{ static_asset_version }}" defer></script>
 <script src="/static/catalog-versions.js?v={{ static_asset_version }}" defer></script>
 <script src="/static/contexts.js?v={{ static_asset_version }}" defer></script>
 {% endblock %}
