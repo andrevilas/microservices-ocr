@@ -13,6 +13,8 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictStr,
+    TypeAdapter,
+    ValidationInfo,
     model_validator,
 )
 
@@ -72,6 +74,16 @@ def _revision(value):
     return value
 
 
+_JSON_DATETIME = TypeAdapter(datetime)
+
+
+def _json_datetime(value, info: ValidationInfo):
+    """Restore strict JSON datetime parsing after the input snapshot validator."""
+    if info.mode == "json" and isinstance(value, str):
+        return _JSON_DATETIME.validate_json(json.dumps(value), strict=True)
+    return value
+
+
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() != timedelta(0):
         raise ValueError("created_at must be an aware UTC datetime.")
@@ -83,7 +95,9 @@ Sha256 = Annotated[StrictStr, AfterValidator(_sha256)]
 ObjectId = Annotated[StrictStr, AfterValidator(_object_id)]
 Version = Annotated[int, Field(strict=True, ge=1)]
 InitialRevision = Annotated[Literal[1], BeforeValidator(_revision)]
-UTCDateTime = Annotated[datetime, AfterValidator(_utc)]
+UTCDateTime = Annotated[
+    datetime, BeforeValidator(_json_datetime), AfterValidator(_utc)
+]
 
 
 class _TemplateDTO(BaseModel):

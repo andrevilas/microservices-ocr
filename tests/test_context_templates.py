@@ -376,6 +376,67 @@ def test_receipt_is_a_snapshot_with_utc_and_initial_revisions():
             templates.TemplateCloneReceipt.model_validate(invalid)
 
 
+def test_receipt_json_roundtrip_preserves_utc_and_microseconds():
+    data = _receipt()
+    data["created_at"] = datetime(2026, 10, 16, 12, 34, 56, 123456, tzinfo=timezone.utc)
+    receipt = templates.TemplateCloneReceipt.model_validate(data)
+    restored = templates.TemplateCloneReceipt.model_validate_json(receipt.model_dump_json())
+    assert restored == receipt
+    assert restored.model_dump() == data
+    assert restored.created_at.tzinfo is timezone.utc
+    assert restored.created_at.microsecond == 123456
+    copied = restored.model_copy()
+    assert copied == restored
+    copied.types.clear()
+    assert len(restored.types) == 1
+
+
+@pytest.mark.parametrize("timestamp", [
+    "2026-10-16T12:34:56.123456Z",
+    "2026-10-16T12:34:56.123456+00:00",
+])
+def test_receipt_accepts_utc_json_strings_only(timestamp):
+    data = _receipt()
+    data["created_at"] = datetime(2026, 10, 16, 12, 34, 56, 123456, tzinfo=timezone.utc)
+    expected = templates.TemplateCloneReceipt.model_validate(data)
+    payload = json.loads(expected.model_dump_json())
+    payload["created_at"] = timestamp
+    restored = templates.TemplateCloneReceipt.model_validate_json(json.dumps(payload))
+    assert restored == expected
+    assert restored.created_at.tzinfo is timezone.utc
+    with pytest.raises(ValidationError):
+        templates.TemplateCloneReceipt.model_validate(payload)
+
+
+@pytest.mark.parametrize("bad", [
+    0, 1792154096, 1792154096.123456, True, False, None,
+    "", "not-a-datetime", "2026-10-16", "2026-10-16T12:34:56.123456",
+    "2026-10-16T12:34:56+01:00", "2026-10-16T12:34:56-03:00",
+    "2026-02-30T12:34:56Z",
+])
+def test_receipt_rejects_invalid_json_datetimes(bad):
+    receipt = templates.TemplateCloneReceipt.model_validate(_receipt())
+    payload = json.loads(receipt.model_dump_json())
+    payload["created_at"] = bad
+    with pytest.raises(ValidationError):
+        templates.TemplateCloneReceipt.model_validate_json(json.dumps(payload))
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("change", ["extra", "revision"])
+@pytest.mark.parametrize("bad_revision", [True, False, "1", 1.0, 0, 2])
+def test_receipt_json_preserves_closed_fields_and_strict_revisions(nested, change, bad_revision):
+    receipt = templates.TemplateCloneReceipt.model_validate(_receipt())
+    payload = json.loads(receipt.model_dump_json())
+    target = payload["types"][0] if nested else payload
+    if change == "extra":
+        target["unexpected"] = True
+    else:
+        target["revision" if nested else "context_revision"] = bad_revision
+    with pytest.raises(ValidationError):
+        templates.TemplateCloneReceipt.model_validate_json(json.dumps(payload))
+
+
 def test_import_does_not_open_store_or_load_application(monkeypatch):
     original_import = builtins.__import__
     allowed_app_imports = {"app.context_templates", "app.document_models", "app.document_values"}
