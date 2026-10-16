@@ -65,7 +65,10 @@ _TYPE_ROW = ("SELECT t.type_id, t.context_id, t.revision, t.created_at, t.update
 _VERSION_COLUMNS = ("type_id, context_id, version, draft_revision, context_revision, type_name, context_name, "
                     "schema_version, schema_sha256, created_at")
 _VERSION_VIEW_COLUMNS = (", ".join("v." + column for column in _VERSION_COLUMNS.split(", "))
-                         + ", d.type_id, d.state, d.lifecycle_revision, d.changed_at")
+                         + ", d.type_id, d.state, d.lifecycle_revision, d.changed_at"
+                         + ", EXISTS (SELECT 1 FROM document_type_deprecations integrity "
+                         "WHERE integrity.type_id=v.type_id AND integrity.version=v.version "
+                         "AND integrity.owner<>v.owner)")
 _VERSION_VIEW_FROM = (
     " FROM document_type_versions v LEFT JOIN document_type_deprecations d "
     "ON d.owner=v.owner AND d.type_id=v.type_id AND d.version=v.version ")
@@ -310,7 +313,9 @@ class TypeService:
     def _lifecycle(summary: TypeVersionSummary, metadata) -> VersionLifecycle:
         """Validate joined operational metadata; only a genuinely absent row means published."""
         try:
-            marker, state, revision, changed_at = metadata
+            marker, state, revision, changed_at, owner_mismatch = metadata
+            if owner_mismatch:
+                raise ValueError
             if marker is None:
                 if any(value is not None for value in (state, revision, changed_at)):
                     raise ValueError
@@ -329,8 +334,8 @@ class TypeService:
         if row is None:
             raise ApplicationError(404, "type_version_not_found", "Type version not found.")
         summary = self._summary(row)
-        lifecycle = self._lifecycle(summary, row[10:14])
-        canonical = row[14]
+        lifecycle = self._lifecycle(summary, row[10:15])
+        canonical = row[15]
         try:
             if not isinstance(canonical, bytes) or hashlib.sha256(canonical).hexdigest() != summary.schema_sha256:
                 raise ValueError
@@ -373,5 +378,5 @@ class TypeService:
         for row in rows[:limit]:
             summary = self._summary(row)
             items.append(TypeVersionViewSummary(**summary.model_dump(),
-                                                lifecycle=self._lifecycle(summary, row[10:14])))
+                                                lifecycle=self._lifecycle(summary, row[10:15])))
         return TypeVersionPage(items=items, next_cursor=items[-1].version if len(rows) > limit else None)

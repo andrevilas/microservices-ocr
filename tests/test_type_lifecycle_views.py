@@ -196,11 +196,11 @@ def test_synthetic_deprecation_view_survives_restart_without_changing_snapshots(
         assert_view(service.get_version(OWNER, tid, 2), second)
 
 
-@pytest.mark.parametrize("subject,user_id", [("user:2", 2), ("admin:3", 3)])
-def test_foreign_identity_cannot_read_owner_versions(tmp_path, subject, user_id):
+@pytest.mark.parametrize("subject,user_id,is_admin", [("user:2", 2, False), ("admin:3", 3, True)])
+def test_foreign_identity_cannot_read_owner_versions(tmp_path, subject, user_id, is_admin):
     with opened(tmp_path / "ownership") as (store, contexts, service):
         _, tid, _ = seeded(contexts, service)
-        foreign = Principal(subject=subject, user_id=user_id, scopes=OWNER.scopes)
+        foreign = Principal(subject=subject, user_id=user_id, scopes=OWNER.scopes, is_admin=is_admin)
         assert_error(lambda: service.get_version(foreign, tid, 1), 404, "type_version_not_found")
         assert_error(lambda: service.list_versions(foreign, tid), 404, "type_not_found")
         no_read = Principal(subject=OWNER.subject, user_id=1, scopes=frozenset({"contexts:publish"}))
@@ -217,12 +217,31 @@ def test_foreign_identity_cannot_read_owner_versions(tmp_path, subject, user_id)
         assert error.value.status == 403
 
 
-def test_operational_join_includes_owner(tmp_path):
+def test_operational_owner_mismatch_is_sanitized_without_published_fallback(tmp_path):
     with opened(tmp_path / "join") as (store, contexts, service):
         _, tid, receipt = seeded(contexts, service)
-        insert_metadata(store, tid, owner="user:2")
-        assert_view(service.get_version(OWNER, tid, 1), receipt)
-        assert_view(service.list_versions(OWNER, tid).items[0], receipt)
+        before = stored_row(store, tid)
+        insert_metadata(store, tid, owner="user:2", changed_at="private-lifecycle-marker")
+        for call in (lambda: service.get_version(OWNER, tid, 1), lambda: service.list_versions(OWNER, tid)):
+            error = assert_error(call, 503, "storage_unavailable")
+            assert error.message == "Type storage is unavailable."
+            assert "private-lifecycle-marker" not in str(error)
+            assert "user:2" not in str(error)
+        for foreign in (
+            Principal(subject="user:2", user_id=2, scopes=OWNER.scopes),
+            Principal(subject="admin:3", user_id=3, scopes=OWNER.scopes, is_admin=True),
+        ):
+            assert_error(lambda: service.get_version(foreign, tid, 1), 404, "type_version_not_found")
+            assert_error(lambda: service.list_versions(foreign, tid), 404, "type_not_found")
+        no_read = Principal(subject=OWNER.subject, user_id=1, scopes=frozenset({"contexts:publish"}))
+        for call in (lambda: service.get_version(no_read, tid, 1), lambda: service.list_versions(no_read, tid)):
+            with pytest.raises(ApplicationError) as error:
+                call()
+            assert error.value.status == 403
+            assert "private-lifecycle-marker" not in str(error.value)
+        assert stored_row(store, tid) == before
+        assert publish(service, tid) == (receipt, True)
+        assert stored_row(store, tid) == before
 
 
 @pytest.mark.parametrize("column,value", [
