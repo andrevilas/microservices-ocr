@@ -54,6 +54,7 @@
   let busy = false, refreshing = false, lastSync = null, lastFull = 0, syncError = null;
   let pendingBatch = null, exportPending = null, resultView = null, progressText = "";
   let detailId = null, detailTrigger = null, filter = "all", limit = PAGE;
+  let starting = false, pollTimer = null, preferencesLoaded = false;
   const batches = new Map(); let batchesLoaded = false;
 
   // ---------------------------------------------------------------- messages
@@ -253,11 +254,13 @@
       else if (focusedRow) (focusedRow.isConnected ? focusedRow : $("history-title")).focus({preventScroll: true});
     }
     grid.setAttribute("aria-busy", busy ? "true" : "false");
-    $("empty-state").hidden = cards.size > 0;
+    $("empty-state").hidden = cards.size > 0 || !lastSync;
     $("filter-empty").hidden = !(cards.size > 0 && list.length === 0);
     $("filter-empty-text").textContent = all.length === 0 ? `Todos os ${cards.size} documento(s) estão ocultos nesta aba. Use Visualização › Mostrar ocultos.` : "Nenhum documento corresponde aos filtros.";
     const hiddenNote = hidden.size ? ` · ${hidden.size} oculto(s) nesta aba` : "";
-    $("results-summary").textContent = `Mostrando ${shown.length} de ${ui.count(list.length, "documento")}${list.length !== all.length ? ` (${all.length} na lista)` : ""}${hiddenNote}.`;
+    $("results-summary").textContent = !lastSync
+      ? (syncError ? "O histórico ainda não foi carregado. Tente novamente para consultar seus documentos." : "Consultando seus documentos…")
+      : `Mostrando ${shown.length} de ${ui.count(list.length, "documento")}${list.length !== all.length ? ` (${all.length} na lista)` : ""}${hiddenNote}.`;
     $("show-more-button").hidden = list.length <= limit;
     $("show-more-button").textContent = `Mostrar mais (${list.length - limit} restantes)`;
     $("select-visible-button").hidden = shown.length === 0;
@@ -338,7 +341,8 @@
     }
     $("status-summary").textContent = parts.length ? parts.join(" · ") : (lastSync
       ? `${ui.count(cards.size, "documento")} no histórico carregado · métricas indisponíveis`
-      : "Carregando o histórico…");
+      : syncError ? "Histórico indisponível" : "Carregando o histórico…");
+    $("refresh-workspace-button").textContent = !token && syncError ? "Tentar novamente" : "Atualizar";
     $("sync-status").textContent = syncError
       ? `Falha ao atualizar: ${syncError}${lastSync ? ` Exibindo dados de ${ui.time(lastSync)}.` : ""}`
       : lastSync ? `Atualizado às ${ui.time(lastSync)}` : "";
@@ -935,6 +939,7 @@
     notify("Visualização limpa. Use Visualização › Mostrar ocultos para ver o histórico de novo.", "info");
   });
   $("refresh-workspace-button").onclick = act(async () => {
+    if (!token) { await start(); return; }
     try { await refresh(); notify("Histórico atualizado do servidor.", "success"); }
     catch (e) { syncError = e.message; throw e; }
   });
@@ -969,30 +974,43 @@
 
   // ---------------------------------------------------------------- startup
   async function start() {
+    if (starting) return;
+    starting = true;
     try {
-      const session = await ui.browserToken();
-      token = session.access_token; subject = session.subject;
-    } catch (e) { notify(e.message, "error"); return; }
-    try {
-      localStorage.removeItem("ocr-recognizer-workspace-v2");
-      const pref = JSON.parse(localStorage.getItem(`ocr-display:${subject}`) || "{}");
-      $("search-input").value = pref.search || "";
-      $("sort-select").value = ["recent", "oldest", "name", "status", "size_desc", "size_asc"].includes(pref.sort) ? pref.sort : "recent";
-    } catch (_) { /* no restored job content */ }
-    // History and capabilities are independent: one failure must not block the other.
-    const [history, caps] = await Promise.allSettled([refresh(), loadCapabilities()]);
-    const problems = [];
-    if (history.status === "rejected") { syncError = history.reason.message; problems.push(`Histórico: ${history.reason.message}`); }
-    if (caps.status === "rejected") {
-      $("capabilities-retry").hidden = false;
-      $("options-summary").textContent = "Capacidades indisponíveis";
-      $("capability-note").textContent = "Não foi possível consultar as capacidades; o envio fica desabilitado até a consulta funcionar.";
-      problems.push(`Capacidades: ${caps.reason.message}`);
-    }
-    render();
-    if (problems.length) notify(problems.join(" "), "error");
-    else notify("Histórico sincronizado.", "info");
-    setInterval(tick, POLL_MS);
+      try {
+        const session = await ui.browserToken();
+        token = session.access_token; subject = session.subject;
+      } catch (e) {
+        syncError = e.message;
+        $("options-summary").textContent = "Aguardando recuperação da sessão";
+        $("capability-note").textContent = "Use Tentar novamente para recuperar a sessão e consultar as opções disponíveis.";
+        $("processing-mode").replaceChildren(el("option", {text: "Indisponível até recuperar a sessão"}));
+        render(); notify(e.message, "error"); return;
+      }
+      try {
+        if (!preferencesLoaded) {
+          localStorage.removeItem("ocr-recognizer-workspace-v2");
+          const pref = JSON.parse(localStorage.getItem(`ocr-display:${subject}`) || "{}");
+          $("search-input").value = pref.search || "";
+          $("sort-select").value = ["recent", "oldest", "name", "status", "size_desc", "size_asc"].includes(pref.sort) ? pref.sort : "recent";
+          preferencesLoaded = true;
+        }
+      } catch (_) { /* no restored job content */ }
+      // History and capabilities are independent: one failure must not block the other.
+      const [history, caps] = await Promise.allSettled([refresh(), loadCapabilities()]);
+      const problems = [];
+      if (history.status === "rejected") { syncError = history.reason.message; problems.push(`Histórico: ${history.reason.message}`); }
+      if (caps.status === "rejected") {
+        $("capabilities-retry").hidden = false;
+        $("options-summary").textContent = "Capacidades indisponíveis";
+        $("capability-note").textContent = "Não foi possível consultar as capacidades; o envio fica desabilitado até a consulta funcionar.";
+        problems.push(`Capacidades: ${caps.reason.message}`);
+      }
+      render();
+      if (problems.length) notify(problems.join(" "), "error");
+      else notify("Histórico sincronizado.", "info");
+      if (!pollTimer) pollTimer = setInterval(tick, POLL_MS);
+    } finally { starting = false; }
   }
   render();
   start();

@@ -212,8 +212,12 @@ async def browser_session(request: Request):
     A cross-origin form cannot supply the required custom header; CORS is closed.
     """
     origin = request.headers.get("origin")
-    expected = str(request.base_url).rstrip("/")
-    if (request.headers.get("x-ocr-browser") != "1" or not origin or origin != expected
+    # TLS may terminate before the ASGI server. Only an explicit deployment
+    # origin can supplement the direct origin; never trust arbitrary forwarded headers.
+    expected = {str(request.base_url).rstrip("/")}
+    if settings.browser_public_origin:
+        expected.add(settings.browser_public_origin)
+    if (request.headers.get("x-ocr-browser") != "1" or not origin or origin not in expected
             or request.headers.get("sec-fetch-site") == "cross-site"):
         raise HTTPException(403, "Same-origin browser session required.")
     token = request.cookies.get("access_token")

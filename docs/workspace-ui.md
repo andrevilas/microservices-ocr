@@ -42,9 +42,19 @@ de serviço. A resposta usa `Cache-Control: no-store` e `Pragma: no-cache`.
 O token fica em memória, nunca em localStorage, query string ou URL de download.
 Todas as operações OCR usam `/api/v1` com Bearer explícito e `credentials: omit`;
 caminhos são normalizados e precisam permanecer em `/api/v1/` da mesma origem.
-A API v1 continua recusando autenticação apenas por cookie. O reverse proxy deve
-preservar a origem externa e configurar corretamente os headers encaminhados;
-uma divergência de origem impede o bootstrap. O logout conserva a semântica atual
+A API v1 continua recusando autenticação apenas por cookie. Quando o proxy termina
+HTTPS e encaminha HTTP, configure no processo da aplicação
+`BROWSER_PUBLIC_ORIGIN=https://ocr.example.com` com a origem externa exata.
+Essa origem HTTPS explícita complementa a origem direta da requisição; não aceita
+wildcards, credenciais, caminhos ou confiança automática em `X-Forwarded-*`.
+Não habilita CORS nem altera a autenticação da API/MCP. O acesso direto continua
+funcionando com sua própria origem. Alternativamente, configure o servidor para
+interpretar cabeçalhos apenas de proxies confiáveis, conforme a
+[documentação do FastAPI](https://fastapi.tiangolo.com/advanced/behind-a-proxy/).
+Uma divergência de origem impede o bootstrap. A interface informa a falha e permite
+recuperar sessão, histórico e capacidades por “Tentar novamente”, sem manter um
+carregamento permanente ou afirmar que o histórico está vazio. Integrações também
+permite repetir a recuperação. O logout conserva a semântica atual
 da sessão humana; revogação de JWT/OAuth segue em AM-13, sem promessa de revogação
 do token já copiado. Conta e usuários continuam nos contratos legados (AM-14).
 

@@ -36,6 +36,17 @@ A estratégia de rollout segue o modelo de promoção de imagens com validação
 
 ## Variáveis de Ambiente e Configurações
 
+Se o acesso público usa HTTPS terminado no proxy, adicione **nas variáveis do
+contêiner da aplicação** `BROWSER_PUBLIC_ORIGIN=https://ocr.andre.goiania.br`.
+Use a origem externa exata, sem caminho. Isso permite recuperar a sessão humana
+no navegador mesmo quando o ASGI recebe HTTP. Não habilite confiança global em
+cabeçalhos encaminhados para resolver essa diferença.
+
+Após promover uma versão, valide o navegador pelo hostname público: recuperar
+sessão (`POST /auth/browser-session` 200), carregar histórico e capacidades,
+abrir integrações e executar upload/download sintético. `/health` e páginas HTML
+200 diretamente no NodePort não comprovam esses fluxos atrás do proxy.
+
 O script `rollout.py` aceita configurações via variáveis de ambiente ou por parâmetros de CLI.
 
 | Variável | Descrição | Valor Padrão |

@@ -164,10 +164,16 @@
 
   /* Human browser session: Bearer kept only in memory by the caller. */
   async function browserToken() {
-    const response = await fetch("/auth/browser-session", {method: "POST", credentials: "same-origin", headers: {"X-OCR-Browser": "1"}});
+    let response;
+    try { response = await fetch("/auth/browser-session", {method: "POST", credentials: "same-origin", headers: {"X-OCR-Browser": "1"}, signal: AbortSignal.timeout(15000)}); }
+    catch (_) { throw new Error(NETWORK); }
     if (response.status === 401) { location.assign("/login"); throw new Error("Sessão encerrada."); }
     if (!response.ok) throw new Error("Não foi possível recuperar a sessão do navegador.");
-    return response.json();
+    try {
+      const session = await response.json();
+      if (!session.access_token || !session.subject) throw new Error();
+      return session;
+    } catch (_) { throw new Error("A resposta da sessão ficou incompleta. Tente novamente."); }
   }
 
   /* Only same-origin /api/v1 paths after URL normalization. */

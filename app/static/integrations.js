@@ -18,6 +18,7 @@
     node.textContent = message; node.hidden = false;
   }
   async function api(path, options = {}) {
+    if (!token) throw new Error("Recupere a sessão usando Tentar novamente antes de continuar.");
     const target = ui.apiPath(path);
     let response;
     try {
@@ -202,10 +203,18 @@
     catch (_) { secret.select(); $("secret-copy-status").textContent = "Não foi possível copiar automaticamente; o texto está selecionado para cópia manual."; }
   };
 
-  (async () => {
+  const initialize = run(async () => {
+    $("integrations-retry").disabled = true;
     try {
       token = (await ui.browserToken()).access_token;
       await loadServices(true);
-    } catch (e) { show("error", e.message); }
-  })();
+      $("integrations-retry").hidden = true;
+      $("integrations-error").hidden = true;
+    } catch (e) {
+      $("integrations-retry").hidden = false;
+      show("error", e.message);
+    } finally { $("integrations-retry").disabled = false; }
+  });
+  $("integrations-retry").onclick = initialize;
+  initialize();
 })();

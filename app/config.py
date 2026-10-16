@@ -1,13 +1,16 @@
 from pathlib import Path
-from pydantic import Field
+from urllib.parse import urlsplit
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     app_name: str = "Fluxo OCR"
     app_env: str = "development"
-    static_asset_version: str = "20261015-ui-review"
+    static_asset_version: str = "20261016-browser-fixes"
+    browser_public_origin: str | None = None
+
     max_upload_size_mb: int = Field(default=80, ge=1)
     upload_ttl_seconds: int = Field(default=3600, ge=60)
     upload_storage_limit_mb: int = Field(default=2048, ge=1)
@@ -54,6 +57,20 @@ class Settings(BaseSettings):
     admin_password: str = "admin"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @field_validator("browser_public_origin")
+    @classmethod
+    def validate_browser_public_origin(cls, value):
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.path not in ("", "/")
+                or parsed.query or parsed.fragment or "?" in value or "#" in value
+                or "*" in value or any(c.isspace() for c in value)
+                or parsed.port == 0):
+            raise ValueError("BROWSER_PUBLIC_ORIGIN must be one HTTPS origin without credentials, path, query or fragment")
+        return f"https://{parsed.netloc.lower()}".removesuffix(":443")
 
 
 settings = Settings()
