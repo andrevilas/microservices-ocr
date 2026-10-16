@@ -8,8 +8,8 @@ import pytest
 
 from app.application import ApplicationError, Principal
 from app.catalog_models import TypeInput
-from app.document_models import ContextCreate, TypeDraft
-from app.services.context_service import ContextService
+from app.document_models import ContextCreate, RequiredWhen, TypeDraft
+from app.services.context_service import ContextService, _snapshot
 from app.services.storage_service import JobStore
 from app.services.type_service import TypeService
 
@@ -274,6 +274,69 @@ def test_update_with_corrupt_revision_changes_nothing(store, svc):
     before = snapshot_row(store)
     assert code(svc.update, p, cid, body("X"), expected_revision=1) == (503, "storage_unavailable")
     assert snapshot_row(store) == before
+
+
+@pytest.mark.parametrize("kind", ["copied_field", "constructed", "copied", "tuple", "condition", "mutated", "dict"])
+def test_invalid_internal_context_dto_is_atomic(store, svc, caplog, kind):
+    p = who()
+    original = body("Original", "source")
+    cid = svc.create(p, original, "key-original-001")[0].context_id
+    before = svc.get(p, cid)
+    candidate = body(MARKER, "source", "dependent")
+    if kind == "copied_field":
+        candidate = candidate.model_copy(update={"common_fields": [
+            candidate.common_fields[0].model_copy(update={"max_items": True})]})
+    elif kind == "constructed":
+        candidate = ContextCreate.model_construct(name={"secret": MARKER}, description="", common_fields=[])
+    elif kind == "copied":
+        candidate = candidate.model_copy(update={"name": {"secret": MARKER}})
+    elif kind == "tuple":
+        candidate = candidate.model_copy(update={"common_fields": tuple(candidate.common_fields)})
+    elif kind == "condition":
+        condition = RequiredWhen(field="source", equals="ok").model_copy(update={"equals": [MARKER]})
+        candidate = candidate.model_copy(update={"common_fields": [candidate.common_fields[0],
+            candidate.common_fields[1].model_copy(update={"required_when": condition})]})
+    elif kind == "mutated":
+        candidate.common_fields.append(candidate.common_fields[0])
+    else:
+        candidate = candidate.model_dump(mode="python")
+
+    for operation in (lambda: svc.create(p, candidate, "key-retry-0001"),
+                      lambda: svc.update(p, cid, candidate, expected_revision=1)):
+        with pytest.raises(ApplicationError) as error:
+            operation()
+        exc = error.value
+        assert (exc.status, exc.code, exc.message) == (422, "invalid_context_body", "Context body is invalid.")
+        assert exc.__cause__ is None and exc.__context__ is None
+        assert MARKER not in repr(exc.args) + str(exc) + caplog.text
+        assert rows(store) == 1 and svc.get(p, cid) == before
+    receipt, replayed = svc.create(p, body("Corrected"), "key-retry-0001")
+    assert not replayed and rows(store) == 2
+    assert svc.get(p, receipt.context_id).body.name == "Corrected"
+
+
+@pytest.mark.parametrize("equals,field_type", [(False, "boolean"), (0, "integer")])
+def test_context_snapshot_preserves_types_and_detaches_lists(svc, equals, field_type):
+    candidate = ContextCreate(name="Valid", common_fields=[
+        dict(name="source", type=field_type, description="synthetic"),
+        dict(name="dependent", type="string", description="synthetic", examples=["sample"],
+             required_when=dict(field="source", equals=equals))])
+    detached = _snapshot(candidate)
+    assert type(detached.common_fields) is list
+    assert type(detached.common_fields[1].examples) is list
+    assert type(detached.common_fields[1].required_when.equals) is type(equals)
+    assert detached.common_fields[1].required_when.equals == equals
+    assert detached.common_fields is not candidate.common_fields
+    assert detached.common_fields[1].examples is not candidate.common_fields[1].examples
+    receipt, _ = svc.create(who(), candidate, "key-valid-0001")
+    updated = svc.update(who(), receipt.context_id, candidate, expected_revision=1)
+    candidate.common_fields[1].examples.append("input change")
+    candidate.common_fields.clear()
+    detached.common_fields[1].examples.append("snapshot change")
+    assert updated.body.common_fields[1].examples == ["sample"]
+    updated.body.common_fields[1].examples.clear()
+    assert svc.get(who(), receipt.context_id).body.common_fields[1].examples == ["sample"]
+    assert detached.common_fields[1].examples == ["sample", "snapshot change"]
 
 
 class FailingCommit:

@@ -43,11 +43,16 @@ def _query_error() -> ApplicationError:
 
 
 def _snapshot(body: TypeDraft) -> TypeDraft:
-    """Revalidate from a plain dump: frozen models may hold lists mutated after construction."""
+    """Validate original Python types before dumping, then detach mutable values."""
     try:
-        return TypeDraft.model_validate(body.model_dump(mode="json", warnings="error"))
+        if not isinstance(body, TypeDraft):
+            raise ValueError
+        validated = TypeDraft.model_validate(body, strict=True)
+        return TypeDraft.model_validate(
+            validated.model_dump(mode="python", warnings="error"), strict=True)
     except Exception:
-        raise ApplicationError(422, "invalid_type_body", "Type body is invalid.") from None
+        pass
+    raise ApplicationError(422, "invalid_type_body", "Type body is invalid.") from None
 
 
 def _strict_int(value, low: int, high: int) -> bool:

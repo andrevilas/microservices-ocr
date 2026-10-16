@@ -6,10 +6,10 @@ from threading import Barrier
 import pytest
 
 from app.application import ApplicationError, Principal
-from app.document_models import ContextCreate, TypeDraft
+from app.document_models import ContextCreate, RequiredWhen, TypeDraft
 from app.services.context_service import ContextService
 from app.services.storage_service import JobStore
-from app.services.type_service import TypeService, TypeVersionRecord
+from app.services.type_service import TypeService, TypeVersionRecord, _snapshot
 
 BOTH = frozenset({"contexts:read", "contexts:write"})
 FIELD = dict(name="synthetic_field", type="string", description="synthetic field")
@@ -234,7 +234,8 @@ def test_mutated_body_is_rejected(store, contexts, svc):
     assert type_rows(store) == 1 and svc.get(p, tid).body.name == "Ok"
     with pytest.raises(ApplicationError) as error:
         svc.create(p, cid, bad, "key-00000002")
-    assert "Bad" not in error.value.message and error.value.__suppress_context__
+    assert "Bad" not in error.value.message
+    assert error.value.__context__ is None and error.value.__cause__ is None
 
 
 def test_stored_and_returned_values_are_isolated(contexts, svc):
@@ -279,6 +280,72 @@ def test_sql_failure_rolls_back_and_next_call_works(store, contexts, svc, monkey
     assert real.in_transaction is False and type_rows(store) == 0
     receipt, replayed = svc.create(p, cid, draft("Sensitive-Body"), "key-00000001")  # same key was not consumed
     assert replayed is False and svc.get(p, receipt.type_id).body.name == "Sensitive-Body"
+
+
+@pytest.mark.parametrize("kind", ["copied_field", "constructed", "copied", "tuple", "condition", "mutated", "dict"])
+def test_invalid_internal_type_dto_is_atomic(store, contexts, svc, caplog, kind):
+    marker = "internal-type-secret-marker"
+    p = who()
+    cid = new_context(contexts, p)
+    tid = svc.create(p, cid, draft("Original", "source"), "key-original-001")[0].type_id
+    before = svc.get(p, tid)
+    candidate = draft(marker, "source", "dependent")
+    if kind == "copied_field":
+        candidate = candidate.model_copy(update={"specific_fields": [
+            candidate.specific_fields[0].model_copy(update={"max_items": True})]})
+    elif kind == "constructed":
+        candidate = TypeDraft.model_construct(name={"secret": marker}, description="", specific_fields=[])
+    elif kind == "copied":
+        candidate = candidate.model_copy(update={"name": {"secret": marker}})
+    elif kind == "tuple":
+        candidate = candidate.model_copy(update={"specific_fields": tuple(candidate.specific_fields)})
+    elif kind == "condition":
+        condition = RequiredWhen(field="source", equals="ok").model_copy(update={"equals": [marker]})
+        candidate = candidate.model_copy(update={"specific_fields": [candidate.specific_fields[0],
+            candidate.specific_fields[1].model_copy(update={"required_when": condition})]})
+    elif kind == "mutated":
+        candidate.specific_fields.append(candidate.specific_fields[0])
+    else:
+        candidate = candidate.model_dump(mode="python")
+
+    for operation in (lambda: svc.create(p, cid, candidate, "key-retry-0001"),
+                      lambda: svc.update(p, tid, candidate, expected_revision=1)):
+        with pytest.raises(ApplicationError) as error:
+            operation()
+        exc = error.value
+        assert (exc.status, exc.code, exc.message) == (422, "invalid_type_body", "Type body is invalid.")
+        assert exc.__cause__ is None and exc.__context__ is None
+        assert marker not in repr(exc.args) + str(exc) + caplog.text
+        assert type_rows(store) == 1 and svc.get(p, tid) == before
+    receipt, replayed = svc.create(p, cid, draft("Corrected"), "key-retry-0001")
+    assert not replayed and type_rows(store) == 2
+    assert svc.get(p, receipt.type_id).body.name == "Corrected"
+
+
+@pytest.mark.parametrize("equals,field_type", [(False, "boolean"), (0, "integer")])
+def test_type_snapshot_preserves_types_and_detaches_lists(contexts, svc, equals, field_type):
+    candidate = TypeDraft(name="Valid", description="synthetic", specific_fields=[
+        dict(name="source", type=field_type, description="synthetic"),
+        dict(name="dependent", type="string", description="synthetic", examples=["sample"],
+             required_when=dict(field="source", equals=equals))])
+    detached = _snapshot(candidate)
+    assert type(detached.specific_fields) is list
+    assert type(detached.specific_fields[1].examples) is list
+    assert type(detached.specific_fields[1].required_when.equals) is type(equals)
+    assert detached.specific_fields[1].required_when.equals == equals
+    assert detached.specific_fields is not candidate.specific_fields
+    assert detached.specific_fields[1].examples is not candidate.specific_fields[1].examples
+    p = who()
+    cid = new_context(contexts, p)
+    receipt, _ = svc.create(p, cid, candidate, "key-valid-0001")
+    updated = svc.update(p, receipt.type_id, candidate, expected_revision=1)
+    candidate.specific_fields[1].examples.append("input change")
+    candidate.specific_fields.clear()
+    detached.specific_fields[1].examples.append("snapshot change")
+    assert updated.body.specific_fields[1].examples == ["sample"]
+    updated.body.specific_fields[1].examples.clear()
+    assert svc.get(p, receipt.type_id).body.specific_fields[1].examples == ["sample"]
+    assert detached.specific_fields[1].examples == ["sample", "snapshot change"]
 
 
 # ---------------------------------------------------------------- A05b: immutable publication
