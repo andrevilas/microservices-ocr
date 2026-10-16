@@ -228,6 +228,20 @@ async def browser_session(request: Request):
                         headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
 
 
+@auth_router.get("/contexts")
+async def contexts_page(request: Request, user: dict = Depends(require_auth)):
+    """Render context CRUD for authenticated human users; API scopes govern access."""
+    return templates.TemplateResponse(
+        request=request,
+        name="contexts.html",
+        context={
+            "app_name": settings.app_name,
+            "static_asset_version": settings.static_asset_version,
+            "user": user,
+        },
+    )
+
+
 @auth_router.get("/account")
 async def account_page(request: Request, user: dict = Depends(require_auth)):
     """Render the current user's account page."""

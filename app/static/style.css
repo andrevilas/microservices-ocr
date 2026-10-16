@@ -468,6 +468,37 @@ body.is-busy .job-list, body.is-busy .detail-actions { cursor: progress; }
   .row-select { min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; }
 }
 
+/* Context CRUD: styles apply only to the catalog page. */
+.catalog-page .catalog-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); align-items: start; }
+.catalog-page .catalog-layout > .panel { min-width: 0; margin-top: 0; display: grid; gap: var(--s3); }
+.catalog-page .catalog-layout *, .catalog-page .catalog-actions > *, .catalog-page .page-head > * { min-width: 0; }
+.catalog-page .catalog-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+.catalog-page .catalog-actions:not(:empty) { margin-bottom: var(--s2); }
+.catalog-page h1 { font-size: 1.375rem; }
+.catalog-page h2 { font-size: 1.0625rem; }
+.catalog-page h3 { font-size: 0.9375rem; }
+.catalog-page p, .catalog-page label, .catalog-page li, .catalog-page dt, .catalog-page dd, .catalog-page h1, .catalog-page h2, .catalog-page h3 { overflow-wrap: anywhere; }
+.catalog-page button, .catalog-page .button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; padding-top: var(--s2); padding-bottom: var(--s2); }
+.catalog-page textarea { width: 100%; max-width: 100%; min-height: 100px; padding: var(--s2) var(--s3); border: 1px solid var(--control-border); border-radius: var(--radius-sm); background: var(--surface); resize: vertical; }
+.catalog-page textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.catalog-page input[readonly], .catalog-page textarea[readonly] { background: var(--surface-2); }
+.catalog-page .catalog-error { font-size: 0.875rem; color: var(--danger); }
+.catalog-page [aria-invalid="true"] { outline: 2px solid var(--danger); outline-offset: 1px; }
+.catalog-page .catalog-comparison { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); padding-top: var(--s3); border-top: 1px solid var(--border); }
+.catalog-page .catalog-comparison ol { padding-left: var(--s4); }
+.catalog-page .catalog-description { white-space: pre-wrap; }
+.catalog-page .entity__meta { overflow-wrap: anywhere; }
+.catalog-page .topnav { flex-wrap: wrap; overflow: visible; }
+@media (max-width: 719px) {
+  .catalog-page .topbar { align-items: flex-start; }
+  .catalog-page .brand, .catalog-page .account-nav, .catalog-page .topnav { min-width: 0; max-width: 100%; }
+  .catalog-page .account-nav { flex-wrap: wrap; }
+  .catalog-page .topnav a, .catalog-page .account-nav a { white-space: normal; overflow-wrap: anywhere; }
+}
+@media (min-width: 960px) {
+  .catalog-page .catalog-layout { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); }
+}
+
 /* Pure catalog field editor; all additions are locally scoped. */
 .catalog-fields { display: grid; gap: var(--s3); min-width: 0; max-width: 100%; }
 .catalog-fields .catalog-fields__list,

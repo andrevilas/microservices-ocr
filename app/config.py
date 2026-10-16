@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "Fluxo OCR"
     app_env: str = "development"
-    static_asset_version: str = "20261016-browser-fixes"
+    static_asset_version: str = "20261016-contexts-u2a-i"
     browser_public_origin: str | None = None
 
     max_upload_size_mb: int = Field(default=80, ge=1)

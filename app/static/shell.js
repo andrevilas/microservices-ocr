@@ -4,6 +4,12 @@
 
   // API v1 error codes (error.code). Unknown codes fall back to the server message.
   const ERRORS = {
+    context_revision_conflict: "O contexto foi alterado por outra operação. Consulte a versão atual.",
+    context_revision_limit: "Este contexto atingiu o limite de revisões.",
+    context_quota_exceeded: "O limite de contextos foi atingido.",
+    invalid_context_body: "Revise o nome, a descrição e os campos do contexto; o conteúdo também pode exceder o limite permitido.",
+    invalid_context_query: "A consulta de contextos é inválida. Atualize a lista.",
+    context_not_found: "Contexto não encontrado.",
     authentication_required: "Sua sessão expirou. Entre novamente.",
     insufficient_scope: "Esta identidade não tem permissão para a operação.",
     admin_required: "Operação restrita a administradores.",
