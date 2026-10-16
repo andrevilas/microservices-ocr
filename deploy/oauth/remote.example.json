@@ -1,0 +1,8 @@
+{
+  "origin": "https://ocr-mcp.example.invalid",
+  "issuer": "https://ocr-auth.example.invalid/realms/ocr",
+  "introspection_client_id": "ocr-resource",
+  "secret_file": "/run/secrets/introspection_secret",
+  "subjects": {},
+  "allowed_clients": ["ocr-lab"]
+}

@@ -1,0 +1,99 @@
+# Isolated candidate stack; never mount the current production OCR data here.
+# No public binding by default. A reviewed reverse proxy must terminate/re-encrypt
+# TLS, preserve Host, verify upstream certificates and filter Keycloak paths.
+name: ocr-oauth-candidate
+services:
+  database:
+    image: ${POSTGRES_IMAGE:?Set a reviewed PostgreSQL image, preferably by digest}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD_FILE: /run/secrets/database_password
+    secrets: [database_password]
+    volumes:
+      - identity-db:/var/lib/postgresql/data
+    networks: [identity]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U keycloak -d keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  identity:
+    image: ${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.8.1}
+    restart: unless-stopped
+    entrypoint: [/bin/bash, /opt/ocr/start-keycloak.sh]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://database:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_HOSTNAME: https://${IDENTITY_HOST:?Set the identity hostname}
+      KC_HTTP_ENABLED: "false"
+      KC_HTTPS_CERTIFICATE_FILE: /run/secrets/identity_certificate
+      KC_HTTPS_CERTIFICATE_KEY_FILE: /run/secrets/identity_private_key
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: bootstrap-admin
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${IDENTITY_PORT:-31802}:8443"
+    secrets: [database_password, introspection_secret, bootstrap_password, identity_certificate, identity_private_key]
+    volumes:
+      - ./start-keycloak.sh:/opt/ocr/start-keycloak.sh:ro
+      - ${REALM_FILE:?Generate the realm with exact client callbacks}:/opt/keycloak/data/import/ocr-realm.json:ro
+    networks: [identity, resource]
+    depends_on:
+      database:
+        condition: service_healthy
+
+  ocr:
+    image: ${OCR_IMAGE:?Build and select the reviewed OCR candidate image}
+    restart: unless-stopped
+    entrypoint: [/bin/sh, /opt/ocr/start-ocr.sh]
+    environment:
+      OCR_REMOTE_CONFIG_FILE: /run/ocr/remote.json
+      OCR_TMP_DIR: /data/ocr
+      USER_DB_PATH: /data/ocr/users.sqlite3
+      JOB_WORKER_CONCURRENCY: "1"
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${OCR_PORT:-31801}:8000"
+    secrets: [introspection_secret, ocr_jwt_secret, ocr_admin_password, ocr_certificate, ocr_private_key]
+    volumes:
+      - ./start-ocr.sh:/opt/ocr/start-ocr.sh:ro
+      - ${REMOTE_CONFIG_FILE:?Create the private remote configuration}:/run/ocr/remote.json:ro
+      - ocr-candidate-data:/data/ocr
+    networks: [resource]
+    # The image's legacy /health probe is deliberately unavailable remotely.
+    # This TCP check proves liveness only. Deployment smoke must exercise OAuth.
+    healthcheck:
+      test: [CMD, python, -c, "import socket; socket.create_connection(('127.0.0.1',8000),2).close()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+networks:
+  identity:
+    internal: true
+  resource: {}
+volumes:
+  identity-db: {}
+  ocr-candidate-data: {}
+secrets:
+  database_password:
+    file: ${PRIVATE_DIR:?Set an absolute private directory}/database-password
+  bootstrap_password:
+    file: ${PRIVATE_DIR}/bootstrap-password
+  introspection_secret:
+    file: ${PRIVATE_DIR}/introspection-secret
+  ocr_jwt_secret:
+    file: ${PRIVATE_DIR}/ocr-jwt-secret
+  ocr_admin_password:
+    file: ${PRIVATE_DIR}/ocr-admin-password
+  identity_certificate:
+    file: ${PRIVATE_DIR}/identity-fullchain.pem
+  identity_private_key:
+    file: ${PRIVATE_DIR}/identity-key.pem
+  ocr_certificate:
+    file: ${PRIVATE_DIR}/ocr-fullchain.pem
+  ocr_private_key:
+    file: ${PRIVATE_DIR}/ocr-key.pem

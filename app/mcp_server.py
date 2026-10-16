@@ -21,8 +21,9 @@ from app.services.control_service import get_control_service, retry_and_enqueue
 
 class BearerAuth:
     """Authenticate every request, including discovery; do not bind auth to a session."""
-    def __init__(self, app):
+    def __init__(self, app, request_authenticator=None):
         self.app = app
+        self.request_authenticator = request_authenticator
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -33,7 +34,8 @@ class BearerAuth:
         header = request.headers.get("authorization", "")
         scheme, _, token = header.partition(" ")
         try:
-            principal = authenticate_bearer(token if scheme.lower() == "bearer" else None)
+            principal = (await self.request_authenticator(request) if self.request_authenticator else
+                         authenticate_bearer(token if scheme.lower() == "bearer" else None))
         except ApplicationError as error:
             response = JSONResponse({"error": {"code": error.code, "message": error.message}},
                                     status_code=error.status, headers={"WWW-Authenticate": "Bearer"})
@@ -44,7 +46,8 @@ class BearerAuth:
 
 def build_mcp_server(service_provider=get_job_application, upload_provider=get_upload_service,
                      queue_provider=get_job_queue_processor, batch_provider=get_batch_service,
-                     export_provider=get_export_service, control_provider=get_control_service):
+                     export_provider=get_export_service, control_provider=get_control_service,
+                     *, request_authenticator=None, transport_security=None):
     server = OcrMCPServer("OCR Recognizer", version="0.5.0", instructions=INSTRUCTIONS)
 
     async def invoke(ctx: Context, operation: str, *args):
@@ -88,10 +91,10 @@ def build_mcp_server(service_provider=get_job_application, upload_provider=get_u
     register_tools(server, invoke)
 
     # Explicit loopback allowlist includes both default and non-default ports.
-    security = TransportSecuritySettings(
+    security = transport_security or TransportSecuritySettings(
         allowed_hosts=["localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*", "[::1]", "[::1]:*"],
         allowed_origins=["http://localhost", "http://localhost:*", "http://127.0.0.1", "http://127.0.0.1:*", "http://[::1]", "http://[::1]:*"],
     )
     transport = server.streamable_http_app(json_response=True, stateless_http=True,
                                             max_request_body_size=65536, transport_security=security)
-    return server, BearerAuth(transport)
+    return server, BearerAuth(transport, request_authenticator)

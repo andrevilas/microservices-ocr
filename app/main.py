@@ -27,7 +27,7 @@ from app.services.upload_service import get_upload_service
 from app.http_contract import API_VERSION, ERRORS, V1Boundary, error_response, is_v1, install_openapi
 
 
-def create_app(service_provider=get_job_application) -> FastAPI:
+def create_app(service_provider=get_job_application, *, request_authenticator=None, transport_security=None) -> FastAPI:
     # Resolve the same injectable instances for both transports, without creating
     # storage or starting workers at import/discovery time.
     def uploads():
@@ -45,7 +45,8 @@ def create_app(service_provider=get_job_application) -> FastAPI:
     def controls():
         return application.dependency_overrides.get(get_control_service, get_control_service)()
 
-    mcp_server, mcp_app = build_mcp_server(service_provider, uploads, queue, batches, exports, controls)
+    mcp_server, mcp_app = build_mcp_server(service_provider, uploads, queue, batches, exports, controls,
+                                          request_authenticator=request_authenticator, transport_security=transport_security)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
@@ -90,6 +91,9 @@ def create_app(service_provider=get_job_application) -> FastAPI:
         versioned_routes.extend(versioned_router.routes)
     if service_provider is not get_job_application:
         application.dependency_overrides[get_job_application] = service_provider
+    if request_authenticator is not None:
+        from app.security import require_principal
+        application.dependency_overrides[require_principal] = request_authenticator
     application.mount("/", mcp_app)
     application.add_middleware(V1Boundary, routes=versioned_routes)
 

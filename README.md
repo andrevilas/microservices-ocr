@@ -19,6 +19,11 @@ e [painel que restaura o histórico do backend](docs/workspace-ui.md). Execute u
 ASGI por diretório de dados; a concorrência de OCR é controlada por
 `JOB_WORKER_CONCURRENCY`.
 
+Para acesso remoto OAuth, consulte o [candidato Keycloak/HTTPS](deploy/oauth/README.md).
+Ele usa o entrypoint separado `app.remote:create_remote_app`, com discovery MCP,
+validação de audience e escopos e rotas públicas restritas. A publicação HTTPS e
+a homologação nos seis aplicativos são etapas distintas da validação local.
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate

@@ -65,6 +65,12 @@ host não é um teste aprovado. Não houve chamada paga de modelo nesta validaç
 
 ## Documentação oficial consultada
 
+O [candidato OAuth remoto](../deploy/oauth/README.md) usa Keycloak e clientes
+pré-registrados com PKCE S256. Não reutilize a credencial de serviço do gerador
+stdio para esse endpoint. Os callbacks e o procedimento de registro de cada host
+devem ser observados e homologados na AM-16; o teste de protocolo com SDK não
+substitui essa verificação. O pacote remoto ainda não publica um hostname público.
+
 - [Claude Code MCP](https://code.claude.com/docs/en/mcp): stdio, command/args/env e escopos de configuração.
 - [Antigravity MCP](https://antigravity.google/docs/mcp) e [CLI MCP](https://antigravity.google/docs/cli/mcp): configurações de projeto e globais; confirmar comportamento da versão instalada.
 - [Codex CLI MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli): configuração TOML e timeouts.
