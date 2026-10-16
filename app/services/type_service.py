@@ -1,7 +1,10 @@
-"""Owner-scoped persistent draft CRUD for document types (service layer only; no routes).
+"""Owner-scoped persistent draft CRUD and immutable schema publication for document types (service layer only).
 
 Precondition: ContextService(jobs) was already initialized by the caller, so document_contexts exists.
+Published versions are append-only: document_type_versions only ever receives INSERT and SELECT.
 """
+import hashlib
+import json
 import re
 import sqlite3
 from contextlib import suppress
@@ -11,11 +14,14 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.application import ApplicationError, Principal
-from app.document_models import TypeDraft
+from app.document_models import SCHEMA_VERSION, ContextCreate, TypeDraft, compose_schema
+from app.document_values import validate_values
 from app.services.batch_service import request_identity
 from app.services.storage_service import JobStore
 
 MAX_TYPES_PER_OWNER = 100
+MAX_VERSIONS_PER_OWNER = 100
+MAX_VERSIONS_PER_TYPE = 20
 MAX_REVISION = 2**31 - 1
 _ID = re.compile(r"[0-9a-f]{32}")
 _DTO = ConfigDict(extra="forbid", frozen=True)
@@ -56,6 +62,31 @@ class TypePage(BaseModel):
     next_cursor: str | None = None
 
 
+class TypeVersionSummary(BaseModel):
+    """Stable consumer reference: type_id + version + schema_sha256 (the hash covers only the canonical envelope)."""
+    model_config = _DTO
+    type_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    context_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    version: int = Field(ge=1)
+    draft_revision: int = Field(ge=1, le=MAX_REVISION)
+    context_revision: int = Field(ge=1, le=MAX_REVISION)
+    type_name: str
+    context_name: str
+    schema_version: str
+    schema_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    created_at: datetime
+
+
+class TypeVersionRecord(TypeVersionSummary):
+    schema: dict  # decoded from the stored canonical bytes, never recomputed
+
+
+class TypeVersionPage(BaseModel):
+    model_config = _DTO
+    items: list[TypeVersionSummary]
+    next_cursor: int | None = None
+
+
 def _type_not_found() -> ApplicationError:
     return ApplicationError(404, "type_not_found", "Type not found.")
 
@@ -93,6 +124,10 @@ _TYPE_ROW = ("SELECT t.type_id, t.context_id, t.revision, t.created_at, t.update
              "FROM document_types t JOIN document_contexts c ON c.context_id=t.context_id AND c.owner=t.owner ")
 
 
+_VERSION_COLUMNS = ("type_id, context_id, version, draft_revision, context_revision, type_name, context_name, "
+                    "schema_version, schema_sha256, created_at")
+
+
 class TypeService:
     def __init__(self, jobs: JobStore):
         self.jobs = jobs
@@ -105,6 +140,15 @@ class TypeService:
                     UNIQUE(owner, create_key_hash))""")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_document_types_owner_context "
                              "ON document_types(owner, context_id, type_id)")
+                conn.execute("""CREATE TABLE IF NOT EXISTS document_type_versions (
+                    owner TEXT NOT NULL, type_id TEXT NOT NULL, context_id TEXT NOT NULL,
+                    version INTEGER NOT NULL CHECK(version>=1), draft_revision INTEGER NOT NULL,
+                    context_revision INTEGER NOT NULL, type_name TEXT NOT NULL, context_name TEXT NOT NULL,
+                    schema_version TEXT NOT NULL, canonical BLOB NOT NULL, schema_sha256 TEXT NOT NULL,
+                    created_at TEXT NOT NULL, key_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
+                    PRIMARY KEY(type_id, version), UNIQUE(owner, key_hash))""")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_document_type_versions_owner_type "
+                             "ON document_type_versions(owner, type_id, version)")
         except sqlite3.Error:
             raise _unavailable() from None
 
@@ -240,3 +284,121 @@ class TypeService:
         return TypeRecord(type_id=type_id, context_id=context_id, revision=expected_revision + 1,
                           created_at=datetime.fromisoformat(created_at), updated_at=datetime.fromisoformat(now),
                           body=snapshot)
+
+    # -- immutable publication
+    @staticmethod
+    def _summary(row) -> TypeVersionSummary:
+        try:
+            return TypeVersionSummary(type_id=row[0], context_id=row[1], version=row[2], draft_revision=row[3],
+                                      context_revision=row[4], type_name=row[5], context_name=row[6],
+                                      schema_version=row[7], schema_sha256=row[8],
+                                      created_at=datetime.fromisoformat(row[9]))
+        except Exception:
+            raise _unavailable() from None  # corrupt persisted row; never echo its content
+
+    def publish(self, principal: Principal, type_id: str, *, expected_revision: int,
+                expected_context_revision: int, key: str) -> tuple[TypeVersionSummary, bool]:
+        principal.require("contexts:read")
+        principal.require("contexts:publish")
+        if not (_strict_int(expected_revision, 1, MAX_REVISION)
+                and _strict_int(expected_context_revision, 1, MAX_REVISION)):
+            raise _query_error()
+        if not _valid_id(type_id):
+            raise _type_not_found()
+        key_hash, request_hash = request_identity(key, {
+            "operation": "type.publish.v1", "type_id": type_id, "expected_revision": expected_revision,
+            "expected_context_revision": expected_context_revision})
+        owner = principal.subject
+        now = datetime.now(timezone.utc).isoformat()
+
+        def work(conn):
+            # Replay first: it must survive later edits, a full quota and revision changes.
+            row = conn.execute("SELECT " + _VERSION_COLUMNS + ", request_hash FROM document_type_versions "
+                               "WHERE owner=? AND key_hash=?", (owner, key_hash)).fetchone()
+            if row:
+                if row[10] != request_hash:
+                    raise ApplicationError(409, "idempotency_conflict", "This key was used for a different publication.")
+                return self._summary(row), True
+            found = conn.execute(
+                "SELECT t.context_id, t.revision, t.payload, c.revision, c.payload FROM document_types t "
+                "JOIN document_contexts c ON c.context_id=t.context_id AND c.owner=t.owner "
+                "WHERE t.type_id=? AND t.owner=?", (type_id, owner)).fetchone()
+            if found is None:
+                raise _type_not_found()
+            if found[1] != expected_revision:
+                raise ApplicationError(409, "type_revision_conflict", "The type was changed; read it again.")
+            if found[3] != expected_context_revision:
+                raise ApplicationError(409, "context_revision_conflict", "The context was changed; read it again.")
+            try:
+                draft = TypeDraft.model_validate_json(found[2])
+                context = ContextCreate.model_validate_json(found[4])
+            except Exception:
+                raise _unavailable() from None  # corrupt persisted content
+            try:
+                composed = compose_schema(context.common_fields, draft.specific_fields)
+                validate_values([*context.common_fields, *draft.specific_fields], {})
+            except ValueError:
+                raise ApplicationError(422, "invalid_type_schema", "The type schema is invalid.") from None
+            counts = conn.execute(
+                "SELECT COUNT(*), COALESCE(SUM(type_id=?), 0), COALESCE(MAX(CASE WHEN type_id=? THEN version END), 0) "
+                "FROM document_type_versions WHERE owner=?", (type_id, type_id, owner)).fetchone()
+            if counts[0] >= MAX_VERSIONS_PER_OWNER or counts[1] >= MAX_VERSIONS_PER_TYPE:
+                raise ApplicationError(429, "type_version_quota_exceeded", "The published version limit was reached.")
+            version = counts[2] + 1
+            conn.execute("INSERT INTO document_type_versions (owner, type_id, context_id, version, draft_revision, "
+                         "context_revision, type_name, context_name, schema_version, canonical, schema_sha256, "
+                         "created_at, key_hash, request_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                         (owner, type_id, found[0], version, found[1], found[3], draft.name, context.name,
+                          SCHEMA_VERSION, composed.canonical, composed.sha256, now, key_hash, request_hash))
+            return TypeVersionSummary(type_id=type_id, context_id=found[0], version=version,
+                                      draft_revision=found[1], context_revision=found[3], type_name=draft.name,
+                                      context_name=context.name, schema_version=SCHEMA_VERSION,
+                                      schema_sha256=composed.sha256, created_at=datetime.fromisoformat(now)), False
+
+        return self._write(work)
+
+    def get_version(self, principal: Principal, type_id: str, version: int) -> TypeVersionRecord:
+        principal.require("contexts:read")
+        if not _strict_int(version, 1, 2**63 - 1):
+            raise _query_error()
+        if not _valid_id(type_id):
+            raise _type_not_found()
+        row = self._read(lambda conn: conn.execute(
+            "SELECT " + _VERSION_COLUMNS + ", canonical FROM document_type_versions "
+            "WHERE owner=? AND type_id=? AND version=?", (principal.subject, type_id, version)).fetchone())
+        if row is None:
+            raise ApplicationError(404, "type_version_not_found", "Type version not found.")
+        summary = self._summary(row)
+        canonical = row[10]
+        try:
+            if not isinstance(canonical, bytes) or hashlib.sha256(canonical).hexdigest() != summary.schema_sha256:
+                raise ValueError
+            schema = json.loads(canonical)
+            if (not isinstance(schema, dict) or schema.get("schema_version") != summary.schema_version
+                    or summary.schema_version != SCHEMA_VERSION
+                    or not all(isinstance(schema.get(k), list) for k in ("common_fields", "specific_fields", "fields"))):
+                raise ValueError
+        except Exception:
+            raise _unavailable() from None  # integrity failure; never echo stored content
+        return TypeVersionRecord(**summary.model_dump(), schema=schema)
+
+    def list_versions(self, principal: Principal, type_id: str, *, limit: int = 25,
+                      after: int | None = None) -> TypeVersionPage:
+        principal.require("contexts:read")
+        if not _strict_int(limit, 1, 100) or not (after is None or _strict_int(after, 1, 2**63 - 1)):
+            raise _query_error()
+        if not _valid_id(type_id):
+            raise _type_not_found()
+        owner = principal.subject
+
+        def work(conn):
+            if conn.execute("SELECT 1 FROM document_types WHERE type_id=? AND owner=?", (type_id, owner)).fetchone() is None:
+                raise _type_not_found()
+            # Summary columns only: canonical BLOBs are never loaded for listings.
+            return conn.execute("SELECT " + _VERSION_COLUMNS + " FROM document_type_versions "
+                                "WHERE owner=? AND type_id=? AND version>? ORDER BY version ASC LIMIT ?",
+                                (owner, type_id, after or 0, limit + 1)).fetchall()
+
+        rows = self._read(work)
+        items = [self._summary(r) for r in rows[:limit]]
+        return TypeVersionPage(items=items, next_cursor=items[-1].version if len(rows) > limit else None)

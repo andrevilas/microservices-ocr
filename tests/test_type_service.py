@@ -279,3 +279,286 @@ def test_sql_failure_rolls_back_and_next_call_works(store, contexts, svc, monkey
     assert real.in_transaction is False and type_rows(store) == 0
     receipt, replayed = svc.create(p, cid, draft("Sensitive-Body"), "key-00000001")  # same key was not consumed
     assert replayed is False and svc.get(p, receipt.type_id).body.name == "Sensitive-Body"
+
+
+# ---------------------------------------------------------------- A05b: immutable publication
+PUB = frozenset({"contexts:read", "contexts:write", "contexts:publish"})
+
+
+def spec(name, **extra):
+    return dict(name=name, type="string", description="synthetic field", **extra)
+
+
+def published_type(contexts, svc, p, common=(), specific=(), n=1):
+    """Context + type with synthetic fields; returns (context_id, type_id)."""
+    cid = contexts.create(p, ContextCreate(name="Ctx", common_fields=list(common)), f"ctx-key-{n:08d}")[0].context_id
+    tid = svc.create(p, cid, TypeDraft(name="Typ", description="synthetic", specific_fields=list(specific)),
+                     f"typ-key-{n:08d}")[0].type_id
+    return cid, tid
+
+
+def pub(svc, p, tid, key, rev=1, crev=1):
+    return svc.publish(p, tid, expected_revision=rev, expected_context_revision=crev, key=key)
+
+
+def version_rows(store):
+    with store._lock:
+        return store._get_conn().execute("SELECT COUNT(*) FROM document_type_versions").fetchone()[0]
+
+
+def stored(store, tid, version):
+    with store._lock:
+        return store._get_conn().execute(
+            "SELECT canonical, schema_sha256, type_name, context_name, draft_revision, context_revision "
+            "FROM document_type_versions WHERE type_id=? AND version=?", (tid, version)).fetchone()
+
+
+def test_publish_snapshots_stay_intact_after_edits_and_reopen(tmp_path, store, contexts, svc):
+    import hashlib
+    import json
+    p = who(scopes=PUB)
+    cid, tid = published_type(contexts, svc, p, common=[spec("common_one")], specific=[spec("own_one")])
+    s1, replayed = pub(svc, p, tid, "pub-key-0001")
+    assert replayed is False and (s1.version, s1.draft_revision, s1.context_revision) == (1, 1, 1)
+    before = stored(store, tid, 1)
+    assert hashlib.sha256(before[0]).hexdigest() == before[1] == s1.schema_sha256
+    contexts.update(p, cid, ContextCreate(name="Ctx2", common_fields=[spec("common_two")]), expected_revision=1)
+    svc.update(p, tid, TypeDraft(name="Typ2", specific_fields=[spec("own_two")]), expected_revision=1)
+    s2, _ = pub(svc, p, tid, "pub-key-0002", rev=2, crev=2)
+    assert (s2.version, s2.draft_revision, s2.context_revision, s2.type_name, s2.context_name) == (2, 2, 2, "Typ2", "Ctx2")
+    assert s2.schema_sha256 != s1.schema_sha256
+    assert stored(store, tid, 1) == before and stored(store, tid, 1)[2:4] == ("Typ", "Ctx")
+    reopened = TypeService(JobStore(tmp_path))
+    record = reopened.get_version(p, tid, 1)
+    assert record.schema == json.loads(before[0]) and record.schema_sha256 == before[1]
+    assert [f["name"] for f in record.schema["common_fields"]] == ["common_one"]
+    assert [f["name"] for f in record.schema["specific_fields"]] == ["own_one"]
+    assert [f["name"] for f in record.schema["fields"]] == ["common_one", "own_one"]
+    assert (record.type_name, record.context_name, record.draft_revision) == ("Typ", "Ctx", 1)
+    assert "Typ" not in before[0].decode() and cid not in before[0].decode() and tid not in before[0].decode()
+    assert svc.get(p, tid).revision == 2  # the draft stays editable; no published state in the draft
+    assert code(svc.get_version, p, tid, 3) == (404, "type_version_not_found")
+
+
+def test_required_field_publishes_and_cross_field_condition_is_rejected(store, contexts, svc):
+    p = who(scopes=PUB)
+    _, ok = published_type(contexts, svc, p, specific=[spec("must_have", required=True)])
+    assert pub(svc, p, ok, "pub-key-0001")[0].version == 1  # complete=False: no document values needed
+    bad_fields = [dict(name="count", type="integer", description="synthetic field"),
+                  spec("other", required_when=dict(field="count", equals="abc"))]
+    _, bad = published_type(contexts, svc, p, specific=bad_fields, n=2)
+    assert code(pub, svc, p, bad, "pub-key-0002") == (422, "invalid_type_schema")
+    assert version_rows(store) == 1
+
+
+def test_schema_limits_and_conflicts_are_rejected_without_writes(store, contexts, svc):
+    p = who(scopes=PUB)
+    _, dup = published_type(contexts, svc, p, common=[spec("same_name")], specific=[spec("same_name")])
+    assert code(pub, svc, p, dup, "pub-key-0001") == (422, "invalid_type_schema")
+    _, many = published_type(contexts, svc, p, common=[spec(f"c_{n}") for n in range(60)],
+                             specific=[spec(f"s_{n}") for n in range(41)], n=2)
+    assert code(pub, svc, p, many, "pub-key-0002") == (422, "invalid_type_schema")
+    big = "x" * 4000
+    _, heavy = published_type(contexts, svc, p, common=[spec(f"c_{n}", examples=[big]) for n in range(40)],
+                              specific=[spec(f"s_{n}", examples=[big]) for n in range(40)], n=3)
+    assert code(pub, svc, p, heavy, "pub-key-0003") == (422, "invalid_type_schema")
+    assert version_rows(store) == 0
+
+
+def test_revision_mismatch_conflicts_do_not_write_or_consume_key(store, contexts, svc):
+    p = who(scopes=PUB)
+    cid, tid = published_type(contexts, svc, p, common=[spec("common_one")])
+    contexts.update(p, cid, ContextCreate(name="Ctx", common_fields=[spec("common_changed")]), expected_revision=1)
+    assert code(pub, svc, p, tid, "pub-key-0001", 1, 1) == (409, "context_revision_conflict")
+    svc.update(p, tid, TypeDraft(name="Typ2"), expected_revision=1)
+    assert code(pub, svc, p, tid, "pub-key-0001", 1, 2) == (409, "type_revision_conflict")
+    assert version_rows(store) == 0
+    assert pub(svc, p, tid, "pub-key-0001", 2, 2)[1] is False  # same key still usable
+    for bad in (True, "1", 1.0, 0, -1, 2**31, None):
+        assert code(pub, svc, p, tid, "pub-key-0002", bad, 2) == (422, "invalid_type_query")
+        assert code(pub, svc, p, tid, "pub-key-0002", 2, bad) == (422, "invalid_type_query")
+    assert code(pub, svc, p, tid, "short") == (422, "invalid_idempotency_key")
+
+
+def test_publish_replay_survives_edits_and_key_reuse_conflicts(store, contexts, svc):
+    p = who(scopes=PUB)
+    cid, tid = published_type(contexts, svc, p)
+    first, _ = pub(svc, p, tid, "pub-key-0001")
+    contexts.update(p, cid, ContextCreate(name="Other"), expected_revision=1)
+    svc.update(p, tid, TypeDraft(name="Other"), expected_revision=1)
+    assert pub(svc, p, tid, "pub-key-0001") == (first, True)  # original summary, despite stale revisions
+    assert code(pub, svc, p, tid, "pub-key-0001", 2, 2) == (409, "idempotency_conflict")
+    assert version_rows(store) == 1
+    second, replayed = pub(svc, p, tid, "pub-key-0002", 2, 2)  # new key: explicit publication even if schema equal
+    assert replayed is False and second.version == 2
+    with store._lock:
+        assert "pub-key-0001" not in str(store._get_conn().execute("SELECT * FROM document_type_versions").fetchall())
+
+
+def test_publish_scopes_owner_isolation_and_admin_without_bypass(store, contexts, svc):
+    owner = who(scopes=PUB)
+    _, tid = published_type(contexts, svc, owner)
+    pub(svc, owner, tid, "pub-key-0001")
+    for scopes in ({"contexts:read", "contexts:write"}, {"contexts:publish"}, set()):
+        assert code(pub, svc, who(scopes=scopes), tid, "pub-key-0002") == (403, "insufficient_scope")
+    assert code(svc.get_version, who(scopes={"contexts:publish"}), tid, 1) == (403, "insufficient_scope")
+    assert code(svc.list_versions, who(scopes=set()), tid) == (403, "insufficient_scope")
+    other = who("user:2", scopes=PUB, is_admin=True, kind="service")
+    missing = (404, "type_not_found")
+    assert code(pub, svc, other, tid, "pub-key-0003") == missing == code(pub, svc, other, "0" * 32, "pub-key-0003")
+    assert code(pub, svc, other, "bad-id", "pub-key-0003") == missing
+    assert code(svc.get_version, other, tid, 1) == (404, "type_version_not_found")
+    assert code(svc.list_versions, other, tid) == missing
+    assert code(pub, svc, other, tid, "pub-key-0001") == missing  # replay never crosses owners
+    assert version_rows(store) == 1
+
+
+def test_returned_values_are_isolated(contexts, svc):
+    p = who(scopes=PUB)
+    _, tid = published_type(contexts, svc, p, specific=[spec("own_one")])
+    pub(svc, p, tid, "pub-key-0001")
+    record = svc.get_version(p, tid, 1)
+    record.schema["fields"].clear()
+    record.schema["schema_version"] = "tampered"
+    again = svc.get_version(p, tid, 1)
+    assert len(again.schema["fields"]) == 1 and again.schema["schema_version"] != "tampered"
+
+
+def test_concurrent_publish_same_key_yields_one_version(store, contexts, svc):
+    p = who(scopes=PUB)
+    _, tid = published_type(contexts, svc, p)
+    barrier = Barrier(8, timeout=WAIT)
+
+    def attempt(_):
+        barrier.wait()
+        return pub(svc, p, tid, "pub-key-0001")
+
+    with ThreadPoolExecutor(8) as pool:
+        results = [f.result(timeout=2 * WAIT) for f in [pool.submit(attempt, n) for n in range(8)]]
+    assert len({summary for summary, _ in results}) == 1
+    assert sorted(replayed for _, replayed in results) == [False] + [True] * 7
+    assert version_rows(store) == 1
+
+
+def test_publish_versus_context_update_freezes_expected_revision_or_conflicts(store, contexts, svc):
+    p = who(scopes=PUB)
+    cid, tid = published_type(contexts, svc, p, common=[spec("common_one")])
+    barrier = Barrier(2, timeout=WAIT)
+
+    def publisher():
+        barrier.wait()
+        try:
+            return pub(svc, p, tid, "pub-key-0001")[0]
+        except ApplicationError as error:
+            return (error.status, error.code)
+
+    def editor():
+        barrier.wait()
+        contexts.update(p, cid, ContextCreate(name="Ctx", common_fields=[spec("common_two")]), expected_revision=1)
+
+    with ThreadPoolExecutor(2) as pool:
+        a, b = pool.submit(publisher), pool.submit(editor)
+        outcome, _ = a.result(timeout=2 * WAIT), b.result(timeout=2 * WAIT)
+    if isinstance(outcome, tuple):
+        assert outcome == (409, "context_revision_conflict") and version_rows(store) == 0
+    else:
+        assert outcome.context_revision == 1
+        names = [f["name"] for f in svc.get_version(p, tid, 1).schema["common_fields"]]
+        assert names == ["common_one"]
+
+
+def test_quotas_per_type_and_per_owner_with_replay_when_full(store, contexts, svc):
+    p = who(scopes=PUB)
+    _, first = published_type(contexts, svc, p, n=1)
+    for n in range(20):
+        pub(svc, p, first, f"pub-key-{n:04d}")
+    assert code(pub, svc, p, first, "pub-key-9999") == (429, "type_version_quota_exceeded")
+    assert pub(svc, p, first, "pub-key-0003")[1] is True  # replay precedes quota
+    assert version_rows(store) == 20
+    for t in range(2, 6):  # fill the owner to the global limit using other types
+        _, other = published_type(contexts, svc, p, n=t)
+        for n in range(20):
+            pub(svc, p, other, f"pub-t{t}-{n:04d}")
+    assert version_rows(store) == 100
+    _, extra = published_type(contexts, svc, p, n=7)
+    assert code(pub, svc, p, extra, "pub-key-8888") == (429, "type_version_quota_exceeded")
+    assert pub(svc, p, first, "pub-key-0000")[1] is True
+    q = who("user:2", scopes=PUB)
+    _, qtid = published_type(contexts, svc, q, n=9)
+    assert pub(svc, q, qtid, "pub-key-0000")[1] is False  # other owners are unaffected, no global dedup
+
+
+def test_list_versions_pagination_summaries_and_query_validation(contexts, svc):
+    p = who(scopes=PUB)
+    _, tid = published_type(contexts, svc, p, specific=[spec("own_one")])
+    for n in range(5):
+        pub(svc, p, tid, f"pub-key-{n:04d}")
+    seen, after = [], None
+    while True:
+        page = svc.list_versions(p, tid, limit=2, after=after)
+        assert len(page.items) <= 2 and all(not hasattr(i, "schema") for i in page.items)
+        seen += [i.version for i in page.items]
+        if page.next_cursor is None:
+            break
+        assert page.next_cursor == page.items[-1].version
+        after = page.next_cursor
+    assert seen == [1, 2, 3, 4, 5]
+    assert svc.list_versions(p, tid, limit=5).next_cursor is None and svc.list_versions(p, tid, after=5).items == []
+    for kwargs in ({"limit": 0}, {"limit": 101}, {"limit": True}, {"limit": "5"}, {"after": 0}, {"after": -1},
+                   {"after": True}, {"after": "1"}):
+        assert code(svc.list_versions, p, tid, **kwargs) == (422, "invalid_type_query")
+    for bad in ("latest", 0, -1, True, 1.0, None):
+        assert code(svc.get_version, p, tid, bad) == (422, "invalid_type_query")
+    assert code(svc.get_version, p, "bad-id", 1) == (404, "type_not_found")
+    assert code(svc.list_versions, p, "0" * 32) == (404, "type_not_found")
+
+
+def test_corrupted_stored_version_is_503_without_content(store, contexts, svc):
+    p = who(scopes=PUB)
+    _, tid = published_type(contexts, svc, p, specific=[spec("Sensitive-Field")])
+    pub(svc, p, tid, "pub-key-0001")
+    pub(svc, p, tid, "pub-key-0002")
+    pub(svc, p, tid, "pub-key-0003")
+    with store._lock:
+        conn = store._get_conn()
+        conn.execute("UPDATE document_type_versions SET canonical=? WHERE version=1", (b'{"schema_version":"1"}',))
+        conn.execute("UPDATE document_type_versions SET schema_sha256=? WHERE version=2", ("0" * 64,))
+        conn.execute("UPDATE document_type_versions SET created_at='garbage' WHERE version=3")
+        conn.commit()
+    for version in (1, 2, 3):
+        with pytest.raises(ApplicationError) as error:
+            svc.get_version(p, tid, version)
+        assert (error.value.status, error.value.code) == (503, "storage_unavailable")
+        assert "Sensitive-Field" not in error.value.message
+    with pytest.raises(ApplicationError) as error:
+        svc.list_versions(p, tid)
+    assert error.value.status == 503
+
+
+def test_publish_sql_failure_rolls_back_and_key_is_not_consumed(store, contexts, svc, monkeypatch):
+    p = who(scopes=PUB)
+    _, tid = published_type(contexts, svc, p, specific=[spec("own_one")])
+
+    class FailOnce:
+        def __init__(self, conn):
+            self.conn, self.armed = conn, True
+
+        def execute(self, sql, *args):
+            if self.armed and sql.lstrip().startswith("INSERT INTO document_type_versions"):
+                self.armed = False
+                raise sqlite3.OperationalError("leaky-detail own_one")
+            return self.conn.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self.conn, name)
+
+    real = store._get_conn()
+    flaky = FailOnce(real)
+    monkeypatch.setattr(store, "_get_conn", lambda: flaky)
+    with pytest.raises(ApplicationError) as error:
+        pub(svc, p, tid, "pub-key-0001")
+    assert (error.value.status, error.value.code) == (503, "storage_unavailable")
+    assert "leaky" not in error.value.message and "own_one" not in error.value.message
+    assert real.in_transaction is False and version_rows(store) == 0
+    summary, replayed = pub(svc, p, tid, "pub-key-0001")
+    assert replayed is False and summary.version == 1
