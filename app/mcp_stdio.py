@@ -48,6 +48,11 @@ def catalog_request(operation, args):
             return "GET", path, page(args[1], args[2]), None, None
         return "POST", path, None, dump(args[1]), key(args[2])
     path = "/document-types/" + _catalog_id(args[0], "type_not_found")
+    if operation == "deprecate_document_type_version":
+        version, body, idempotency_key = args[1:]
+        if not isinstance(version, int) or isinstance(version, bool) or not 1 <= version <= 2**63 - 1:
+            raise ToolError("version_not_found: Resource not found.")
+        return "POST", f"{path}/versions/{version}/deprecate", None, dump(body), key(idempotency_key)
     if operation == "get_document_type":
         return "GET", path, None, None, None
     if operation == "update_document_type":
@@ -154,7 +159,7 @@ class ApiClient:
         elif operation == "list_batches":
             path = "/batches"
             query = {key: value for key, value in zip(("limit", "cursor"), args) if value is not None}
-        elif operation in CATALOG_OPERATIONS:
+        elif operation in CATALOG_OPERATIONS or operation == "deprecate_document_type_version":
             method, path, query, body, headers = catalog_request(operation, args)
             content = catalog_body(body)
             if content is not None:

@@ -56,6 +56,10 @@ def execute_catalog(services, principal, operation, args):
         type_id, body, key = args
         return types.publish(principal, type_id, expected_revision=body.expected_revision,
                              expected_context_revision=body.expected_context_revision, key=key)[0]
+    if operation == "deprecate_document_type_version":
+        type_id, version, body, key = args
+        return types.deprecate(principal, type_id, version,
+                               expected_lifecycle_revision=body.expected_lifecycle_revision, key=key)[0]
     if operation == "list_document_type_versions":
         type_id, limit, after = args
         return types.list_versions(principal, type_id, limit=limit, after=after)
@@ -107,7 +111,7 @@ def build_mcp_server(service_provider=get_job_application, upload_provider=get_u
             raise ToolError("authentication_required: A valid Bearer token is required.")
 
         def execute():
-            if operation in CATALOG_OPERATIONS:
+            if operation in CATALOG_OPERATIONS or operation == "deprecate_document_type_version":
                 return execute_catalog(catalog_provider(), principal, operation, args)
             if operation in ("cancel", "cancel_many"):
                 return getattr(control_provider(), operation)(principal, *args)
