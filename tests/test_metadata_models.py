@@ -350,6 +350,106 @@ def test_mutated_and_constructed_models_cannot_bypass_helper():
         validate_manual_input(nested)
 
 
+@pytest.mark.parametrize("method", ["construct", "copy"])
+@pytest.mark.parametrize("target,attribute,bad", [
+    ("segment", "page_start", True),
+    ("segment", "page_end", True),
+    ("segment", "type_version", True),
+    ("ref", "artifact_version", True),
+    ("ref", "text_version", True),
+    ("ref", "page", True),
+    ("ref", "start", False),
+    ("ref", "end", True),
+    ("ref", "item_index", False),
+    ("root", "segments", "tuple"),
+    ("segment", "fields", "tuple"),
+    ("field", "evidence", "tuple"),
+    ("field", "raw", "tuple"),
+])
+def test_nested_forged_models_are_strictly_revalidated(method, target, attribute, bad):
+    original = validate_manual_input(request(segments=[segment(fields=[
+        field([True], evidence=[evidence(item_index=0)])
+    ])]))
+    nodes = {
+        "root": original,
+        "segment": original.segments[0],
+        "field": original.segments[0].fields[0],
+        "ref": original.segments[0].fields[0].evidence[0],
+    }
+    node = nodes[target]
+    replacement = tuple(getattr(node, attribute)) if bad == "tuple" else bad
+    updates = {attribute: replacement}
+    if method == "construct":
+        forged = type(node).model_construct(**{**node.__dict__, **updates})
+    else:
+        forged = node.model_copy(update=updates)
+    assert type(getattr(forged, attribute)) is type(replacement)
+    if target == "ref":
+        forged = nodes["field"].model_copy(update={"evidence": [forged]})
+    if target in ("ref", "field"):
+        forged = nodes["segment"].model_copy(update={"fields": [forged]})
+    if target != "root":
+        forged = original.model_copy(update={"segments": [forged]})
+    with pytest.raises(ValueError) as caught:
+        validate_manual_input(forged)
+    assert str(caught.value) == "Invalid manual metadata input."
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize("mutation", ["raw_null", "raw_float", "evidence_bool", "evidence_scalar_index"])
+def test_mutated_nested_lists_are_revalidated(mutation):
+    original = validate_manual_input(request(segments=[segment(fields=[
+        field([True], evidence=[evidence(item_index=0)])
+    ])]))
+    item = original.segments[0].fields[0]
+    if mutation == "raw_null":
+        item.raw.append(None)
+    elif mutation == "raw_float":
+        item.raw.append(1.0)
+    elif mutation == "evidence_bool":
+        item.evidence.append(item.evidence[0].model_copy(update={"page": True}))
+    else:
+        item.evidence.append(EvidenceRef(**evidence()))
+    with pytest.raises(ValueError):
+        validate_manual_input(original)
+
+
+@pytest.mark.parametrize("source_kind", ["instance", "dictionary"])
+def test_valid_boolean_clone_detaches_every_nested_list(source_kind):
+    original = validate_manual_input(request(segments=[segment(fields=[
+        field([True, False, 1, 0], evidence=[evidence(item_index=0)]),
+        field(False, field_name="other"),
+    ])]))
+    source = original if source_kind == "instance" else {
+        "expected_head": None, "expected_sha256": None, "segments": original.segments,
+    }
+    cloned = validate_manual_input(source)
+    assert cloned == original
+    assert cloned is not original
+    assert cloned.segments is not original.segments
+    for left_segment, right_segment in zip(original.segments, cloned.segments):
+        assert right_segment is not left_segment
+        assert right_segment.fields is not left_segment.fields
+        for left, right in zip(left_segment.fields, right_segment.fields):
+            assert right is not left
+            assert right.evidence is not left.evidence
+            if isinstance(left.raw, list):
+                assert right.raw is not left.raw
+                assert [type(value) for value in right.raw] == [bool, bool, int, int]
+            else:
+                assert right.raw is False
+            for left_ref, right_ref in zip(left.evidence, right.evidence):
+                assert right_ref is not left_ref
+    original.segments[0].fields[0].raw.clear()
+    original.segments[0].fields[0].evidence.clear()
+    original.segments[0].fields.clear()
+    original.segments.clear()
+    assert cloned.segments[0].fields[0].raw == [True, False, 1, 0]
+    assert len(cloned.segments[0].fields[0].evidence) == 1
+    assert cloned.segments[0].fields[1].raw is False
+
+
 def test_fixed_public_errors_do_not_retain_sensitive_failures():
     marker = "SENSITIVE_RAW_QUOTE_PROVENANCE"
     cases = [request(segments=[segment(fields=[field(marker, provenance=marker)])]),

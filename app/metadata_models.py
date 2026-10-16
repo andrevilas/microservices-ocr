@@ -199,14 +199,13 @@ class SaveMetadataReceipt(_ClosedModel):
 def validate_manual_input(value) -> SaveMetadataInput:
     """Return an independently revalidated request; expose only a fixed error."""
     try:
-        if isinstance(value, SaveMetadataInput):
-            value = value.model_dump(mode="json", by_alias=True, warnings="error")
-        elif type(value) is not dict:
+        if not isinstance(value, SaveMetadataInput) and type(value) is not dict:
             raise ValueError("A model or dictionary is required.")
-        result = SaveMetadataInput.model_validate(value)
-        # Round-trip dictionaries too: detach all nested mutable model state.
-        dump = result.model_dump(mode="json", by_alias=True, warnings="error")
-        result = SaveMetadataInput.model_validate(dump)
+        # Revalidate original nested instances before serialization can coerce them.
+        result = SaveMetadataInput.model_validate(value, strict=True)
+        # Detach nested mutable state only after strict recursive validation.
+        dump = result.model_dump(mode="python", by_alias=True, warnings="error")
+        result = SaveMetadataInput.model_validate(dump, strict=True)
         _check_request_bytes(result.model_dump(mode="json", by_alias=True, warnings="error"))
         return result
     except Exception:
