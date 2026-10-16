@@ -45,6 +45,12 @@ Nenhuma capacidade pendente foi renomeada como concluída.
 
 A revisão de interface ([ui-review.md](ui-review.md)) alterou apenas a apresentação
 e o cliente web; contratos HTTP v1 (30 operações) e MCP (20 tools) não mudaram.
+Cobertura E1 (PDF/A e compactação, [pdfa.md](pdfa.md)): os presets usam `balanced`
+como padrão; as capabilities não oferecem `pdfa` sem validador; o relatório final
+mostra falha ou aprovação da validação. Tudo pela mesma API e pelo mesmo MCP, sem
+novas operações; as contagens (30 operações, 20 tools) permanecem, e isso não
+declara o Contexts pronto.
+
 A única rota nova é a página HTML `GET /admin/integrations`, protegida por
 `require_admin`, que consome as operações já existentes de F24.
 

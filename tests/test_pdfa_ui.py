@@ -16,8 +16,8 @@ PDFA_OPTIONS = {"processing_mode": "preserve_existing_text", "languages": ["eng"
 REPORT = {"job_id": FAILED_ID, "status": "failed", "generated_at": "2026-10-15T12:00:00Z", "duration_ms": 1200, "page_count": 1,
           "options_effective": PDFA_OPTIONS,
           "output_validation": {"requested_format": "pdfa", "pdf_readable": True, "page_count_matches": True,
-                                "pdfa_conformance": "failed", "pdfa_profile": "PDF/A-2B", "pdfa_validator": "verapdf",
-                                "pdfa_validator_version": "1.30.2", "pdfa_reason_codes": ["pdfa_rule_failed"]},
+                                "pdfa_conformance": "failed", "pdfa_profile": "2b", "pdfa_validator": "verapdf",
+                                "pdfa_validator_version": "1.30.2", "pdfa_reason_codes": ["non_compliant"]},
           "warnings": []}
 UNAVAILABLE = {"error": {"code": "result_unavailable", "message": "Synthetic result unavailable."}}
 
@@ -112,7 +112,7 @@ def test_retained_failed_job_shows_report_without_text_or_download(runtime, brow
     page.locator("#report-button").click()
     content = page.locator("#result-content")
     expect(content).to_contain_text("PDF/A-2b reprovado (veraPDF 1.30.2)")
-    expect(content).to_contain_text("pdfa_rule_failed")
+    expect(content).to_contain_text("non_compliant")
     expect(page.locator("#report-button")).to_have_attribute("aria-pressed", "true")
     assert not published(calls)
     assert not errors
@@ -156,7 +156,8 @@ def test_expired_failed_job_removes_report_access(runtime, browser):
     page.locator("#report-button").click()
     expect(page.locator("#result-content")).to_contain_text("PDF/A-2b reprovado")
     state["retention"] = EXPIRED
-    expect(page.locator("#results-switch")).to_be_hidden(timeout=15000)  # next poll sees the expiry
+    page.locator("#refresh-workspace-button").click()  # the full sync runs every 60s with no active jobs
+    expect(page.locator("#results-switch")).to_be_hidden(timeout=15000)
     expect(page.locator("#result-content")).to_be_empty()
     expect(page.locator("#results-unavailable")).to_have_text("Os arquivos deste job não estão mais disponíveis.")
     expect(page.locator("#detail-danger")).to_be_hidden()

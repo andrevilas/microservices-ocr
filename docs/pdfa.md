@@ -4,7 +4,7 @@
 
 ## Contrato de plataforma
 
-- A execução do veraPDF é **somente POSIX** (produção: Linux/Docker). No Windows, `validate()` retorna `indeterminate` com `unsupported_platform` **antes** de iniciar qualquer processo, e a capacidade `engines.verapdf` aparece indisponível com esse motivo. As demais operações continuam funcionando no Windows; trabalhos `pdfa` falham de forma fechada.
+- A execução do veraPDF é **somente POSIX** (produção: Linux/Docker). No Windows, `validate()` retorna `indeterminate` com `unsupported_platform` **antes** de iniciar qualquer processo, e a capacidade `engines.verapdf` aparece indisponível com esse motivo. As demais operações continuam funcionando no Windows. A API v1 recusa `pdfa` como indisponível; trabalhos legados sem opções (que usam `FINAL_OUTPUT_TYPE=pdfa`) podem falhar de forma fechada.
 - Testes de execução real de processo (timeout, limite de relatório, descendentes) rodam apenas em POSIX; os testes do parser usam saída injetada em processo e rodam em todas as plataformas.
 
 ## Configuração (somente servidor)
@@ -43,16 +43,22 @@ Os padrões seguem a API (`capabilities.defaults`, inclusive idiomas, `pdfa`/`ba
 
 ## Evidência real (2026-10-16)
 
-Executada pelo Codex em Docker Linux, imagem `sha256:c04d926e9a455cc47a198067c417e5664501e9dd668b1506622041a1a67f0a28`, com documentos sintéticos (nenhum dado original):
+Documentos sintéticos (nenhum dado original). Duas evidências distintas:
+
+**Benchmark standalone anterior** (não atribuído à imagem `c04`):
 
 - 9 conversões (3 presets × born-digital, digitalizado 300 dpi e misto) validadas pelo veraPDF como PDF/A-2b.
-- Harness do produto: 8 casos aprovados — 6 (presets × digital/misto) e 2 negativos (finalizador que omite a conversão e validador ausente), ambos falhando de forma fechada.
 - Digitalizado de 1.044.861 bytes → `balanced` 703.586, `economic` 429.811, `preservation` 843.583.
 - CER/WER 0 em um corpus pequeno e idealizado; **não** é medida de precisão universal.
+
+**Harness do produto** (imagem `sha256:c04d926e9a455cc47a198067c417e5664501e9dd668b1506622041a1a67f0a28`, Docker Linux, executado pelo Codex):
+
+- 8 casos aprovados — 6 (presets × digital/misto) e 2 negativos (finalizador que omite a conversão e validador ausente), ambos falhando de forma fechada.
+- Repetição pelo Codex com `docker --network none --cpus 2 --memory 2g --memory-swap 2g` (run `integration-real-20261016T102459Z-5adc3ac7`): os 8 casos reais passaram; `memory.peak` 260669440 bytes (~249 MiB), `memory.max` 2147483648, `oom` 0 e `oom_kill` 0.
 
 ## Limites
 
 - Um descendente que crie a própria sessão escapa do `killpg`.
 - A derivada não preserva assinaturas digitais do original; `passed` não declara isso.
 - Testes unitários usam veraPDF/OCRmyPDF falsos e só comprovam regras do wrapper e da integração. Testes com engines simuladas que não tratam de PDF/A fixam `FINAL_OUTPUT_TYPE=pdf` localmente; os testes PDF/A explícitos ficam em `tests/test_pdfa_integration.py`.
-- A evidência real acima não constitui benchmark completo nem homologação de produção. O preset `economic` continua **experimental**. Não há homologação no TrueNAS nem com limite de 2 GB de memória (o harness usou 4 GB).
+- A evidência real acima não constitui benchmark completo nem homologação de produção. O preset `economic` continua **experimental**. O harness de 8 casos passou com limite de 2 GiB de memória (pico ~249 MiB), mas o corpus é pequeno: isso não dimensiona documentos de 300 páginas nem homologa o TrueNAS.
