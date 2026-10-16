@@ -16,7 +16,7 @@ from app.application import JobApplication
 from app.catalog_mcp_tools import CATALOG_OPERATIONS, register_catalog_tools
 from app.catalog_models import (ContextInput, ContextUpdateInput, TypeDeprecateInput, TypeInput, TypePublishInput,
                                 TypeUpdateInput)
-from app.context_templates import TemplateCloneInput
+from app.context_templates import TemplateCloneInput, TemplateCloneReceipt
 from app.main import create_app
 from app.mcp_stdio import ApiClient, MAX_RESPONSE_BYTES
 from app.mcp_tools import OcrMCPServer
@@ -261,6 +261,151 @@ def test_template_clone_requires_every_public_argument(missing):
     run(scenario())
 
 
+def clone_receipt_payload():
+    return {
+        "template_id": "generic", "template_version": 1, "template_sha256": "a" * 64,
+        "context_id": "b" * 32, "context_revision": 1,
+        "types": [{"type_key": "document", "type_id": "c" * 32, "revision": 1}],
+        "created_at": "2026-10-16T00:00:00Z",
+    }
+
+
+def clone_tool_arguments():
+    return {
+        "template_id": "generic",
+        "body": {"expected_version": 1, "expected_sha256": "a" * 64},
+        "idempotency_key": "clone-boundary-01",
+    }
+
+
+def assert_clone_receipt_content(result, expected):
+    assert not result.is_error
+    assert result.structured_content == expected
+    assert len(result.content) == 1 and result.content[0].type == "text"
+    text = result.content[0].text
+    assert json.loads(text) == expected
+    assert TemplateCloneReceipt.model_validate_json(text).model_dump(mode="json") == expected
+
+
+@pytest.mark.parametrize("representation", ["Z", "+00:00", "dto"])
+def test_template_clone_output_accepts_json_utc_and_revalidates_dto(representation):
+    payload = clone_receipt_payload()
+    canonical = TemplateCloneReceipt.model_validate_json(json.dumps(payload))
+    if representation == "+00:00":
+        payload["created_at"] = "2026-10-16T00:00:00+00:00"
+    returned = canonical if representation == "dto" else payload
+    seen = []
+
+    async def scenario():
+        async def invoke(ctx, operation, *args):
+            seen.append((operation, *args))
+            return returned
+        async with Client(isolated_server(invoke)) as client:
+            return await client.call_tool("ocr_clone_context_template", clone_tool_arguments())
+
+    result = run(scenario())
+    assert_clone_receipt_content(result, canonical.model_dump(mode="json"))
+    assert len(seen) == 1
+    operation, template_id, body, key = seen[0]
+    assert operation == "clone_context_template" and template_id == "generic"
+    assert isinstance(body, TemplateCloneInput)
+    assert body.model_dump(mode="json") == clone_tool_arguments()["body"]
+    assert key == clone_tool_arguments()["idempotency_key"]
+
+
+@pytest.mark.parametrize("case", [
+    "missing_created_at", "naive", "non_utc", "invalid_datetime",
+    "bool_context_revision", "bool_template_version", "bool_type_revision",
+    "bad_hash", "bad_context_id", "bad_type_id", "extra_owner", "non_object",
+    "non_json_value", "nan", "recursive", "constructed_dto",
+])
+def test_template_clone_invalid_output_is_sanitized_without_retry(case, caplog):
+    payload = clone_receipt_payload()
+    marker = "PRIVATE Bearer synthetic-token https://private.invalid"
+    if case == "missing_created_at":
+        payload.pop("created_at")
+    elif case == "naive":
+        payload["created_at"] = "2026-10-16T00:00:00"
+    elif case == "non_utc":
+        payload["created_at"] = "2026-10-16T00:00:00+01:00"
+    elif case == "invalid_datetime":
+        payload["created_at"] = marker
+    elif case == "bool_context_revision":
+        payload["context_revision"] = True
+    elif case == "bool_template_version":
+        payload["template_version"] = True
+    elif case == "bool_type_revision":
+        payload["types"][0]["revision"] = True
+    elif case == "bad_hash":
+        payload["template_sha256"] = marker
+    elif case == "bad_context_id":
+        payload["context_id"] = marker
+    elif case == "bad_type_id":
+        payload["types"][0]["type_id"] = marker
+    elif case == "extra_owner":
+        payload["owner"] = marker
+    elif case == "non_object":
+        payload = [marker]
+    elif case == "non_json_value":
+        payload["created_at"] = {marker}
+    elif case == "nan":
+        payload["context_revision"] = float("nan")
+    elif case == "recursive":
+        payload["owner"] = payload
+    elif case == "constructed_dto":
+        canonical = TemplateCloneReceipt.model_validate_json(json.dumps(payload))
+        payload = TemplateCloneReceipt.model_construct(**{
+            **canonical.model_dump(mode="python"), "created_at": marker})
+    seen = []
+
+    async def scenario():
+        async def invoke(ctx, operation, *args):
+            seen.append((operation, *args))
+            return payload
+        async with Client(isolated_server(invoke)) as client:
+            return await client.call_tool("ocr_clone_context_template", clone_tool_arguments())
+
+    result = run(scenario())
+    assert result.is_error
+    message = "\n".join(block.text for block in result.content if block.type == "text")
+    assert (
+        "invalid_api_response: API returned an invalid template clone receipt; "
+        "retry submissions with the same key."
+    ) in message
+    for secret in ("PRIVATE", "synthetic-token", "private.invalid"):
+        assert secret not in message and secret not in caplog.text
+    assert len(seen) == 1
+    assert seen[0][0] == "clone_context_template"
+    assert seen[0][1] == "generic"
+    assert seen[0][-1] == clone_tool_arguments()["idempotency_key"]
+    assert seen[0][2].model_dump(mode="json") == clone_tool_arguments()["body"]
+
+
+@pytest.mark.parametrize("message", [
+    "insufficient_scope: contexts:write required",
+    "idempotency_conflict: request differs",
+    "storage_unavailable: try later",
+])
+def test_template_clone_invoke_errors_propagate_unchanged(message):
+    seen = []
+
+    async def scenario():
+        async def invoke(ctx, operation, *args):
+            seen.append((operation, *args))
+            raise ToolError(message)
+        async with Client(isolated_server(invoke)) as client:
+            return await client.call_tool("ocr_clone_context_template", clone_tool_arguments())
+
+    result = run(scenario())
+    assert result.is_error
+    assert [block.text for block in result.content if block.type == "text"] == [
+        f"Error executing tool ocr_clone_context_template: {message}"
+    ]
+    assert len(seen) == 1
+    assert seen[0][0] == "clone_context_template"
+    assert seen[0][-1] == clone_tool_arguments()["idempotency_key"]
+
+
 # -- real ASGI app + real stores: every mapping, alias, replay and CAS through ApiClient and the MCP registry
 class Live:
     def __init__(self, root):
@@ -282,6 +427,57 @@ def live(tmp_path):
     instance = Live(tmp_path / "live")
     yield instance
     instance.store._conn.close()
+
+
+def test_template_clone_registry_over_real_http_preserves_receipt_and_replay(live):
+    statuses = []
+
+    async def record_response(response):
+        if response.request.method == "POST":
+            statuses.append(response.status_code)
+
+    async def scenario():
+        async with live.http() as http:
+            http.event_hooks["response"].append(record_response)
+            api = ApiClient("http://testserver", http)
+            async with Client(isolated_server(api.invoke)) as client:
+                listing = await client.call_tool("ocr_list_context_templates", {})
+                assert not listing.is_error
+                template = listing.structured_content["items"][0]
+                assert template["context"] and template["types"]
+                arguments = {
+                    "template_id": template["template_id"],
+                    "body": {
+                        "expected_version": template["template_version"],
+                        "expected_sha256": template["template_sha256"],
+                    },
+                    "idempotency_key": "clone-real-http-01",
+                }
+                first = await client.call_tool("ocr_clone_context_template", arguments)
+                assert not first.is_error
+                canonical = TemplateCloneReceipt.model_validate_json(
+                    json.dumps(first.structured_content)).model_dump(mode="json")
+                assert_clone_receipt_content(first, canonical)
+                replay = await client.call_tool("ocr_clone_context_template", arguments)
+                assert_clone_receipt_content(replay, canonical)
+                contexts = await client.call_tool("ocr_list_contexts", {})
+                assert not contexts.is_error
+                assert [item["context_id"] for item in contexts.structured_content["items"]] == [canonical["context_id"]]
+                assert contexts.structured_content["next_cursor"] is None
+                assert canonical["template_id"] == template["template_id"]
+                assert canonical["template_version"] == template["template_version"]
+                assert canonical["template_sha256"] == template["template_sha256"]
+                return arguments
+
+    arguments = run(scenario())
+    assert statuses == [201, 200]
+    posts = [request for request in live.requests if request.method == "POST"]
+    assert len(posts) == 2
+    for request in posts:
+        assert request.headers["idempotency-key"] == arguments["idempotency_key"]
+        assert json.loads(request.content) == arguments["body"]
+    assert posts[0].url == posts[1].url
+    assert posts[0].content == posts[1].content
 
 
 def test_api_client_exercises_all_twelve_operations_over_real_http(live):
