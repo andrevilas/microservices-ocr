@@ -782,7 +782,7 @@ form,
 .detail-drawer {
   position: fixed;
   inset: auto 10px 10px;
-  z-index: 40;
+  z-index: 70;
   max-height: 78vh;
   overflow: auto;
   padding: 16px;
@@ -1295,3 +1295,14 @@ form,
     width: auto;
   }
 }
+
+/* Shared API workspace controls; long document content never widens the page. */
+.processing-options { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+.processing-options label { display: grid; gap: 4px; flex: 1 1 150px; min-width: 0; }
+.processing-options select { width: 100%; min-width: 0; padding: 8px; border-radius: 8px; }
+.processing-options p { flex-basis: 100%; font-size: .85rem; }
+.card-footer { flex-wrap: wrap; gap: 8px; }
+.result-content pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 50vh; overflow: auto; }
+.detail-list dd, .file-card h3 { overflow-wrap: anywhere; }
+.status-cancel_requested .card-badge { background: #fff0cf; color: #684800; }
+.status-canceled .card-badge { background: #e9edf2; color: #475569; }

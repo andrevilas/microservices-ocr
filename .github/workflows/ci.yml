@@ -16,6 +16,8 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pip install -e .[dev]
+      - name: Install browser for workspace integration tests
+        run: python -m playwright install --with-deps chromium
       - name: Run tests
         run: pytest -q
       - name: Verify published HTTP contract

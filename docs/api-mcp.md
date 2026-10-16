@@ -11,7 +11,10 @@ Estes incrementos entregam a fundação, identidades de serviço, consultas aute
 [texto por página e relatórios persistentes](results.md),
 [opções por job e capacidades verificadas](capabilities.md) e
 [lotes/exportação assíncrona](batches-exports.md) e
-[cancelamento/reprocessamento](job-control.md) e [retenção/exclusão](retention.md). OAuth remoto e migração do painel continuam no backlog.
+[cancelamento/reprocessamento](job-control.md) e [retenção/exclusão](retention.md).
+O [painel usa API v1 e restaura o histórico](workspace-ui.md), com
+[matriz das 29 funcionalidades](operation-matrix.md) e [configurações para seis clientes MCP](mcp-clients.md).
+OAuth remoto, perfil/administração v1 e homologação completa dos aplicativos continuam nas fases seguintes.
 O [fluxo vertical MCP e cliente stdio](mcp-workflow.md), entrega OCR-AM-08,
 permite preparar upload, submeter uma referência e recuperar texto e artefato.
 

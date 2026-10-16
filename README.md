@@ -5,7 +5,7 @@ MVP da sprint inicial para processamento OCR de PDFs com:
 - API FastAPI para upload, status e download
 - upload de PDFs de ate 80 MB
 - pipeline com OCR primario e fallback opcional por baixa confianca
-- retorno final em PDF/A com compactacao
+- PDF pesquisável; opções de PDF/A e compactação conforme capacidades e validação
 - interface web simples
 - armazenamento temporario em `/tmp`
 - empacotamento Docker
@@ -13,8 +13,9 @@ MVP da sprint inicial para processamento OCR de PDFs com:
 
 ## Execucao local
 
-Requer Python 3.11 ou posterior. A API versionada e o piloto MCP de leitura
-estão documentados em [API e MCP](docs/api-mcp.md). Execute uma única instância
+Requer Python 3.11 ou posterior. A API versionada e as 20 ferramentas MCP
+estão documentadas em [API e MCP](docs/api-mcp.md), com [configurações para seis clientes](docs/mcp-clients.md)
+e [painel que restaura o histórico do backend](docs/workspace-ui.md). Execute uma única instância
 ASGI por diretório de dados; a concorrência de OCR é controlada por
 `JOB_WORKER_CONCURRENCY`.
 

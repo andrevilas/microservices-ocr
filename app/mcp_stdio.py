@@ -9,6 +9,7 @@ import os
 import re
 import sys
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 import httpx2
@@ -22,6 +23,18 @@ MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 def configuration():
     origin = os.environ.get("OCR_API_URL", "http://127.0.0.1:8000").rstrip("/")
     token = os.environ.get("OCR_API_TOKEN", "")
+    token_file = os.environ.get("OCR_API_TOKEN_FILE", "")
+    if token_file:
+        if token:
+            raise ValueError("Configure only one credential source: OCR_API_TOKEN or OCR_API_TOKEN_FILE.")
+        try:
+            path = Path(token_file)
+            if not path.is_absolute():
+                raise ValueError()
+            with path.open("r", encoding="utf-8") as source:
+                token = source.read(8194).rstrip("\r\n")
+        except (OSError, ValueError, UnicodeError):
+            raise ValueError("OCR_API_TOKEN_FILE must be a readable absolute path to a private credential file.") from None
     try:
         parsed = urlsplit(origin)
         valid = (not any(ord(c) < 33 for c in origin) and parsed.scheme in ("http", "https") and parsed.hostname
@@ -34,7 +47,7 @@ def configuration():
     if not valid:
         raise ValueError("OCR_API_URL must be an HTTPS origin or a loopback HTTP origin, without credentials, path, query or fragment.")
     if not token or len(token) > 8192 or any(ord(c) < 33 or ord(c) > 126 for c in token):
-        raise ValueError("OCR_API_TOKEN must contain a valid Bearer credential in the process environment.")
+        raise ValueError("A valid Bearer credential is required in OCR_API_TOKEN or OCR_API_TOKEN_FILE.")
     return origin, token
 
 

@@ -204,6 +204,26 @@ async def me(user: dict = Depends(require_auth)):
     return _public_user(user)
 
 
+@auth_router.post("/auth/browser-session")
+async def browser_session(request: Request):
+    """Recover the existing human Bearer in memory for same-origin UI requests.
+
+    Does not extend session expiry or allow cookie authentication on API v1.
+    A cross-origin form cannot supply the required custom header; CORS is closed.
+    """
+    origin = request.headers.get("origin")
+    expected = str(request.base_url).rstrip("/")
+    if (request.headers.get("x-ocr-browser") != "1" or not origin or origin != expected
+            or request.headers.get("sec-fetch-site") == "cross-site"):
+        raise HTTPException(403, "Same-origin browser session required.")
+    token = request.cookies.get("access_token")
+    principal = authenticate_bearer(token)
+    if principal.kind != "user":
+        raise HTTPException(401, "Human session required.")
+    return JSONResponse({"access_token": token, "token_type": "bearer", "subject": principal.subject},
+                        headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
+
+
 @auth_router.get("/account")
 async def account_page(request: Request, user: dict = Depends(require_auth)):
     """Render the current user's account page."""

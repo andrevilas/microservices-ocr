@@ -54,6 +54,11 @@ extrai a camada de texto existente; não reconhece páginas escaneadas.
 
 ## Cliente stdio
 
+O [gerador de configurações para os seis hosts](mcp-clients.md) também oferece
+launcher absoluto para checkout e `OCR_API_TOKEN_FILE`, evitando segredo em JSON/TOML.
+As duas formas de credencial são mutuamente exclusivas. A tabela abaixo mantém
+a alternativa de pacote instalado e variável de ambiente.
+
 Instale o projeto no ambiente Python usado pelo host e configure:
 
 | Campo | Valor |
