@@ -31,9 +31,12 @@ def bearer(token):
     return {"Authorization": "Bearer " + token}
 
 
-def test_results_four_principals_real_credentials(system):
+def test_results_four_principals_real_credentials(system, monkeypatch):
     from unittest.mock import Mock
     from app.services.ocr_orchestrator import OcrOrchestrator
+    # Mocked engines do not convert; option-less jobs use the legacy setting, so request a
+    # searchable PDF explicitly. This test covers result ACLs, not PDF/A conformance.
+    monkeypatch.setattr(settings, "final_output_type", "pdf")
     engine, fallback = Mock(), Mock()
     engine.is_available.return_value = False
     fallback.is_available.return_value = False
