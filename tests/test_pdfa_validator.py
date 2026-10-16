@@ -6,7 +6,10 @@ wrapper's decision rules, never real PDF/A conformance.
 from __future__ import annotations
 
 import hashlib
+import os
+import signal
 import sys
+import time
 from pathlib import Path
 
 import subprocess
@@ -15,6 +18,7 @@ from xml.sax.saxutils import escape
 import pytest
 
 from app.services import pdfa_validator
+from app.services.cancellation import JobCancelled, ProcessTerminationError, cancellation_scope
 from app.services.pdfa_validator import PdfaValidationResult, VeraPdfValidator, _ProcessOutput
 
 PDF_BYTES = b"%PDF-1.7\n% fake content for wrapper tests\n%%EOF\n"
@@ -342,3 +346,152 @@ def test_source_is_untouched_and_hash_covers_validated_bytes(tmp_path: Path, pdf
     result = make_validator(tmp_path, report(), mutate=True).validate(pdf)
     assert result.status == "indeterminate"
     assert pdf.read_bytes() == PDF_BYTES
+
+
+# Cancellation and process-group termination. Containment is implemented only for Linux/POSIX
+# (killpg + /proc); on Windows the validator never starts a process, so there is nothing to prove.
+linux_only = pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="validator process-group termination is implemented only on Linux/POSIX; "
+           "Windows returns unsupported_platform without starting a process",
+)
+
+# Leader spawns a long-lived descendant in its session. "open": the descendant inherits stdout, so
+# the reader never sees EOF (first wait loop). "closed": nobody holds stdout, so the reader ends
+# and the leader keeps running (second wait loop). PIDs are published atomically.
+CANCEL_SPAWNER = r'''
+import os, subprocess, sys
+pid_file, mode = sys.argv[1], sys.argv[2]
+out = subprocess.DEVNULL if mode == "closed" else None
+child = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(30)"], stdout=out)
+if mode == "closed":
+    os.close(1)
+with open(pid_file + ".tmp", "w") as handle:
+    handle.write(f"{os.getpid()} {child.pid}")
+os.replace(pid_file + ".tmp", pid_file)
+child.wait()
+'''
+
+
+def _live_members(pgid: int) -> list[int]:
+    """Non-zombie processes of ``pgid`` read directly from /proc (independent of the wrapper)."""
+    members = []
+    for entry in os.scandir("/proc"):
+        if not entry.name.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry.name}/stat", "rb") as handle:
+                data = handle.read()
+        except OSError:
+            continue
+        fields = data[data.rfind(b")") + 2:].split()
+        if len(fields) >= 3 and fields[2] == str(pgid).encode() and fields[0] not in (b"Z", b"X"):
+            members.append(int(entry.name))
+    return members
+
+
+def _spawner_validator(tmp_path: Path, mode: str, pid_file: Path) -> VeraPdfValidator:
+    script = tmp_path / "cancel_spawner.py"
+    script.write_text(CANCEL_SPAWNER, encoding="utf-8")
+    return VeraPdfValidator([sys.executable, "-I", str(script), str(pid_file), mode], timeout_seconds=60)
+
+
+def _record_terminations(monkeypatch) -> list[int]:
+    calls: list[int] = []
+    original = pdfa_validator._terminate_group
+
+    def spy(proc):
+        calls.append(proc.pid)
+        original(proc)
+    monkeypatch.setattr(pdfa_validator, "_terminate_group", spy)
+    return calls
+
+
+@linux_only
+@pytest.mark.parametrize("mode", ["open", "closed"])
+def test_cancel_during_wait_kills_whole_group(monkeypatch, tmp_path: Path, pdf: Path, mode: str) -> None:
+    pid_file = tmp_path / "pids"
+    validator = _spawner_validator(tmp_path, mode, pid_file)
+    terminations = _record_terminations(monkeypatch)
+    started = time.monotonic()
+    with pytest.raises(JobCancelled):
+        with cancellation_scope(pid_file.exists):
+            validator.validate(pdf)
+    # Cancelled well before the 30 s sleep or the 60 s timeout.
+    assert time.monotonic() - started < 15
+    leader, child = (int(part) for part in pid_file.read_text().split())
+    assert terminations == [leader]
+    assert _live_members(leader) == []
+    assert child not in _live_members(leader)
+
+
+@linux_only
+def test_cancel_at_checkpoint_before_start_never_spawns(monkeypatch, pdf: Path) -> None:
+    def forbidden(*args, **kwargs):
+        raise AssertionError("no process may be started after cancellation")
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    checks = {"count": 0}
+
+    def checker() -> bool:
+        # The scope's own entry checkpoint passes; the validator's pre-spawn checkpoint cancels.
+        checks["count"] += 1
+        return checks["count"] > 1
+    with pytest.raises(JobCancelled):
+        with cancellation_scope(checker):
+            VeraPdfValidator([sys.executable]).validate(pdf)
+    assert checks["count"] == 2
+
+
+@linux_only
+def test_unconfirmed_group_death_raises_process_termination_error(monkeypatch, tmp_path: Path, pdf: Path) -> None:
+    pid_file = tmp_path / "pids"
+    validator = _spawner_validator(tmp_path, "open", pid_file)
+    real_group_alive = pdfa_validator._group_alive
+    monkeypatch.setattr(pdfa_validator, "_CLEANUP_GRACE", 0.2)
+    monkeypatch.setattr(pdfa_validator, "_group_alive", lambda pgid: True)
+    # The termination failure replaces the cancellation: the job must not be reported as cancelled.
+    with pytest.raises(ProcessTerminationError):
+        with cancellation_scope(pid_file.exists):
+            validator.validate(pdf)
+    leader, _ = (int(part) for part in pid_file.read_text().split())
+    # SIGKILL was still sent; only its confirmation was forced to fail.
+    deadline = time.monotonic() + 2
+    while real_group_alive(leader) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert _live_members(leader) == []
+
+
+class _UnkillableProcess:
+    pid = 424242
+
+    def poll(self):
+        return None
+
+    def kill(self):
+        pass
+
+    def wait(self, timeout=None):
+        raise subprocess.TimeoutExpired("verapdf", timeout)
+
+
+@linux_only
+def test_leader_that_does_not_exit_raises_process_termination_error(monkeypatch) -> None:
+    signals: list[tuple[int, int]] = []
+    # Never signal a real group from a unit test: record the call instead.
+    monkeypatch.setattr(pdfa_validator.os, "killpg", lambda pgid, sig: signals.append((pgid, sig)))
+    monkeypatch.setattr(pdfa_validator, "_CLEANUP_GRACE", 0.05)
+    with pytest.raises(ProcessTerminationError, match="did not exit"):
+        pdfa_validator._terminate_group(_UnkillableProcess())
+    assert signals == [(424242, signal.SIGKILL)]
+
+
+@linux_only
+def test_surviving_group_member_raises_process_termination_error(monkeypatch) -> None:
+    class Exited(_UnkillableProcess):
+        def wait(self, timeout=None):
+            return -9
+    monkeypatch.setattr(pdfa_validator.os, "killpg", lambda pgid, sig: None)
+    monkeypatch.setattr(pdfa_validator, "_CLEANUP_GRACE", 0.05)
+    monkeypatch.setattr(pdfa_validator, "_group_alive", lambda pgid: True)
+    with pytest.raises(ProcessTerminationError, match="could not be confirmed"):
+        pdfa_validator._terminate_group(Exited())

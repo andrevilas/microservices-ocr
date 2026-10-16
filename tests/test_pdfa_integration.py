@@ -161,12 +161,12 @@ def test_failed_report_http_and_mcp_parity_and_access(system, probes, monkeypatc
     asyncio.run(scenario())
     with pytest.raises(ApplicationError) as error:
         service.report(FOREIGN, job_id)
-    assert error.value.status_code == 404
+    assert error.value.status == 404
     system.jobs.cleanup(job_id)
     assert system.client.get(f"/api/v1/jobs/{job_id}/report", headers=headers).status_code == 410
     with pytest.raises(ApplicationError) as error:
         service.report(READER, job_id)
-    assert error.value.status_code == 410
+    assert error.value.status == 410
 
 
 def test_unconfigured_validator_fails_closed_before_processing(system, probes, monkeypatch):

@@ -37,7 +37,6 @@ ENV PATH="/opt/venv/bin:$PATH" \
     OCR_TMP_DIR=/tmp/ocr-recognizer \
     MAX_UPLOAD_SIZE_MB=80 \
     ENABLE_FALLBACK_OCR=$ENABLE_FALLBACK_OCR \
-    JAVA_HOME=/opt/java/openjdk \
     VERAPDF_EXECUTABLE=/opt/verapdf/verapdf \
     VERAPDF_TIMEOUT_SECONDS=120
 
@@ -52,14 +51,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsm6 \
     libxext6 \
     libxrender1 \
+    openjdk-21-jre-headless \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
-# Compatibility of this JRE/veraPDF copy with the slim base must be verified at build time.
-COPY --from=verapdf /opt/java/openjdk /opt/java/openjdk
+# Only the veraPDF distribution is copied: the official image's JRE is Alpine/musl and does not
+# run on this Debian (glibc) base, so Java comes from the Debian package above (java on PATH).
 COPY --from=verapdf /opt/verapdf /opt/verapdf
+# Build-time smoke test: fails the build if veraPDF cannot start with the Debian JRE.
+RUN /opt/verapdf/verapdf --version
 COPY app /app/app
 
 EXPOSE 8000
