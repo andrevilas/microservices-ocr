@@ -582,7 +582,7 @@
       else showError(error, intent.receipt ? "A criação foi recebida, mas a versão atual ainda não foi recuperada. Use Tentar novamente. " : "O pedido foi preservado e o formulário permanece bloqueado. Tentar novamente reutiliza exatamente o mesmo pedido. ");
     } finally { writing = false; update(); }
     if (saved && active()) {
-      if (intent.request.kind === "type") await loadTypes();
+      if (intent.request.kind === "type") await Promise.all([loadTypes(), loadVersions()]);
       else await loadList();
     }
   }
@@ -615,7 +615,7 @@
       else showError(error);
     } finally { writing = false; update(); }
     if (saved && active()) {
-      if (intent.kind === "type") await loadTypes();
+      if (intent.kind === "type") await Promise.all([loadTypes(), loadVersions()]);
       else await loadList();
     }
   }

@@ -2,6 +2,7 @@
 from copy import deepcopy
 import json
 import re
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import pytest
@@ -81,6 +82,12 @@ def test_create_uses_persisted_parent_and_reopens(ui):
     existing = seed_type(ui, parent, 'Tipo anterior', [field('anterior')])
     page = start(ui, parent)
     writes = watch_writes(page)
+    version_gets = []
+    def watch_versions(request):
+        path = urlsplit(request.url).path
+        if request.method == 'GET' and re.fullmatch(r'/api/v1/document-types/[0-9a-f]{32}/versions', path):
+            version_gets.append((request.method, path))
+    page.on('request', watch_versions)
     page.locator('#context-name').fill('Pai não salvo')
     local(page, 'Chave do campo').fill('comum_nao_salvo')
     page.locator('#type-new').click()
@@ -101,6 +108,10 @@ def test_create_uses_persisted_parent_and_reopens(ui):
     status(page, 'Tipo de documento criado. A versão atual foi recuperada.')
     created = [entry for entry in listed(ui, parent) if entry['type_id'] != existing['type_id']]
     assert len(created) == 1
+    expect(page.locator('#version-list-status')).to_have_text('Este tipo ainda não tem versões imutáveis.')
+    expect(page.locator('#version-section')).to_be_visible()
+    expect(page.locator('#version-list').locator('li')).to_have_count(0)
+    assert ('GET', '/api/v1/document-types/' + created[0]['type_id'] + '/versions') in version_gets
     item = type_record(ui, created[0]['type_id'])
     assert item['revision'] == 1 and item['context_id'] == parent['context_id']
     assert set(item['body']) == {'name', 'description', 'specific_fields'}
