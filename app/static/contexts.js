@@ -65,15 +65,22 @@
   let pendingCreate = null, uncertainUpdate = null, conflict = false, current = null;
   let programmatic = false, confirming = false, logoutBypass = false;
   let approvedDeparture = false, pageInactive = false;
+  let activeKind = contextKind, parentContext = null;
+  let typeGeneration = 0, typeListing = false, typeSummaries = [], typeCursor = null;
+  const typeSummaryOk = (parentId, value) => identityOk("type", parentId, value) && value.state === "draft" && typeof value.name === "string" && revisionOk(value.revision) && dateOk(value.created_at) && dateOk(value.updated_at);
+  const typePageOk = (parentId, value) => object(value) && Array.isArray(value.items) && value.items.every((item) => typeSummaryOk(parentId, item)) && (value.next_cursor === null || typeof value.next_cursor === "string");
   const edgeWhitespace = /^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]$/u;
   const status = (text) => { $("status").textContent = text; };
   const listStatus = (text) => { $("list-status").textContent = text; };
   const protectedState = () => dirty || !!pendingCreate || !!uncertainUpdate || writing;
   const active = () => !pageInactive && !approvedDeparture && ready && !expired && canRead;
-  const mutable = () => active() && canWrite && !writing && !reading && !pendingCreate && !uncertainUpdate;
+  const mutable = () => activeKind === contextKind && active() && canWrite && !writing && !reading && !pendingCreate && !uncertainUpdate;
   const editor = window.OcrCatalogFields.create($("fields"), {
     idPrefix: "context-common", readonly: true,
     onChange: () => { if (!programmatic && editing) { dirty = true; update(); } },
+  });
+  const inheritedEditor = window.OcrCatalogFields.create(document.getElementById("type-common-fields"), {
+    idPrefix: "type-common", readonly: true,
   });
   function update() {
     if (pageInactive) return;
@@ -90,7 +97,17 @@
     name.disabled = !editing; description.disabled = !editing;
     name.readOnly = readonly; description.readOnly = readonly;
     editor.setReadonly(readonly);
+    $("save").hidden = activeKind === "type";
     $("save").disabled = readonly || (!dirty && !!selected);
+    const typeBusy = !available || writing || reading;
+    document.getElementById("type-section").hidden = !parentContext;
+    document.getElementById("type-refresh").disabled = typeBusy || typeListing || !parentContext;
+    document.getElementById("type-more").hidden = !typeCursor;
+    document.getElementById("type-more").disabled = typeBusy || typeListing || !parentContext;
+    document.getElementById("type-edit-context").hidden = activeKind !== "type";
+    document.getElementById("type-edit-context").disabled = typeBusy || !parentContext;
+    document.getElementById("type-edit-context").textContent = canWrite ? "Editar contexto" : "Ver contexto";
+    document.querySelectorAll("#type-list button").forEach((button) => { button.disabled = typeBusy; });
     $("recover-create").hidden = !pendingCreate;
     $("recover-create").disabled = !available || !canWrite || writing || reading;
     $("consult").hidden = !(conflict || uncertainUpdate);
@@ -151,7 +168,55 @@
   function clearComparison() {
     current = null; $("comparison").hidden = true; $("current").replaceChildren();
   }
+  function setParent(record) {
+    if (parentContext?.context_id !== record?.context_id) {
+      ++typeGeneration; typeListing = false; typeSummaries = []; typeCursor = null;
+      document.getElementById("type-list").replaceChildren();
+      document.getElementById("type-list-status").textContent = "";
+    }
+    parentContext = record ? freeze(clone(record)) : null;
+    document.getElementById("type-parent").textContent = record ? `${record.body.name} · Revisão ${record.revision}` : "";
+  }
+  function renderTypes() {
+    document.getElementById("type-list").replaceChildren(...typeSummaries.map((item) => {
+      const button = ui.el("button", {type: "button", className: "link-button entity__name", text: item.name, "aria-current": activeKind === "type" && selected === item.type_id ? "true" : null});
+      button.addEventListener("click", () => selectType(item.type_id));
+      return ui.el("li", {className: `entity${activeKind === "type" && selected === item.type_id ? " is-current" : ""}`}, [ui.el("div", {className: "entity__main"}, [button, ui.el("p", {className: "entity__meta", text: `Rascunho · Revisão ${item.revision} · Criado em ${ui.date(item.created_at)} · Atualizado em ${ui.date(item.updated_at)}`})])]);
+    }));
+    update();
+  }
+  async function loadTypes(append = false) {
+    if (!active() || !parentContext || typeListing) return;
+    const parentId = parentContext.context_id, generation = ++typeGeneration;
+    const after = append ? typeCursor : null;
+    const stillCurrent = () => active() && generation === typeGeneration && parentContext?.context_id === parentId;
+    typeListing = true;
+    document.getElementById("type-list-status").textContent = "Carregando tipos de documento…"; update();
+    try {
+      const query = new URLSearchParams({limit: "25"});
+      if (after !== null) query.set("after", after);
+      const page = await request(`${entityPath("type", parentId)}?${query}`, {valid: (value) => typePageOk(parentId, value)});
+      if (!stillCurrent()) return;
+      const next = append ? typeSummaries.slice() : [], seen = new Set(next.map((item) => item.type_id));
+      for (const item of page.items) if (!seen.has(item.type_id)) { seen.add(item.type_id); next.push(item); }
+      typeSummaries = next; typeCursor = page.next_cursor; renderTypes();
+      document.getElementById("type-list-status").textContent = next.length ? `${next.length} tipo(s) de documento na lista.` : "Este contexto ainda não tem tipos de documento.";
+    } catch (_) {
+      if (stillCurrent()) document.getElementById("type-list-status").textContent = "Não foi possível carregar os tipos de documento. A lista anterior foi preservada. Tente novamente.";
+    } finally {
+      if (generation === typeGeneration) { typeListing = false; update(); }
+    }
+  }
+  function contextView() {
+    activeKind = contextKind;
+    $("detail-title").textContent = "Detalhes do contexto";
+    $("fields-title").textContent = "Campos comuns";
+    document.getElementById("type-common-panel").hidden = true;
+    document.getElementById("type-field-count").textContent = "";
+    inheritedEditor.setValue([], {inherited: []});
+  }
   function hydrate(record) {
+    contextView(); setParent(record);
     programmatic = true;
     try {
       editor.setValue(clone(record.body[entities[contextKind].fieldsKey]), {inherited: []});
@@ -162,13 +227,52 @@
     resetErrors(); clearComparison();
     form.hidden = false; $("empty").hidden = true;
     $("revision").textContent = `Revisão ${originalRevision} · Atualizado em ${ui.date(record.updated_at)}`;
-    renderList(); update();
+    renderList(); renderTypes(); update();
+    void loadTypes();
+  }
+  async function selectType(id) {
+    if (!active() || writing || reading || !parentContext || !idOk(id)) return;
+    if (activeKind === "type" && selected === id) return;
+    const parent = parentContext, before = selectionGeneration;
+    if (!await confirmDeparture() || before !== selectionGeneration || parent !== parentContext || writing || reading || !active()) return;
+    const generation = ++selectionGeneration, parentId = parent.context_id;
+    reading = true; status("Carregando tipo de documento…"); update();
+    try {
+      const [authoritativeParent, record] = await Promise.all([
+        request(entityPath(contextKind, null, parentId), {valid: (value) => recordOk(value) && value.context_id === parentId}),
+        request(entityPath("type", parentId, id), {valid: (value) => entityRecordOk("type", parentId, value) && value.type_id === id}),
+      ]);
+      if (generation !== selectionGeneration || parentContext !== parent || !active()) return;
+      abandonState(); setParent(authoritativeParent); activeKind = "type";
+      programmatic = true;
+      try {
+        inheritedEditor.setValue(clone(authoritativeParent.body.common_fields), {inherited: clone(record.body.specific_fields)});
+        editor.setValue(clone(record.body.specific_fields), {inherited: clone(authoritativeParent.body.common_fields)});
+        name.value = record.body.name; description.value = record.body.description;
+      } finally { programmatic = false; }
+      selected = record.type_id; originalRevision = record.revision; savedSnapshot = clone(record.body);
+      editing = true; dirty = false; resetErrors();
+      form.hidden = false; $("empty").hidden = true;
+      $("detail-title").textContent = "Detalhes do tipo";
+      $("fields-title").textContent = "Campos específicos";
+      $("revision").textContent = `Rascunho — tipo de documento · Revisão ${record.revision} · Contexto: ${authoritativeParent.body.name} · Revisão ${authoritativeParent.revision}`;
+      document.getElementById("type-common-panel").hidden = false;
+      const commonCount = authoritativeParent.body.common_fields.length, specificCount = record.body.specific_fields.length;
+      document.getElementById("type-field-count").textContent = `${commonCount + specificCount} campo(s): ${commonCount} comuns herdados do contexto e ${specificCount} específicos do tipo.`;
+      renderList(); renderTypes(); update();
+      status("Tipo de documento carregado. Consulta somente para leitura.");
+    } catch (_) {
+      if (generation === selectionGeneration && active()) status("Não foi possível abrir o tipo de documento. O formulário anterior foi preservado. Selecione o tipo para tentar novamente.");
+    } finally {
+      if (generation === selectionGeneration) { reading = false; update(); }
+    }
   }
   function renderList() {
+    const listedContextId = activeKind === "type" ? parentContext?.context_id : selected;
     $("list").replaceChildren(...summaries.map((item) => {
-      const button = ui.el("button", {type: "button", className: "link-button entity__name", text: item.name, "aria-current": item.context_id === selected ? "true" : null});
+      const button = ui.el("button", {type: "button", className: "link-button entity__name", text: item.name, "aria-current": item.context_id === listedContextId ? "true" : null});
       button.addEventListener("click", () => select(item.context_id));
-      return ui.el("li", {className: `entity${item.context_id === selected ? " is-current" : ""}`}, [ui.el("div", {className: "entity__main"}, [button, ui.el("p", {className: "entity__meta", text: `Revisão ${item.revision} · Criado em ${ui.date(item.created_at)} · Atualizado em ${ui.date(item.updated_at)}`})])]);
+      return ui.el("li", {className: `entity${item.context_id === listedContextId ? " is-current" : ""}`}, [ui.el("div", {className: "entity__main"}, [button, ui.el("p", {className: "entity__meta", text: `Revisão ${item.revision} · Criado em ${ui.date(item.created_at)} · Atualizado em ${ui.date(item.updated_at)}`})])]);
     }));
     update();
   }
@@ -204,24 +308,23 @@
   }
   async function select(id) {
     if (!active() || writing || reading || !idOk(id)) return;
-    if (id === selected && !pendingCreate) return;
+    if (activeKind === contextKind && id === selected && !pendingCreate) return;
     const before = selectionGeneration;
-    if (!await confirmDeparture() || before !== selectionGeneration || writing || !active()) return;
-    abandonState();
+    if (!await confirmDeparture() || before !== selectionGeneration || writing || reading || !active()) return;
     const generation = ++selectionGeneration;
     reading = true; status("Carregando contexto…"); update();
     try {
       const record = await request(entityPath(contextKind, null, id), {valid: (value) => recordOk(value) && value[entities[contextKind].idKey] === id});
-      if (generation !== selectionGeneration || expired) return;
-      hydrate(record); status(canWrite ? "Contexto carregado." : "Contexto carregado. Você tem permissão somente para leitura.");
-    } catch (error) { if (generation === selectionGeneration) { dirty = editing; showError(error, "Não foi possível abrir o contexto. Seu formulário foi preservado. "); } }
+      if (generation !== selectionGeneration || !active()) return;
+      abandonState(); hydrate(record); status(canWrite ? "Contexto carregado." : "Contexto carregado. Você tem permissão somente para leitura.");
+    } catch (error) { if (generation === selectionGeneration) { showError(error, "Não foi possível abrir o contexto. Seu formulário foi preservado. "); } }
     finally { if (generation === selectionGeneration) { reading = false; update(); } }
   }
   async function newContext() {
     if (!active() || !canWrite || writing || reading) return;
     const before = selectionGeneration;
     if (!await confirmDeparture() || before !== selectionGeneration || writing || !active()) return;
-    abandonState(); selected = null; originalRevision = null; savedSnapshot = null;
+    abandonState(); contextView(); setParent(null); selected = null; originalRevision = null; savedSnapshot = null;
     programmatic = true;
     try { editor.setValue([], {inherited: []}); name.value = ""; description.value = ""; }
     finally { programmatic = false; }
@@ -234,6 +337,7 @@
   }
   name.addEventListener("input", inputChanged); description.addEventListener("input", inputChanged);
   function draft() {
+    if (activeKind !== contextKind) return null;
     resetErrors(); let first = null;
     function invalid(field, text) { $(field).setAttribute("aria-invalid", "true"); $(`${field}-error`).textContent = text; $(`${field}-error`).hidden = false; first ||= $(field); }
     // Iterate code points, rejecting isolated UTF-16 surrogates, not valid pairs.
@@ -371,6 +475,11 @@
       if (!expired) { status(error instanceof RequestError ? failMessage(error) : "Não foi possível recuperar a sessão. Verifique a conexão e tente novamente."); $("bootstrap").hidden = false; listStatus("A sessão não foi carregada."); }
     } finally { booting = false; update(); }
   }
+  document.getElementById("type-refresh").addEventListener("click", () => loadTypes());
+  document.getElementById("type-more").addEventListener("click", () => loadTypes(true));
+  document.getElementById("type-edit-context").addEventListener("click", () => {
+    if (parentContext && activeKind === "type") void select(parentContext.context_id);
+  });
   $("new").addEventListener("click", newContext);
   $("refresh").addEventListener("click", () => loadList());
   $("more").addEventListener("click", () => loadList(true));
@@ -422,7 +531,7 @@
   }, true);
   window.addEventListener("pagehide", () => {
     pageInactive = true;
-    token = null; subject = null; editor.destroy();
+    token = null; subject = null; editor.destroy(); inheritedEditor.destroy();
   }, {once: true});
   window.addEventListener("pageshow", (event) => {
     approvedDeparture = false;

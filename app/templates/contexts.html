@@ -19,6 +19,16 @@
     <p id="context-list-status" role="status" aria-live="polite">Aguardando sessão.</p>
     <ul id="context-list" class="entity-list"></ul>
     <button id="context-more" type="button" hidden disabled>Carregar mais</button>
+    <section id="type-section" aria-labelledby="type-title" hidden>
+      <div class="catalog-actions"><h3 id="type-title">Tipos de documento</h3><button id="type-refresh" type="button" disabled>Atualizar tipos</button></div>
+      <p id="type-parent" class="hint"></p>
+      <p id="type-list-status" role="status" aria-live="polite"></p>
+      <ul id="type-list" class="entity-list"></ul>
+      <div class="catalog-actions">
+        <button id="type-more" type="button" hidden disabled>Carregar mais tipos</button>
+        <button id="type-edit-context" type="button" hidden disabled>Editar contexto</button>
+      </div>
+    </section>
   </section>
   <section class="panel catalog-detail" aria-labelledby="context-detail-title">
     <h2 id="context-detail-title">Detalhes do contexto</h2>
@@ -30,6 +40,11 @@
       <label class="field" for="context-description">Descrição<textarea id="context-description" rows="4" aria-describedby="context-description-error" disabled></textarea></label>
       <p id="context-description-error" class="catalog-error" hidden></p>
       <section aria-labelledby="context-fields-title"><h3 id="context-fields-title">Campos comuns</h3><div id="context-fields" class="catalog-fields"></div></section>
+      <section id="type-common-panel" aria-labelledby="type-common-title" hidden>
+        <h3 id="type-common-title">Campos comuns herdados</h3>
+        <p id="type-field-count" class="hint"></p>
+        <div id="type-common-fields" class="catalog-fields"></div>
+      </section>
       <div class="catalog-actions"><button id="context-save" type="submit" class="button button-primary" disabled>Salvar contexto</button></div>
     </form>
     <div class="catalog-actions">
