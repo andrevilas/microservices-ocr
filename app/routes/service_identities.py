@@ -18,7 +18,8 @@ class ServiceInput(BaseModel):
 
 class CredentialInput(ServiceInput):
     model_config = ConfigDict(json_schema_extra={"examples": [{"name": "Local reader", "scopes": ["jobs:read", "artifacts:read"], "expires_in_seconds": 2592000}]})
-    scopes: list[Literal["jobs:read", "artifacts:read", "jobs:submit", "jobs:cancel", "artifacts:delete"]] = Field(min_length=1, max_length=5)
+    scopes: list[Literal["jobs:read", "artifacts:read", "jobs:submit", "jobs:cancel", "artifacts:delete",
+                         "contexts:read", "contexts:write", "metadata:read", "metadata:write"]] = Field(min_length=1, max_length=9)
     expires_in_seconds: int = Field(default=2592000, ge=60, le=31536000, strict=True)
 
 

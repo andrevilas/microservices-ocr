@@ -4,6 +4,10 @@ LEGACY_SCOPES = frozenset({"jobs:read", "artifacts:read", "jobs:submit", "jobs:c
 DOCUMENT_SCOPES = frozenset({"contexts:read", "contexts:write", "contexts:publish",
                              "metadata:read", "metadata:write", "metadata:approve"})
 LOCAL_ALLOWED_SCOPES = LEGACY_SCOPES | DOCUMENT_SCOPES
+# Service credentials never receive contexts:publish or metadata:approve (human-only decisions).
+SERVICE_SCOPES = LEGACY_SCOPES | frozenset({"contexts:read", "contexts:write", "metadata:read", "metadata:write"})
+# Scopes an OAuth binding may grant; explicit bindings, never role- or claim-derived.
+OAUTH_SCOPES = LEGACY_SCOPES | DOCUMENT_SCOPES
 LOCAL_AUTHZ_VERSION = 1
 
 

@@ -12,8 +12,8 @@ from threading import Lock
 from uuid import uuid4
 
 from app.config import settings
+from app.scopes import SERVICE_SCOPES  # Re-exported: other modules import it from here.
 
-SERVICE_SCOPES = frozenset({"jobs:read", "jobs:submit", "jobs:cancel", "artifacts:read", "artifacts:delete"})
 TOKEN_PATTERN = re.compile(r"ocr_svc_([0-9a-f]{32})\.[A-Za-z0-9_-]{43}\Z")
 
 
@@ -68,6 +68,13 @@ class IdentityStore:
         return {key: json.loads(row[key]) if key == "scopes" else row[key]
                 for key in ("id", "principal_id", "name", "scopes", "created_at", "created_by", "expires_at", "revoked_at", "last_used_at")}
 
+    @staticmethod
+    def _valid_scopes(scopes) -> bool:
+        """Non-empty list of distinct known service scopes; never raises."""
+        return (isinstance(scopes, list) and 0 < len(scopes) <= len(SERVICE_SCOPES)
+                and all(type(item) is str and item in SERVICE_SCOPES for item in scopes)
+                and len(set(scopes)) == len(scopes))
+
     def create_service(self, name: str, actor: str) -> dict:
         if not isinstance(name, str) or not name.strip() or len(name) > 80:
             raise ValueError("Service name must contain 1 to 80 characters.")
@@ -85,7 +92,7 @@ class IdentityStore:
     def issue_credential(self, principal_id: str, name: str, scopes: list[str], expires_in_seconds: int, actor: str) -> tuple[dict, str]:
         if not name.strip() or len(name) > 80:
             raise ValueError("Credential name must contain 1 to 80 characters.")
-        if not scopes or len(scopes) != len(set(scopes)) or not set(scopes) <= SERVICE_SCOPES:
+        if not self._valid_scopes(scopes):
             raise ValueError("Invalid or duplicate service scopes.")
         if isinstance(expires_in_seconds, bool) or not isinstance(expires_in_seconds, int) or not 60 <= expires_in_seconds <= 31536000:
             raise ValueError("Credential lifetime must be 60 to 31536000 seconds.")
@@ -144,8 +151,15 @@ class IdentityStore:
                 return None
             if row["revoked_at"] is not None or row["disabled_at"] is not None or row["expires_at"] <= now:
                 return None
+            # Persisted scopes are re-validated so an invalid row can never authenticate.
+            try:
+                scopes = json.loads(row["scopes"])
+            except (TypeError, ValueError):
+                return None
+            if not self._valid_scopes(scopes):
+                return None
             self._conn.execute("UPDATE service_credentials SET last_used_at=? WHERE id=?", (now, row["id"]))
-            return {"subject": row["principal_id"], "credential_id": row["id"], "scopes": json.loads(row["scopes"])}
+            return {"subject": row["principal_id"], "credential_id": row["id"], "scopes": scopes}
 
 
 _identity_store: IdentityStore | None = None

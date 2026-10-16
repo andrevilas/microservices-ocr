@@ -640,11 +640,15 @@
                 "artifacts:read",
                 "jobs:submit",
                 "jobs:cancel",
-                "artifacts:delete"
+                "artifacts:delete",
+                "contexts:read",
+                "contexts:write",
+                "metadata:read",
+                "metadata:write"
               ],
               "type": "string"
             },
-            "maxItems": 5,
+            "maxItems": 9,
             "minItems": 1,
             "title": "Scopes",
             "type": "array"
