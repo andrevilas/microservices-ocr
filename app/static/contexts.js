@@ -32,16 +32,19 @@
   let selectionGeneration = 0, listGeneration = 0, summaries = [], cursor = null;
   let pendingCreate = null, uncertainUpdate = null, conflict = false, current = null;
   let programmatic = false, confirming = false, logoutBypass = false;
+  let approvedDeparture = false, pageInactive = false;
+  const edgeWhitespace = /^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]$/u;
   const status = (text) => { $("status").textContent = text; };
   const listStatus = (text) => { $("list-status").textContent = text; };
   const protectedState = () => dirty || !!pendingCreate || !!uncertainUpdate || writing;
-  const active = () => ready && !expired && canRead;
+  const active = () => !pageInactive && !approvedDeparture && ready && !expired && canRead;
   const mutable = () => active() && canWrite && !writing && !reading && !pendingCreate && !uncertainUpdate;
   const editor = window.OcrCatalogFields.create($("fields"), {
     idPrefix: "context-common", readonly: true,
     onChange: () => { if (!programmatic && editing) { dirty = true; update(); } },
   });
   function update() {
+    if (pageInactive) return;
     const available = active();
     $("new").disabled = !available || !canWrite || writing || reading;
     $("refresh").disabled = !available || listing;
@@ -50,7 +53,7 @@
     $("bootstrap").disabled = booting;
     $("login").hidden = !(expired || (ready && !canRead));
     $("session-logout").hidden = !(expired || (ready && !canRead));
-    $("session-logout").disabled = writing;
+    $("session-logout").disabled = writing || approvedDeparture;
     const readonly = !editing || !mutable();
     name.disabled = !editing; description.disabled = !editing;
     name.readOnly = readonly; description.readOnly = readonly;
@@ -63,7 +66,7 @@
     $("use-current").hidden = !current || !(conflict || uncertainUpdate);
     $("use-current").disabled = !available || writing || reading;
     $("abandon").hidden = !pendingCreate;
-    $("abandon").disabled = writing || reading;
+    $("abandon").disabled = writing || reading || approvedDeparture;
     form.setAttribute("aria-busy", String(writing || reading));
     document.querySelectorAll("#context-list button").forEach((button) => { button.disabled = !available || writing || reading; });
   }
@@ -81,6 +84,7 @@
     update();
   }
   async function request(path, {method = "GET", body, key, valid} = {}) {
+    if (pageInactive) throw new RequestError(0, null, true);
     const headers = {Authorization: `Bearer ${token}`, Accept: "application/json"};
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (key) headers["Idempotency-Key"] = key;
@@ -91,6 +95,7 @@
       try { data = await response.json(); }
       catch (_) { throw new RequestError(response.status, null, true); }
       signal.throwIfAborted();
+      if (pageInactive) throw new RequestError(response.status, null, true);
     } catch (error) {
       if (response?.status === 401) invalidateSession();
       if (error instanceof RequestError) throw error;
@@ -154,7 +159,7 @@
     } finally { if (generation === listGeneration) { listing = false; update(); } }
   }
   async function confirmDeparture(force = false) {
-    if (confirming) return false;
+    if (confirming || approvedDeparture || pageInactive) return false;
     if (!force && !protectedState()) return true;
     confirming = true;
     try {
@@ -205,7 +210,7 @@
       return (code >= 0xd800 && code <= 0xdfff) || ((code < 32 || (code >= 127 && code <= 159)) && !(multiline && (code === 9 || code === 10)));
     });
     const length = Array.from(name.value).length;
-    if (length < 1 || length > 120 || name.value !== name.value.trim() || forbidden(name.value, false)) invalid("name", "Use de 1 a 120 caracteres, sem espaços nas bordas nem caracteres de controle.");
+    if (length < 1 || length > 120 || edgeWhitespace.test(name.value) || forbidden(name.value, false)) invalid("name", "Use de 1 a 120 caracteres, sem espaços nas bordas nem caracteres de controle.");
     if (Array.from(description.value).length > 4000 || forbidden(description.value, true)) invalid("description", "Use até 4.000 caracteres. Tabulação e quebra de linha são permitidas; outros controles não são.");
     let fields;
     try { fields = editor.getValue(); }
@@ -302,18 +307,19 @@
     if (accepted && generation === selectionGeneration && candidate === current && !writing && !reading && active()) { hydrate(candidate); status("Versão consultada carregada. Novas alterações usarão esta revisão."); }
   }
   async function abandonCreate() {
-    if (!pendingCreate || writing || reading) return;
+    if (!pendingCreate || writing || reading || approvedDeparture || pageInactive) return;
     const generation = selectionGeneration;
-    if (!await confirmDeparture(true) || generation !== selectionGeneration || writing || reading) return;
+    if (!await confirmDeparture(true) || generation !== selectionGeneration || writing || reading || approvedDeparture || pageInactive) return;
     abandonState(); dirty = editing;
     status("Recuperação abandonada. O pedido pode ter sido gravado. Consulte a lista antes de criar novamente."); update();
   }
   async function bootstrap() {
-    if (booting || protectedState() || editing || ready) return;
+    if (booting || protectedState() || editing || ready || approvedDeparture || pageInactive) return;
     booting = true; $("bootstrap").hidden = true; status("Carregando sessão…"); update();
     try {
       if (!token) {
         const session = await ui.browserToken();
+        if (pageInactive) return;
         token = session.access_token; subject = session.subject;
       }
       const me = await request("/api/v1/me", {valid: (value) => object(value) && Array.isArray(value.scopes) && value.scopes.every((scope) => typeof scope === "string")});
@@ -335,27 +341,58 @@
   $("abandon").addEventListener("click", abandonCreate);
   $("session-logout").addEventListener("click", () => document.getElementById("logout-button").click());
   form.addEventListener("submit", save);
-  window.addEventListener("beforeunload", (event) => { if (protectedState()) { event.preventDefault(); event.returnValue = ""; } });
+  window.addEventListener("beforeunload", (event) => { if (!approvedDeparture && !pageInactive && protectedState()) { event.preventDefault(); event.returnValue = ""; } });
+  function resetDeparture() {
+    if (pageInactive) return;
+    approvedDeparture = false;
+    update();
+  }
+  document.addEventListener("ocr:logout-failed", resetDeparture);
   // Capture precedes the existing shell logout listener. Re-dispatch only once after consent.
   document.addEventListener("click", async (event) => {
     const target = event.target.closest?.("#logout-button, a[href]");
-    if (!target) return;
+    if (!target || pageInactive) return;
     const logout = target.id === "logout-button";
     if (logout && logoutBypass) { logoutBypass = false; return; }
-    if (!protectedState() && !confirming) return;
-    if (!logout && (target.hasAttribute("download") || target.getAttribute("href")?.startsWith("#"))) return;
+    let destination;
+    if (!logout) {
+      const browsingTarget = target.getAttribute("target") ?? document.querySelector("base[target]")?.getAttribute("target") ?? "";
+      if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || target.hasAttribute("download") || (browsingTarget && browsingTarget.toLowerCase() !== "_self")) return;
+      try { destination = new URL(target.href, location.href); } catch (_) { return; }
+      if (!["http:", "https:"].includes(destination.protocol)) return;
+      if (destination.origin === location.origin && destination.pathname === location.pathname && destination.search === location.search && (destination.hash || location.hash || target.getAttribute("href")?.startsWith("#"))) return;
+    }
+    if (!protectedState() && !confirming && !approvedDeparture) return;
     event.preventDefault(); event.stopImmediatePropagation();
-    if (confirming) return;
+    if (confirming || approvedDeparture) return;
     const generation = selectionGeneration;
-    if (!await confirmDeparture() || generation !== selectionGeneration) return;
+    if (!await confirmDeparture() || generation !== selectionGeneration || pageInactive || approvedDeparture) return;
+    approvedDeparture = true;
+    update();
     if (logout) {
-      // Explicitly accepted departure: the shell's existing handler owns logout.
+      // The shell owns the single POST and reports failure so protection can resume.
       logoutBypass = true;
-      try { target.click(); } finally { logoutBypass = false; }
+      try { target.click(); }
+      catch (_) { resetDeparture(); }
+      finally { logoutBypass = false; }
     } else {
-      window.location.assign(target.href);
+      try { window.location.assign(destination.href); }
+      catch (_) { resetDeparture(); }
     }
   }, true);
-  window.addEventListener("pagehide", () => { token = null; subject = null; editor.destroy(); }, {once: true});
+  window.addEventListener("pagehide", () => {
+    pageInactive = true;
+    token = null; subject = null; editor.destroy();
+  }, {once: true});
+  window.addEventListener("pageshow", (event) => {
+    approvedDeparture = false;
+    if (event.persisted) {
+      // Keep the old closure inert, including its unload prompt, until fresh bootstrap.
+      pageInactive = true;
+      window.location.reload();
+      return;
+    }
+    if (!pageInactive) update();
+  });
   update(); bootstrap();
 })();

@@ -216,6 +216,7 @@
       } catch (_) {
         logout.disabled = false;
         logout.textContent = "Falha ao sair — tentar novamente";
+        document.dispatchEvent(new CustomEvent("ocr:logout-failed"));
       }
     });
   }
