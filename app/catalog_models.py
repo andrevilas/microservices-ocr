@@ -111,6 +111,26 @@ class VersionLifecycle(BaseModel):
         return value.astimezone(timezone.utc)
 
 
+class TypeDeprecateInput(BaseModel):
+    model_config = _INPUT
+    expected_lifecycle_revision: Revision
+
+
+class TypeDeprecationReceipt(BaseModel):
+    model_config = _INPUT
+    type_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    version: int = Field(ge=1)
+    schema_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    lifecycle: VersionLifecycle
+
+    @field_validator("lifecycle")
+    @classmethod
+    def deprecated_lifecycle(cls, value: VersionLifecycle) -> VersionLifecycle:
+        if value.state != "deprecated" or value.revision != 2:
+            raise ValueError("Deprecation receipts require deprecated lifecycle revision 2.")
+        return value
+
+
 class TypeVersionViewSummary(TypeVersionSummary):
     lifecycle: VersionLifecycle
 

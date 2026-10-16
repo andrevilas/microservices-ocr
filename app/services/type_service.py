@@ -12,8 +12,9 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.application import ApplicationError, Principal
-from app.catalog_models import (MAX_REVISION, TypePage, TypeReceipt, TypeRecord, TypeSummary, TypeVersionPage,
-                                TypeVersionRecord, TypeVersionSummary, TypeVersionViewSummary, VersionLifecycle)
+from app.catalog_models import (MAX_REVISION, TypeDeprecationReceipt, TypePage, TypeReceipt, TypeRecord,
+                                TypeSummary, TypeVersionPage, TypeVersionRecord, TypeVersionSummary,
+                                TypeVersionViewSummary, VersionLifecycle)
 from app.document_models import SCHEMA_VERSION, ContextCreate, TypeDraft, compose_schema
 from app.document_values import validate_values
 from app.services.batch_service import request_identity
@@ -330,6 +331,8 @@ class TypeService:
         """Read and validate a stored snapshot on the caller's connection; never acquire a lock here."""
         row = conn.execute(
             "SELECT " + _VERSION_VIEW_COLUMNS + ", v.canonical" + _VERSION_VIEW_FROM
+            + "JOIN document_types t ON t.type_id=v.type_id AND t.owner=v.owner AND t.context_id=v.context_id "
+            + "JOIN document_contexts c ON c.context_id=v.context_id AND c.owner=v.owner "
             + "WHERE v.owner=? AND v.type_id=? AND v.version=?", (owner, type_id, version)).fetchone()
         if row is None:
             raise ApplicationError(404, "type_version_not_found", "Type version not found.")
@@ -347,6 +350,95 @@ class TypeService:
         except Exception:
             raise _unavailable() from None  # integrity failure; never echo stored content
         return TypeVersionRecord(**summary.model_dump(), lifecycle=lifecycle, schema=schema)
+
+    def deprecate(self, principal: Principal, type_id: str, version: int, *,
+                  expected_lifecycle_revision: int, key: str) -> tuple[TypeDeprecationReceipt, bool]:
+        principal.require("contexts:read")
+        principal.require("contexts:publish")
+        if not (_strict_int(version, 1, 2**63 - 1)
+                and _strict_int(expected_lifecycle_revision, 1, MAX_REVISION)):
+            raise _query_error()
+        if not _valid_id(type_id):
+            raise ApplicationError(404, "type_version_not_found", "Type version not found.")
+        key_hash, request_hash = request_identity(key, {
+            "operation": "type.deprecate.v1", "type_id": type_id, "version": version,
+            "expected_lifecycle_revision": expected_lifecycle_revision})
+        owner = principal.subject
+
+        def receipt(snapshot, lifecycle):
+            try:
+                return TypeDeprecationReceipt(type_id=snapshot.type_id, version=snapshot.version,
+                                              schema_sha256=snapshot.schema_sha256, lifecycle=lifecycle)
+            except Exception:
+                raise _unavailable() from None
+
+        def work(conn):
+            # The ledger has its own key namespace. Replay precedes lifecycle CAS,
+            # but still requires the current immutable reference and ownership links.
+            replay = conn.execute(
+                "SELECT type_id, version, request_hash FROM document_type_deprecations "
+                "WHERE owner=? AND key_hash=?", (owner, key_hash)).fetchone()
+            if replay is not None:
+                if replay[2] != request_hash:
+                    raise ApplicationError(409, "idempotency_conflict",
+                                           "This key was used for a different deprecation.")
+                if replay[0] != type_id or replay[1] != version:
+                    raise _unavailable()
+                snapshot = self._version_snapshot(conn, owner, type_id, version)
+                return receipt(snapshot, snapshot.lifecycle), True
+
+            snapshot = self._version_snapshot(conn, owner, type_id, version)
+            if snapshot.lifecycle.revision != expected_lifecycle_revision:
+                raise ApplicationError(409, "type_lifecycle_revision_conflict",
+                                       "The version lifecycle was changed; read it again.")
+            if snapshot.lifecycle.state == "deprecated":
+                raise ApplicationError(409, "type_version_already_deprecated",
+                                       "The type version is already deprecated.")
+            changed_at = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                "INSERT INTO document_type_deprecations "
+                "(owner, type_id, version, state, lifecycle_revision, changed_at, actor, key_hash, request_hash) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (owner, type_id, version, "deprecated", 2, changed_at, principal.subject, key_hash, request_hash))
+            lifecycle = VersionLifecycle(state="deprecated", revision=2,
+                                         changed_at=datetime.fromisoformat(changed_at))
+            # Validate the complete receipt before _write commits the ledger/key.
+            return receipt(snapshot, lifecycle), False
+
+        return self._write(work)
+
+    def _binding_version(self, conn, principal: Principal, type_id: str, version: int,
+                         expected_schema_sha256: str) -> TypeVersionRecord:
+        """Check eligibility for a NEW binding on the caller's write connection.
+
+        Caller must hold jobs._lock and BEGIN IMMEDIATE on this same connection,
+        insert the binding before that transaction commits, and own all job ACL,
+        metadata scopes and lease checks. in_transaction cannot prove lock possession.
+        This helper never acquires a lock, opens a connection or controls a transaction.
+
+        The future binding service must resolve existing-binding replay, with current
+        ACL and request-hash checks, BEFORE this eligibility check. Existing bindings
+        survive deprecation; editing their metadata does not create a new association.
+        New jobs, segments and version replacements must check eligibility again;
+        grants are not inherited automatically. A separate lookup followed by a later
+        insert would be a TOCTOU bug. This helper is not DocumentService integration.
+        """
+        principal.require("contexts:read")
+        if not _strict_int(version, 1, 2**63 - 1):
+            raise _query_error()
+        if not _valid_id(type_id):
+            raise ApplicationError(404, "type_version_not_found", "Type version not found.")
+        if (not isinstance(expected_schema_sha256, str)
+                or re.fullmatch(r"[0-9a-f]{64}", expected_schema_sha256) is None):
+            raise _query_error()
+        if not conn.in_transaction:
+            raise _unavailable()
+        snapshot = self._version_snapshot(conn, principal.subject, type_id, version)
+        if snapshot.schema_sha256 != expected_schema_sha256:
+            raise ApplicationError(409, "type_schema_mismatch", "The type schema reference does not match.")
+        if snapshot.lifecycle.state != "published":
+            raise ApplicationError(409, "type_version_deprecated", "The type version is deprecated.")
+        return snapshot
 
     def get_version(self, principal: Principal, type_id: str, version: int) -> TypeVersionRecord:
         principal.require("contexts:read")
