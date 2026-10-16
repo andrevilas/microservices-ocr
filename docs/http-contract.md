@@ -192,6 +192,14 @@ Após corrigir as restrições de hashes e identificadores no JSON Schema,
 170 testes das seis suítes afetadas passaram em 43,67 s. O OpenAPI foi
 regenerado e verificado offline; os digests dos três templates permaneceram
 iguais. A revisão independente encerrou a pendência do contrato.
+Os adaptadores internos de templates e as rotas explícitas do gateway OAuth
+foram verificados em quatro suítes: 163 testes passaram em 17,97 s.
+A cobertura usa ASGI, SQLite e serviços reais, com emissor OAuth sintético;
+inclui interseção de escopos do token e do vínculo, cutoff, rejeição antes da
+leitura do corpo, replay e isolamento entre proprietários. O teste do ApiClient
+injeta o principal explicitamente. Essas evidências não comprovam um provedor
+OAuth externo nem clientes desktop; o registro e a matriz SDK dos templates
+permanecem como gates separados.
 O inventário
 MCP permanece independente, com 12 ferramentas de catálogo (32 no total).
 `tests/test_catalog_lifecycle_mcp_vertical.py` verifica

@@ -79,13 +79,13 @@ def test_dispatch_ownership_replay_and_denials(catalog):
             before = rows(c.store)
             with pytest.raises(ApplicationError) as error:
                 execute_catalog(c.services, principal, operation, args)
-            assert error.value.status_code == 404
+            assert error.value.status == 404
             assert rows(c.store) == before
     reader = Principal(subject="owner", user_id=1, scopes=frozenset({"contexts:read"}))
     before = rows(c.store)
     with pytest.raises(ApplicationError) as error:
         execute_catalog(c.services, reader, CLONE, arguments(template, KEY + "-denied"))
-    assert error.value.status_code == 403
+    assert error.value.status == 403
     assert rows(c.store) == before
     assert execute_catalog(c.services, c.owner, LIST, ()) == templates
 
@@ -187,11 +187,17 @@ def test_valid_slug_boundary():
     run_boundary()
 
 
-@pytest.mark.parametrize("failure", ["timeout", "redirect", "invalid", "oversized", "storage"])
-def test_transport_failures_are_single_attempt_and_sanitized(failure, caplog):
-    run_boundary(failure=failure, match=".+", caplog=caplog)
+@pytest.mark.parametrize("failure,code", [
+    ("timeout", "api_unavailable"),
+    ("redirect", "upstream_redirect"),
+    ("invalid", "invalid_api_response"),
+    ("oversized", "upstream_response_limit"),
+    ("storage", "storage_unavailable"),
+])
+def test_transport_failures_are_single_attempt_and_sanitized(failure, code, caplog):
+    run_boundary(failure=failure, match=code, caplog=caplog)
 
 
 def test_oversized_request_never_sends(monkeypatch):
     monkeypatch.setattr("app.mcp_stdio.MAX_CATALOG_REQUEST_BYTES", 1)
-    run_boundary(match="validation_error", expected_calls=0)
+    run_boundary(match="request_too_large", expected_calls=0)

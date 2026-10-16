@@ -761,6 +761,154 @@ def test_oauth_catalog_requires_explicit_grants_before_body_parsing(
     asyncio.run(run())
 
 
+def test_oauth_context_templates_contract_and_isolation(config, tmp_path):
+    cutoff = time.time() - 1000
+    grants = ["contexts:read", "contexts:write"]
+    full = RemoteConfig(config.origin, config.issuer, config.introspection_client_id, config.secret_file,
+                        {subject: {"user_id": uid, "scopes": grants, "document_scopes_not_before": cutoff}
+                         for subject, uid in (("subject-one", 1), ("subject-two", 2))}, config.allowed_clients)
+    token_claims = claims(full, iat=cutoff)
+    verifier, users = verifier_for(full, token_claims)
+    users[2] = {"id": 2, "role": "admin"}
+    root = tmp_path / "data"
+    jobs = JobStore(root)
+    app = create_remote_app(full, verifier=verifier, service_provider=lambda: JobApplication(jobs))
+    listing_path = "/api/v1/context-templates"
+    clone_path = listing_path + "/generic/clone"
+    auth = bearer("synthetic-access-token")
+    headers = {**auth, "Idempotency-Key": "oauth-template-clone-0001"}
+
+    async def run():
+        try:
+            await verifier.start()
+            async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url=full.origin) as client:
+                for method, path in (("GET", listing_path), ("POST", clone_path)):
+                    response = await client.request(method, path)
+                    assert response.status_code == 401, response.text
+                    assert response.headers["www-authenticate"] == full.challenge
+                for method, path in (
+                    ("POST", listing_path), ("GET", clone_path), ("PUT", listing_path),
+                    ("PUT", clone_path), ("DELETE", clone_path), ("PATCH", clone_path),
+                    ("HEAD", listing_path), ("OPTIONS", clone_path),
+                    ("GET", listing_path + "/"), ("GET", listing_path + "/extra"),
+                    ("POST", clone_path + "/"), ("POST", clone_path + "/extra"),
+                    ("POST", listing_path + "/Generic/clone"),
+                    ("POST", listing_path + "/" + "a" * 65 + "/clone"),
+                ):
+                    response = await client.request(method, path)
+                    assert response.status_code == 404, (method, path, response.text)
+                response = await client.get(listing_path, headers=auth)
+                assert response.status_code == 200, response.text
+                listing = response.json()
+                assert set(listing) == {"items"}
+                assert [item["template_id"] for item in listing["items"]] == [
+                    "generic", "real-estate-deed", "procurement-notice"]
+                for item in listing["items"]:
+                    assert set(item) == {"template_id", "template_version", "template_sha256", "context", "types"}
+                    assert type(item["template_version"]) is int and item["template_version"] >= 1
+                    assert len(item["template_sha256"]) == 64
+                    assert set(item["template_sha256"]) <= set("0123456789abcdef")
+                    assert isinstance(item["context"], dict) and item["context"]
+                    assert item["types"]
+                    for definition in item["types"]:
+                        assert set(definition) == {"type_key", "body"}
+                        assert isinstance(definition["type_key"], str) and definition["type_key"]
+                        assert isinstance(definition["body"], dict) and definition["body"]
+                before = oauth_catalog_snapshot(root)
+                assert all(not rows for rows in before.values())  # Listing initializes tables without seeding rows.
+                response = await client.get(listing_path, headers=auth)
+                assert response.status_code == 200 and response.json() == listing
+                assert oauth_catalog_snapshot(root) == before
+                template = listing["items"][0]
+                body = {"expected_version": template["template_version"],
+                        "expected_sha256": template["template_sha256"]}
+                response = await client.post(listing_path + "/" + "a" * 64 + "/clone", json=body, headers=headers)
+                assert response.status_code == 404, response.text
+                assert response.json()["error"]["code"] == "context_template_not_found"
+                assert oauth_catalog_snapshot(root) == before
+                for binding_scopes, token_scopes, issued_at in (
+                    (["contexts:write"], grants, cutoff), (["contexts:read"], grants, cutoff),
+                    (grants, ["contexts:write"], cutoff), (grants, ["contexts:read"], cutoff),
+                    (grants, grants, cutoff - 1), (sorted(LEGACY_SCOPES), grants, cutoff),
+                    (grants, sorted(LEGACY_SCOPES), cutoff),
+                ):
+                    verifier.config = bound(config, binding_scopes, cutoff)
+                    token_claims.update(scope=" ".join(token_scopes), iat=issued_at)
+                    if binding_scopes == ["contexts:read"] or token_scopes == ["contexts:read"]:
+                        response = await client.get(listing_path, headers=auth)
+                        assert response.status_code == 200 and response.json() == listing
+                    for payload in (json.dumps(body), '{"PRIVATE":', "x" * (2 * 1024 * 1024 + 1)):
+                        response = await client.post(clone_path, content=payload,
+                                                     headers={**headers, "Content-Type": "application/json"})
+                        assert response.status_code == 403, response.text
+                        assert response.json()["error"]["code"] == "insufficient_scope"
+                        assert "PRIVATE" not in response.text and "synthetic-access-token" not in response.text
+                        assert oauth_catalog_snapshot(root) == before
+                verifier.config = full
+                token_claims.update(scope=" ".join(grants), iat=cutoff)
+                response = await client.post(clone_path, json=body, headers=headers)
+                assert response.status_code == 201, response.text
+                assert response.headers["idempotency-replayed"] == "false"
+                receipt_bytes, receipt = response.content, response.json()
+                assert set(receipt) == {"template_id", "template_version", "template_sha256", "context_id",
+                                        "context_revision", "types", "created_at"}
+                for field in ("template_id", "template_version", "template_sha256"):
+                    assert receipt[field] == template[field]
+                assert receipt["context_revision"] == 1
+                assert receipt["created_at"].endswith(("Z", "+00:00"))
+                assert [item["type_key"] for item in receipt["types"]] == [item["type_key"] for item in template["types"]]
+                context_path = "/api/v1/contexts/" + receipt["context_id"]
+                response = await client.get(context_path, headers=auth)
+                assert response.status_code == 200 and response.json()["body"] == template["context"]
+                for cloned, definition in zip(receipt["types"], template["types"], strict=True):
+                    assert set(cloned) == {"type_key", "type_id", "revision"}
+                    assert cloned["revision"] == 1
+                    type_path = "/api/v1/document-types/" + cloned["type_id"]
+                    response = await client.get(type_path, headers=auth)
+                    assert response.status_code == 200 and response.json()["body"] == definition["body"]
+                    assert "schema" not in response.json() and "schema_document" not in response.json()
+                    response = await client.get(type_path + "/versions", headers=auth)
+                    assert response.status_code == 200 and response.json()["items"] == []
+                saved = oauth_catalog_snapshot(root)
+                response = await client.post(clone_path, json=body, headers=headers)
+                assert response.status_code == 200 and response.content == receipt_bytes
+                assert response.headers["idempotency-replayed"] == "true"
+                assert oauth_catalog_snapshot(root) == saved
+                response = await client.post(type_path + "/versions",
+                                             json={"expected_revision": 1, "expected_context_revision": 1},
+                                             headers={**auth, "Idempotency-Key": "oauth-template-publish-0001"})
+                assert response.status_code == 403, response.text
+                assert response.json()["error"]["code"] == "insufficient_scope"
+                assert oauth_catalog_snapshot(root) == saved
+                token_claims["sub"] = "subject-two"
+                response = await client.get(listing_path, headers=auth)
+                assert response.status_code == 200 and response.json() == listing
+                for path in (context_path, *("/api/v1/document-types/" + item["type_id"] for item in receipt["types"])):
+                    response = await client.get(path, headers=auth)
+                    assert response.status_code == 404, response.text
+                assert oauth_catalog_snapshot(root) == saved
+                response = await client.post(clone_path, json=body, headers=headers)
+                assert response.status_code == 201, response.text
+                assert response.headers["idempotency-replayed"] == "false"
+                other = response.json()
+                assert {receipt["context_id"], *(item["type_id"] for item in receipt["types"])}.isdisjoint(
+                    {other["context_id"], *(item["type_id"] for item in other["types"])})
+                response = await client.get("/api/v1/contexts/" + other["context_id"], headers=auth)
+                assert response.status_code == 200 and response.json()["body"] == template["context"]
+                saved = oauth_catalog_snapshot(root)
+                token_claims["sub"] = "subject-one"
+                response = await client.post(clone_path, json=body, headers=headers)
+                assert response.status_code == 200 and response.content == receipt_bytes
+                assert response.headers["idempotency-replayed"] == "true"
+                assert oauth_catalog_snapshot(root) == saved
+        finally:
+            try:
+                await verifier.close()
+            finally:
+                jobs._conn.close()
+    asyncio.run(run())
+
+
 def test_oauth_catalog_read_only_cannot_update_create_types_or_publish(config, tmp_path):
     cutoff = time.time() - 1000
     full = bound(config, sorted(OAUTH_SCOPES), cutoff)
