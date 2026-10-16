@@ -67,6 +67,11 @@
         <button id="version-refresh-draft" type="button" hidden disabled>Atualizar rascunho</button>
       </div>
       <p id="version-publish-status" role="status" aria-live="polite"></p>
+      <div class="catalog-actions">
+        <button id="version-deprecate-recover" type="button" hidden disabled>Recuperar descontinuação</button>
+        <button id="version-deprecate-abandon" type="button" hidden disabled>Abandonar recuperação da descontinuação</button>
+      </div>
+      <p id="version-deprecate-status" role="status" aria-live="polite"></p>
       <p id="version-list-status" role="status" aria-live="polite"></p>
       <ul id="version-list" class="entity-list"></ul>
       <div class="catalog-actions">
@@ -77,6 +82,7 @@
       <p id="version-detail-status" role="status" aria-live="polite"></p>
       <section id="version-detail" aria-labelledby="version-detail-title" hidden>
         <h3 id="version-detail-title">Versão selecionada</h3>
+        <button id="version-deprecate" type="button" hidden disabled>Descontinuar versão</button>
         <p id="version-reference" class="mono"></p>
         <p id="version-meta" class="hint"></p>
         <p id="version-lifecycle" class="hint"></p>

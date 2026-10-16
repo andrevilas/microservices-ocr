@@ -64,6 +64,7 @@
   let selectionGeneration = 0, listGeneration = 0, summaries = [], cursor = null;
   let pendingCreate = null, uncertainUpdate = null, conflict = false, current = null;
   let pendingPublish = null, publicationStale = false;
+  let pendingDeprecation = null;
   let programmatic = false, confirming = false, logoutBypass = false;
   let approvedDeparture = false, pageInactive = false;
   let activeKind = contextKind, parentContext = null;
@@ -73,9 +74,9 @@
   const edgeWhitespace = /^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]$/u;
   const status = (text) => { $("status").textContent = text; };
   const listStatus = (text) => { $("list-status").textContent = text; };
-  const protectedState = () => dirty || !!pendingCreate || !!uncertainUpdate || !!pendingPublish || writing;
+  const protectedState = () => dirty || !!pendingCreate || !!uncertainUpdate || !!pendingPublish || !!pendingDeprecation || writing;
   const active = () => !pageInactive && !approvedDeparture && ready && !expired && canRead;
-  const mutable = () => active() && canWrite && !writing && !reading && !pendingCreate && !uncertainUpdate && !pendingPublish && (activeKind !== "type" || !!parentContext);
+  const mutable = () => active() && canWrite && !writing && !reading && !pendingCreate && !uncertainUpdate && !pendingPublish && !pendingDeprecation && (activeKind !== "type" || !!parentContext);
   const editor = window.OcrCatalogFields.create($("fields"), {
     idPrefix: "context-common", readonly: true,
     onChange: (fields) => {
@@ -96,6 +97,7 @@
     getState: () => ({active: active(), kind: activeKind, selected,
       parentId: parentContext?.context_id, writing, reading}),
     object, revisionOk, dateOk, fieldsOk, identityOk, clone, freeze, equal,
+    onDetailChange: updateDeprecationControls,
   });
   const versionBound = (binding = reader.getBinding()) => reader.bound(binding);
   const clearVersionDetail = () => reader.clearDetail();
@@ -111,10 +113,10 @@
   }
   function publicationEligible() {
     return canPublish && versionBound() && !!savedSnapshot && revisionOk(originalRevision) && !confirming &&
-      !dirty && !conflict && !uncertainUpdate && !pendingCreate && !pendingPublish && !publicationStale && !writing && !reading;
+      !dirty && !conflict && !uncertainUpdate && !pendingCreate && !pendingPublish && !pendingDeprecation && !publicationStale && !writing && !reading;
   }
   function canRecoverPublication() {
-    return canPublish && versionBound() && !!pendingPublish && publicationPair(pendingPublish) && !writing && !reading && !confirming;
+    return canPublish && versionBound() && !!pendingPublish && !pendingDeprecation && publicationPair(pendingPublish) && !writing && !reading && !confirming;
   }
   function publicationCurrent(intent, generation, binding) {
     return canPublish && pendingPublish === intent && generation === selectionGeneration && versionBound(binding) && publicationPair(intent);
@@ -136,7 +138,137 @@
     versionUi("publish-abandon").disabled = !pendingPublish || writing || reading || confirming || approvedDeparture || pageInactive;
     versionUi("refresh-draft").hidden = !bound || !canPublish;
     versionUi("refresh-draft").disabled = busy || !canPublish || confirming;
+    updateDeprecationControls();
   }
+  function deprecationStatus(text) { versionUi("deprecate-status").textContent = text; }
+  function deprecationPair(intent) {
+    const r = intent?.request;
+    return !!r && activeKind === "type" && selected === r.typeId && parentContext?.context_id === r.parentId &&
+      reader.getBinding() === r.binding;
+  }
+  function deprecationEligible(snapshot = reader.getDisplayed()) {
+    return active() && canPublish && versionBound() && !!snapshot &&
+      snapshot.lifecycle.state === "published" && snapshot.lifecycle.revision === 1 &&
+      !writing && !reading && !confirming && !pendingCreate && !uncertainUpdate && !conflict &&
+      !pendingPublish && !pendingDeprecation;
+  }
+  function canRecoverDeprecation() {
+    return active() && canPublish && !!pendingDeprecation && deprecationPair(pendingDeprecation) &&
+      !writing && !reading && !confirming && !pendingCreate && !uncertainUpdate && !pendingPublish && !conflict;
+  }
+  function canAbandonDeprecation() {
+    return !!pendingDeprecation && deprecationPair(pendingDeprecation) &&
+      !writing && !reading && !confirming && !approvedDeparture && !pageInactive;
+  }
+  function updateDeprecationControls() {
+    if (pageInactive) return;
+    const snapshot = reader.getDisplayed();
+    versionUi("deprecate").hidden = !canPublish || !snapshot || snapshot.lifecycle.state !== "published" || snapshot.lifecycle.revision !== 1;
+    versionUi("deprecate").disabled = !deprecationEligible(snapshot);
+    versionUi("deprecate-recover").hidden = !pendingDeprecation;
+    versionUi("deprecate-recover").disabled = !canRecoverDeprecation();
+    versionUi("deprecate-abandon").hidden = !pendingDeprecation;
+    versionUi("deprecate-abandon").disabled = !canAbandonDeprecation();
+  }
+  function deprecationCurrent(intent, generation, binding) {
+    return active() && canPublish && pendingDeprecation === intent && generation === selectionGeneration &&
+      versionBound(binding) && deprecationPair(intent);
+  }
+  function deprecationReceiptOk(intent, value) {
+    const r = intent.request;
+    return object(value) && Object.keys(value).length === 4 &&
+      ["type_id", "version", "schema_sha256", "lifecycle"].every((key) => Object.hasOwn(value, key)) &&
+      value.type_id === r.typeId && value.version === r.version && value.schema_sha256 === r.hash &&
+      reader.lifecycleOk(value.lifecycle) && Object.keys(value.lifecycle).length === 3 &&
+      value.lifecycle.state === "deprecated" && value.lifecycle.revision === 2;
+  }
+  async function deprecateVersion() {
+    const snapshot = reader.getDisplayed();
+    if (!deprecationEligible(snapshot)) return;
+    const binding = reader.getBinding(), generation = selectionGeneration;
+    let accepted;
+    confirming = true; update();
+    try {
+      accepted = await ui.confirmAction({title: `Descontinuar versão ${snapshot.version}?`,
+        body: "Novos vínculos com esta versão serão bloqueados. Os vínculos existentes e a consulta histórica serão preservados. A ação não libera quota e não permite reativação. Seu rascunho não será salvo nem alterado.",
+        confirmLabel: "Descontinuar versão", danger: true});
+    } finally { confirming = false; update(); }
+    const displayed = reader.getDisplayed();
+    if (!accepted || generation !== selectionGeneration || !versionBound(binding) ||
+      !deprecationEligible(displayed) || !equal(displayed, snapshot)) return;
+    let key;
+    try { key = crypto.randomUUID(); }
+    catch (_) { deprecationStatus("Não foi possível preparar a descontinuação. Use um navegador com conexão segura."); return; }
+    pendingDeprecation = {request: freeze({
+      path: `/api/v1/document-types/${snapshot.type_id}/versions/${snapshot.version}/deprecate`,
+      body: JSON.stringify({expected_lifecycle_revision: 1}), key,
+      typeId: snapshot.type_id, parentId: snapshot.context_id, version: snapshot.version,
+      hash: snapshot.schema_sha256, snapshot, binding,
+    }), everAmbiguous: false, receipt: null};
+    publicationStatus("");
+    await sendDeprecation();
+  }
+  async function sendDeprecation() {
+    if (!canRecoverDeprecation()) return;
+    const intent = pendingDeprecation, generation = selectionGeneration, binding = reader.getBinding();
+    const r = intent.request;
+    writing = true; reader.invalidateReads();
+    deprecationStatus(intent.receipt ? `Consultando descontinuação recebida da versão ${r.version}…` : `Descontinuando versão ${r.version}…`);
+    update();
+    let confirmed = false;
+    try {
+      if (!intent.receipt) {
+        const receipt = await request(r.path, {method: "POST", body: r.body, key: r.key, expectedStatus: 200,
+          valid: (value) => deprecationReceiptOk(intent, value)});
+        intent.receipt = freeze(clone(receipt));
+      }
+      if (!deprecationCurrent(intent, generation, binding)) return;
+      const record = await request(`/api/v1/document-types/${r.typeId}/versions/${r.version}`, {
+        valid: (value) => reader.recordOk(binding, r.snapshot, value) && equal(value.schema, r.snapshot.schema) &&
+          value.lifecycle.state === "deprecated" && value.lifecycle.revision === 2 && equal(value.lifecycle, intent.receipt.lifecycle),
+      });
+      if (!deprecationCurrent(intent, generation, binding)) return;
+      reader.clearDetail(); reader.render(record);
+      pendingDeprecation = null;
+      deprecationStatus(`Versão ${r.version} descontinuada. A consulta histórica foi preservada.`);
+      confirmed = true;
+    } catch (error) {
+      if (error.ambiguous) intent.everAmbiguous = true;
+      if (expired && pendingDeprecation === intent && !pageInactive) {
+        deprecationStatus(`Sessão expirada. O pedido de descontinuação da versão ${r.version} e o rascunho foram preservados. Entre novamente para continuar.`);
+        return;
+      }
+      if (!deprecationCurrent(intent, generation, binding)) return;
+      const preAdmission = !intent.receipt && !intent.everAmbiguous && error.status === 409 &&
+        ["type_lifecycle_revision_conflict", "type_version_already_deprecated"].includes(error.code);
+      if (preAdmission) {
+        pendingDeprecation = null; reader.clearDetail();
+        deprecationStatus("A situação da versão mudou. Abra a versão novamente antes de continuar.");
+      } else deprecationStatus(intent.receipt
+        ? `A descontinuação da versão ${r.version} foi recebida, mas seus detalhes ainda não foram confirmados. Recuperar descontinuação apenas consulta a versão recebida.`
+        : `O pedido de descontinuação da versão ${r.version} foi preservado e a ação pode já ter ocorrido. Recuperar descontinuação repete exatamente o mesmo pedido, com a mesma chave. Você também pode abandonar a recuperação explicitamente.`);
+    } finally { writing = false; update(); }
+    if (confirmed && versionBound(binding)) await loadVersions();
+  }
+  async function abandonDeprecation() {
+    if (!canAbandonDeprecation()) return;
+    const intent = pendingDeprecation, generation = selectionGeneration, binding = reader.getBinding();
+    let accepted;
+    confirming = true; update();
+    try {
+      accepted = await ui.confirmAction({title: "Abandonar recuperação da descontinuação?",
+        body: `A versão ${intent.request.version} pode já ter sido descontinuada. Confira sua situação antes de tentar novamente. Seu rascunho será preservado; nenhum pedido será enviado.`,
+        confirmLabel: "Abandonar recuperação da descontinuação", danger: true});
+    } finally { confirming = false; update(); }
+    if (!accepted || pendingDeprecation !== intent || generation !== selectionGeneration ||
+      reader.getBinding() !== binding || !canAbandonDeprecation()) return;
+    pendingDeprecation = null;
+    deprecationStatus(`Recuperação da descontinuação da versão ${intent.request.version} abandonada. Confira a situação da versão antes de tentar novamente.`);
+    update();
+  }
+  versionUi("deprecate").addEventListener("click", deprecateVersion);
+  versionUi("deprecate-recover").addEventListener("click", sendDeprecation);
+  versionUi("deprecate-abandon").addEventListener("click", abandonDeprecation);
   async function publishVersion() {
     if (!publicationEligible()) return;
     const generation = selectionGeneration, id = selected, revision = originalRevision;
@@ -277,7 +409,7 @@
     status("Sua sessão expirou. Seu rascunho foi preservado nesta página. Entre novamente para continuar.");
     update();
   }
-  async function request(path, {method = "GET", body, key, valid} = {}) {
+  async function request(path, {method = "GET", body, key, valid, expectedStatus} = {}) {
     if (pageInactive) throw new RequestError(0, null, true);
     const headers = {Authorization: `Bearer ${token}`, Accept: "application/json"};
     if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -300,7 +432,7 @@
       const code = typeof data?.error?.code === "string" ? data.error.code : null;
       throw new RequestError(response.status, code, response.status === 408 || response.status >= 500);
     }
-    if ((method === "POST" && response.status !== 200 && response.status !== 201) || (method !== "POST" && response.status !== 200) || (valid && !valid(data))) throw new RequestError(response.status, null, true);
+    if ((expectedStatus !== undefined && response.status !== expectedStatus) || (method === "POST" && response.status !== 200 && response.status !== 201) || (method !== "POST" && response.status !== 200) || (valid && !valid(data))) throw new RequestError(response.status, null, true);
     return data;
   }
   function showError(error, prefix = "") {
@@ -474,12 +606,13 @@
     if (!force && !protectedState()) return true;
     confirming = true; update();
     try {
-      return await ui.confirmAction({title: "Sair deste rascunho?", body: pendingCreate || uncertainUpdate || pendingPublish || writing ? "Existe uma operação pendente ou com resultado incerto. Ela pode ter sido gravada no servidor. Sair abandona a recuperação e as alterações locais; confira as listas antes de criar ou publicar novamente." : "As alterações não salvas serão descartadas.", confirmLabel: "Descartar e continuar", danger: true});
+      return await ui.confirmAction({title: "Sair deste rascunho?", body: pendingCreate || uncertainUpdate || pendingPublish || pendingDeprecation || writing ? "Existe uma operação pendente ou com resultado incerto. Ela pode ter sido gravada no servidor. Sair abandona a recuperação e as alterações locais; confira as listas antes de criar ou publicar novamente." : "As alterações não salvas serão descartadas.", confirmLabel: "Descartar e continuar", danger: true});
     } finally { confirming = false; update(); }
   }
   function abandonState() {
     ++selectionGeneration; reading = false;
     pendingCreate = null; pendingPublish = null; publicationStale = false; publicationStatus("");
+    pendingDeprecation = null; deprecationStatus("");
     uncertainUpdate = null; conflict = false; dirty = false; clearComparison();
   }
   async function select(id) {

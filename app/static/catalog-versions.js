@@ -1,7 +1,7 @@
 /* Immutable version reader. Session and publication state remain with the caller. */
 (() => {
   "use strict";
-  function create({ui, get, getState, object, revisionOk, dateOk, fieldsOk, identityOk, clone, freeze, equal}) {
+  function create({ui, get, getState, object, revisionOk, dateOk, fieldsOk, identityOk, clone, freeze, equal, onDetailChange}) {
     const versionUi = (id) => document.getElementById(`version-${id}`);
     const versionEditor = window.OcrCatalogFields.create(versionUi("fields"), {
       idPrefix: "immutable-version", readonly: true,
@@ -10,6 +10,10 @@
     let versionBinding = null, versionItems = [], versionCursor = null;
     let versionListGeneration = 0, versionDetailGeneration = 0;
     let versionListing = false, versionReading = false, displayedVersion = null;
+    let displayedRecord = null;
+    function getDisplayed() {
+      return versionBound() && displayedRecord ? freeze(clone(displayedRecord)) : null;
+    }
     const versionKeys = ["type_id", "context_id", "version", "draft_revision", "context_revision", "schema_version", "schema_sha256", "type_name", "context_name", "created_at"];
     const lifecycleOk = (value) => object(value) &&
       ((value.state === "published" && value.revision === 1) || (value.state === "deprecated" && value.revision === 2)) &&
@@ -43,10 +47,11 @@
     }
     function clearVersionDetail() {
       if (destroyed) return;
-      ++versionDetailGeneration; versionReading = false; displayedVersion = null;
+      ++versionDetailGeneration; versionReading = false; displayedVersion = null; displayedRecord = null;
       versionUi("detail").hidden = true;
       for (const id of ["reference", "meta", "lifecycle", "count", "detail-status"]) versionUi(id).textContent = "";
       versionEditor.setValue([], {inherited: []}); versionEditor.setReadonly(true);
+      onDetailChange?.();
     }
     function resetVersions() {
       if (destroyed) return;
@@ -124,8 +129,10 @@
       const lifecycle = record.lifecycle;
       versionUi("lifecycle").textContent = `${lifecycle.state === "published" ? "Publicada" : "Descontinuada — não disponível para novos vínculos; consulta permitida"} · Revisão ${lifecycle.revision} · Alterada em ${ui.date(lifecycle.changed_at)}. Situação consultada nesta abertura; selecione a versão novamente para atualizar.`;
       versionUi("count").textContent = `${record.schema.fields.length} campo(s) no esquema histórico: ${record.schema.common_fields.length} comuns e ${record.schema.specific_fields.length} específicos. Independente do rascunho atual.`;
-      displayedVersion = record.version; versionUi("detail").hidden = false;
+      displayedVersion = record.version; displayedRecord = freeze(clone(record));
+      versionUi("detail").hidden = false;
       renderVersions();
+      onDetailChange?.();
     }
     async function openVersion(item) {
       if (!versionBound()) return;
@@ -170,7 +177,7 @@
     }
     function destroy() {
       if (destroyed) return;
-      destroyed = true;
+      destroyed = true; displayedRecord = null;
       ++versionListGeneration; ++versionDetailGeneration;
       versionUi("refresh").removeEventListener("click", refresh);
       versionUi("more").removeEventListener("click", more);
@@ -179,6 +186,8 @@
     }
     return {
       getBinding: () => versionBinding,
+      getDisplayed,
+      lifecycleOk,
       bound: versionBound,
       bind: bindVersions,
       reset: resetVersions,
