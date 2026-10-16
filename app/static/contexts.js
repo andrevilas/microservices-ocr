@@ -136,7 +136,7 @@
     $("list").replaceChildren(...summaries.map((item) => {
       const button = ui.el("button", {type: "button", className: "link-button entity__name", text: item.name, "aria-current": item.context_id === selected ? "true" : null});
       button.addEventListener("click", () => select(item.context_id));
-      return ui.el("li", {className: `entity${item.context_id === selected ? " is-current" : ""}`}, [ui.el("div", {className: "entity__main"}, [button, ui.el("p", {className: "entity__meta", text: `Revisão ${item.revision} · Criado em ${ui.date(item.created_at)} · Atualizado em ${ui.date(item.updated_at)}`)])]);
+      return ui.el("li", {className: `entity${item.context_id === selected ? " is-current" : ""}`}, [ui.el("div", {className: "entity__main"}, [button, ui.el("p", {className: "entity__meta", text: `Revisão ${item.revision} · Criado em ${ui.date(item.created_at)} · Atualizado em ${ui.date(item.updated_at)}`})])]);
     }));
     update();
   }

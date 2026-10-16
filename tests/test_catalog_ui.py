@@ -74,7 +74,7 @@ def draft(page, name='Contexto sintético', description='Descrição sintética'
 
 
 def revision(page, number):
-    expect(page.locator('#context-revision')).to_contain_text(re.compile(rf'\b{number}\b'))
+    expect(page.locator('#context-revision')).to_contain_text(re.compile(rf'^Revisão {number}\b'))
 
 
 def locked(page):
@@ -292,10 +292,11 @@ def test_two_tabs_conflict_requires_explicit_adoption(ui):
 
 def test_post_commit_loss_quota_then_real_replay(ui):
     page = opened(ui)
-    attempts, statuses = capture_posts(page), []
+    attempts, statuses = [], []
     def intercept(route):
         if route.request.method != 'POST':
             return route.continue_()
+        attempts.append((route.request.post_data, route.request.header_value('idempotency-key')))
         if len(attempts) == 2:
             return route.fulfill(status=429, content_type='application/json',
                                  body=json.dumps({'error': {'code': 'context_quota_exceeded'}}))
@@ -311,6 +312,7 @@ def test_post_commit_loss_quota_then_real_replay(ui):
     page.locator('#context-save').click()
     expect(page.locator('#context-recover-create')).to_be_visible()
     locked(page)
+    expect(page.locator('#context-recover-create')).to_be_enabled()
     committed = records(ui)
     assert len(committed) == 1 and statuses == [201]
     context_id = committed[0]['context_id']
