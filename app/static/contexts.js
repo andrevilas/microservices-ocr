@@ -10,10 +10,42 @@
   const revisionOk = (value) => Number.isSafeInteger(value) && value >= 1;
   const dateOk = (value) => typeof value === "string" && Number.isFinite(Date.parse(value));
   const fieldsOk = (value) => Array.isArray(value) && value.every(object);
-  const bodyOk = (value) => object(value) && typeof value.name === "string" && typeof value.description === "string" && fieldsOk(value.common_fields);
+  const contextKind = "context";
+  const entities = freeze({
+    context: {
+      idKey: "context_id", fieldsKey: "common_fields",
+      collection: () => "/api/v1/contexts",
+      detail: (id) => `/api/v1/contexts/${id}`,
+      invalidBody: "invalid_context_body", revisionConflict: "context_revision_conflict", quotaExceeded: "context_quota_exceeded",
+    },
+    type: {
+      idKey: "type_id", fieldsKey: "specific_fields",
+      collection: (parentId) => `/api/v1/contexts/${parentId}/types`,
+      detail: (id) => `/api/v1/document-types/${id}`,
+      invalidBody: "invalid_type_body", revisionConflict: "type_revision_conflict", quotaExceeded: "type_quota_exceeded",
+    },
+  });
+  function entityPath(kind, parentId, id = null) {
+    if (kind === "type" && !idOk(parentId)) throw new Error("Invalid parent identity");
+    return id === null ? entities[kind].collection(parentId) : entities[kind].detail(id);
+  }
+  function entityBody(kind, name, description, fields) {
+    return {name, description, [entities[kind].fieldsKey]: fields};
+  }
+  const bodyOk = (kind, value) => object(value) && typeof value.name === "string" && typeof value.description === "string" && fieldsOk(value[entities[kind].fieldsKey]);
   const summaryOk = (value) => object(value) && idOk(value.context_id) && typeof value.name === "string" && revisionOk(value.revision) && dateOk(value.created_at) && dateOk(value.updated_at);
-  const recordOk = (value) => summaryOk({...value, name: value?.body?.name}) && bodyOk(value.body);
-  const receiptOk = (value) => object(value) && idOk(value.context_id) && value.revision === 1 && dateOk(value.created_at);
+  function identityOk(kind, parentId, value) {
+    return object(value) && idOk(value[entities[kind].idKey]) &&
+      (kind === "context" || (idOk(parentId) && idOk(value.context_id) && value.context_id === parentId));
+  }
+  function entityRecordOk(kind, parentId, value) {
+    return identityOk(kind, parentId, value) && revisionOk(value.revision) && dateOk(value.created_at) && dateOk(value.updated_at) &&
+      bodyOk(kind, value.body) && (kind === "context" || value.state === "draft");
+  }
+  function entityReceiptOk(kind, parentId, value) {
+    return identityOk(kind, parentId, value) && value.revision === 1 && dateOk(value.created_at);
+  }
+  const recordOk = (value) => entityRecordOk(contextKind, null, value);
   const pageOk = (value) => object(value) && Array.isArray(value.items) && value.items.every(summaryOk) && (value.next_cursor === null || typeof value.next_cursor === "string");
   function equal(a, b) {
     if (a === b) return true;
@@ -122,10 +154,10 @@
   function hydrate(record) {
     programmatic = true;
     try {
-      editor.setValue(clone(record.body.common_fields), {inherited: []});
+      editor.setValue(clone(record.body[entities[contextKind].fieldsKey]), {inherited: []});
       name.value = record.body.name; description.value = record.body.description;
     } finally { programmatic = false; }
-    selected = record.context_id; originalRevision = record.revision; savedSnapshot = clone(record.body);
+    selected = record[entities[contextKind].idKey]; originalRevision = record.revision; savedSnapshot = clone(record.body);
     editing = true; dirty = false; conflict = false; uncertainUpdate = null;
     resetErrors(); clearComparison();
     form.hidden = false; $("empty").hidden = true;
@@ -179,7 +211,7 @@
     const generation = ++selectionGeneration;
     reading = true; status("Carregando contexto…"); update();
     try {
-      const record = await request(`/api/v1/contexts/${id}`, {valid: (value) => recordOk(value) && value.context_id === id});
+      const record = await request(entityPath(contextKind, null, id), {valid: (value) => recordOk(value) && value[entities[contextKind].idKey] === id});
       if (generation !== selectionGeneration || expired) return;
       hydrate(record); status(canWrite ? "Contexto carregado." : "Contexto carregado. Você tem permissão somente para leitura.");
     } catch (error) { if (generation === selectionGeneration) { dirty = editing; showError(error, "Não foi possível abrir o contexto. Seu formulário foi preservado. "); } }
@@ -217,11 +249,13 @@
     catch (_) { if (!first) editor.focusFirstError(); status("Revise os campos comuns indicados."); }
     if (first) { first.focus(); status("Revise os dados indicados."); }
     if (first || !fields) return null;
-    return clone({name: name.value, description: description.value, common_fields: fields});
+    return clone(entityBody(contextKind, name.value, description.value, fields));
   }
   async function recoverCreated(intent) {
     const receipt = intent.receipt;
-    const record = await request(`/api/v1/contexts/${receipt.context_id}`, {valid: (value) => recordOk(value) && value.context_id === receipt.context_id});
+    const {kind, parentId} = intent.request;
+    const id = receipt[entities[kind].idKey];
+    const record = await request(entityPath(kind, parentId, id), {valid: (value) => entityRecordOk(kind, parentId, value) && value[entities[kind].idKey] === id});
     if (expired || pendingCreate !== intent) return false;
     hydrate(record); pendingCreate = null; update();
     status("Contexto criado. A versão atual foi recuperada.");
@@ -234,13 +268,15 @@
     let saved = false;
     try {
       if (!intent.receipt) {
-        const receipt = await request(intent.request.path, {method: "POST", body: intent.request.body, key: intent.request.key, valid: receiptOk});
+        const {kind, parentId} = intent.request;
+        const receipt = await request(intent.request.path, {method: "POST", body: intent.request.body, key: intent.request.key, valid: (value) => entityReceiptOk(kind, parentId, value)});
         intent.receipt = receipt;
       }
       saved = await recoverCreated(intent);
     } catch (error) {
       if (error.ambiguous) intent.everAmbiguous = true;
-      const preAdmission = !intent.receipt && !intent.everAmbiguous && ((error.status === 422 && ["invalid_context_body", "validation_error"].includes(error.code)) || (error.status === 413 && error.code === "request_too_large") || (error.status === 429 && error.code === "context_quota_exceeded"));
+      const entity = entities[intent.request.kind];
+      const preAdmission = !intent.receipt && !intent.everAmbiguous && ((error.status === 422 && [entity.invalidBody, "validation_error"].includes(error.code)) || (error.status === 413 && error.code === "request_too_large") || (error.status === 429 && error.code === entity.quotaExceeded));
       if (preAdmission) { pendingCreate = null; showError(error, "O contexto não foi admitido. Corrija o rascunho e salve novamente. "); }
       else showError(error, intent.receipt ? "A criação foi recebida, mas a versão atual ainda não foi recuperada. Use Tentar novamente. " : "O pedido foi preservado e o formulário permanece bloqueado. Tentar novamente reutiliza exatamente o mesmo pedido. ");
     } finally { writing = false; update(); }
@@ -254,19 +290,19 @@
       let key;
       try { key = crypto.randomUUID(); }
       catch (_) { status("Não foi possível preparar o pedido. Use um navegador com conexão segura."); return; }
-      pendingCreate = {request: freeze({path: "/api/v1/contexts", body: JSON.stringify(body), key}), everAmbiguous: false, receipt: null};
+      pendingCreate = {request: freeze({kind: contextKind, parentId: null, path: entityPath(contextKind, null), body: JSON.stringify(body), key}), everAmbiguous: false, receipt: null};
       update(); await sendCreate(); return;
     }
-    const intent = freeze({path: `/api/v1/contexts/${selected}`, id: selected, expectedRevision: originalRevision, body: clone(body), wire: JSON.stringify({body, expected_revision: originalRevision})});
+    const intent = freeze({kind: contextKind, parentId: null, path: entityPath(contextKind, null, selected), id: selected, expectedRevision: originalRevision, body: clone(body), wire: JSON.stringify({body, expected_revision: originalRevision})});
     writing = true; status("Salvando contexto…"); update();
     let saved = false;
     try {
-      const record = await request(intent.path, {method: "PUT", body: intent.wire, valid: (value) => recordOk(value) && value.context_id === intent.id && value.revision === intent.expectedRevision + 1 && equal(value.body, intent.body)});
+      const record = await request(intent.path, {method: "PUT", body: intent.wire, valid: (value) => entityRecordOk(intent.kind, intent.parentId, value) && value[entities[intent.kind].idKey] === intent.id && value.revision === intent.expectedRevision + 1 && equal(value.body, intent.body)});
       if (expired) return;
       hydrate(record); status("Contexto salvo."); saved = true;
     } catch (error) {
       if (error.ambiguous) { uncertainUpdate = intent; conflict = false; clearComparison(); showError(error, "O resultado da gravação é incerto. Novas gravações estão bloqueadas. Consulte a versão atual para verificar. "); }
-      else if (error.status === 409 && error.code === "context_revision_conflict") { conflict = true; clearComparison(); showError(error, "Seu rascunho e sua revisão original foram preservados. Consulte a versão atual antes de decidir. "); }
+      else if (error.status === 409 && error.code === entities[intent.kind].revisionConflict) { conflict = true; clearComparison(); showError(error, "Seu rascunho e sua revisão original foram preservados. Consulte a versão atual antes de decidir. "); }
       else showError(error);
     } finally { writing = false; update(); }
     if (saved && active()) await loadList();
@@ -287,10 +323,14 @@
   }
   async function consult() {
     if (!active() || writing || reading || !(uncertainUpdate || conflict) || !selected) return;
-    const generation = selectionGeneration, id = selected, intent = uncertainUpdate;
+    const generation = selectionGeneration, intent = uncertainUpdate;
+    const kind = intent ? intent.kind : contextKind;
+    const parentId = intent ? intent.parentId : null;
+    const id = intent ? intent.id : selected;
+    const path = intent ? intent.path : entityPath(kind, parentId, id);
     reading = true; status("Consultando versão atual…"); update();
     try {
-      const record = await request(`/api/v1/contexts/${id}`, {valid: (value) => recordOk(value) && value.context_id === id});
+      const record = await request(path, {valid: (value) => entityRecordOk(kind, parentId, value) && value[entities[kind].idKey] === id});
       if (generation !== selectionGeneration || expired) return;
       if (intent && record.revision === intent.expectedRevision + 1 && equal(record.body, intent.body)) { hydrate(record); status("A gravação foi confirmada."); }
       else { showCurrent(record); status(intent ? "A consulta não confirmou a gravação esperada. Compare a versão atual com seu rascunho. Para resolver, escolha explicitamente Usar versão atual ou abandone este rascunho ao navegar." : "Versão atual consultada. Seu rascunho e sua revisão original permanecem no formulário."); }
