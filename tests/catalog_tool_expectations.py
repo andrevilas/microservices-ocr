@@ -1,7 +1,9 @@
 """Independent, literal expectations for the currently advertised MCP tools."""
 
-EXPECTED_TOOL_COUNT = 32
+EXPECTED_TOOL_COUNT = 34
 EXPECTED_TOOL_NAMES = frozenset({
+    "ocr_list_context_templates",
+    "ocr_clone_context_template",
     "ocr_whoami",
     "ocr_list_jobs",
     "ocr_get_job",
@@ -37,6 +39,7 @@ EXPECTED_TOOL_NAMES = frozenset({
 })
 
 CATALOG_READ_TOOL_NAMES = frozenset({
+    "ocr_list_context_templates",
     "ocr_list_contexts",
     "ocr_get_context",
     "ocr_list_document_types",
@@ -45,6 +48,7 @@ CATALOG_READ_TOOL_NAMES = frozenset({
     "ocr_get_document_type_version",
 })
 CATALOG_WRITE_TOOL_NAMES = frozenset({
+    "ocr_clone_context_template",
     "ocr_create_context",
     "ocr_update_context",
     "ocr_create_document_type",

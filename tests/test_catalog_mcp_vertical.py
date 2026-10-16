@@ -11,6 +11,7 @@ import httpx2
 from jsonschema import Draft202012Validator
 import pytest
 
+from app.context_templates import ContextTemplateList, TemplateCloneReceipt
 from app.catalog_models import ContextInput, TypeInput
 from test_mcp_vertical import connected, runtime  # noqa: F401  (runtime is a pytest fixture)
 
@@ -26,9 +27,9 @@ LEGACY_TOOLS = frozenset({
     "ocr_get_artifact", "ocr_prepare_upload", "ocr_get_upload", "ocr_submit_job", "ocr_create_batch",
     "ocr_list_batches", "ocr_get_batch", "ocr_create_export", "ocr_get_export",
 })
-READ_TOOLS = frozenset({"ocr_list_contexts", "ocr_get_context", "ocr_list_document_types",
+READ_TOOLS = frozenset({"ocr_list_context_templates", "ocr_list_contexts", "ocr_get_context", "ocr_list_document_types",
                         "ocr_get_document_type", "ocr_list_document_type_versions", "ocr_get_document_type_version"})
-CREATE_TOOLS = frozenset({"ocr_create_context", "ocr_create_document_type", "ocr_publish_document_type"})
+CREATE_TOOLS = frozenset({"ocr_clone_context_template", "ocr_create_context", "ocr_create_document_type", "ocr_publish_document_type"})
 UPDATE_TOOLS = frozenset({"ocr_update_context", "ocr_update_document_type"})
 DEPRECATE_TOOLS = frozenset({"ocr_deprecate_document_type_version"})
 CATALOG_TOOLS = READ_TOOLS | CREATE_TOOLS | UPDATE_TOOLS | DEPRECATE_TOOLS
@@ -136,7 +137,7 @@ class Tools:
 
 def check_discovery(listing):
     tools = {t.name: t for t in listing.tools}
-    assert len(listing.tools) == len(tools) == 32
+    assert len(listing.tools) == len(tools) == 34
     assert set(tools) == LEGACY_TOOLS | CATALOG_TOOLS
     assert all(t.output_schema for t in tools.values())
     assert all(t.input_schema["additionalProperties"] is False for t in tools.values())
@@ -300,18 +301,53 @@ async def catalog_flow(runtime, accounts, client):
             other_tools = Tools(other_client, (await other_client.list_tools()).tools)
             await other_tools.denied("ocr_get_context", {"context_id": cid}, "not_found")
             assert (await other_tools("ocr_list_contexts", {}))["items"] == []
+        # Templates run after the original pagination and empty-owner assertions.
+        templates = await tools("ocr_list_context_templates", {})
+        ContextTemplateList.model_validate(templates)
+        template = templates["items"][0]
+        clone_args = {"template_id": template["template_id"],
+                      "body": {"expected_version": template["version"],
+                               "expected_sha256": template["template_sha256"]},
+                      "idempotency_key": owner_key + "-clone"}
+        cloned = await tools("ocr_clone_context_template", clone_args)
+        TemplateCloneReceipt.model_validate(cloned)
+        assert cloned["template_id"] == template["template_id"]
+        assert cloned["template_version"] == template["version"]
+        assert cloned["template_sha256"] == template["template_sha256"]
+        assert cloned["context_revision"] == 1 and cloned["context_id"] not in ids
+        assert await tools("ocr_clone_context_template", clone_args) == cloned
+        cloned_context = await tools("ocr_get_context", {"context_id": cloned["context_id"]})
+        assert cloned_context["revision"] == 1
+        ContextInput.model_validate(cloned_context["body"])
+        for item in cloned["types"]:
+            assert item["revision"] == 1 and item["type_id"] != tid
+            draft = await tools("ocr_get_document_type", {"type_id": item["type_id"]})
+            assert draft["revision"] == 1 and draft["context_id"] == cloned["context_id"]
+            TypeInput.model_validate(draft["body"])
+            assert (await tools("ocr_list_document_type_versions", {"type_id": item["type_id"]}))["items"] == []
+        async with connected(runtime, "http", "auto", accounts.other) as other_client:
+            other_tools = Tools(other_client, (await other_client.list_tools()).tools)
+            assert await other_tools("ocr_list_context_templates", {}) == templates
+            other_clone = await other_tools("ocr_clone_context_template", {
+                **clone_args, "idempotency_key": owner_key + "-other-clone"})
+            TemplateCloneReceipt.model_validate(other_clone)
+            assert other_clone["context_id"] != cloned["context_id"]
+            assert (await other_tools("ocr_get_context", {"context_id": other_clone["context_id"]}))["revision"] == 1
+            await other_tools.denied("ocr_get_context", {"context_id": cloned["context_id"]}, "not_found")
+            for item in cloned["types"]:
+                await other_tools.denied("ocr_get_document_type", {"type_id": item["type_id"]}, "not_found")
     return tools.called
 
 
 @pytest.mark.parametrize("transport,mode", [("http", "auto"), ("http", "legacy"), ("stdio", "auto"), ("stdio", "legacy")])
-def test_catalog_twelve_tools_through_real_clients(runtime, catalog_accounts, transport, mode):  # noqa: F811
+def test_catalog_fourteen_tools_through_real_clients(runtime, catalog_accounts, transport, mode):  # noqa: F811
     async def scenario():
         async with asyncio.timeout(SCENARIO_TIMEOUT):
             async with connected(runtime, transport, mode, catalog_accounts.owner) as client:
                 return await catalog_flow(runtime, catalog_accounts, client)
 
     called = asyncio.run(scenario())
-    assert len(called) == 12 and called == CATALOG_TOOLS
+    assert len(called) == 14 and called == CATALOG_TOOLS
     assert not (runtime.root / "stdio-must-not-create").exists()
 
 

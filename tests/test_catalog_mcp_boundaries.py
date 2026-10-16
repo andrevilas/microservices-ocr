@@ -65,9 +65,18 @@ async def succeeded(client, name, args):
     return result.structured_content
 
 
-def catalog_calls(cid, tid, tag):
-    """One valid call per catalog tool (revision 1 targets)."""
+async def catalog_calls(runtime, token, cid, tid, tag):
+    """One valid call per catalog tool (revision 1 targets), using the public template catalog."""
+    async with rest(runtime, token) as http:
+        response = await http.get("/api/v1/context-templates")
+        assert response.status_code == 200
+        template = response.json()["items"][0]
     calls = {
+        "ocr_list_context_templates": {},
+        "ocr_clone_context_template": {
+            "template_id": template["template_id"],
+            "body": {"expected_version": template["version"], "expected_sha256": template["template_sha256"]},
+            "idempotency_key": tag + "-clone"},
         "ocr_list_contexts": {},
         "ocr_create_context": {"body": CTX2, "idempotency_key": tag + "-create-context"},
         "ocr_get_context": {"context_id": cid},
@@ -116,20 +125,29 @@ async def snapshot(runtime, token, cid, tid):
 
 @pytest.mark.parametrize("transport,mode", TRANSPORTS)
 def test_foreign_and_admin_identities_see_not_found_and_change_nothing(runtime, catalog_accounts, transport, mode):  # noqa: F811
-    denied_tools = CATALOG_TOOLS - {"ocr_list_contexts", "ocr_create_context"}
+    denied_tools = CATALOG_TOOLS - {
+        "ocr_list_contexts", "ocr_create_context", "ocr_list_context_templates", "ocr_clone_context_template"}
 
     async def scenario():
         cid, tid = await seed(runtime, catalog_accounts.owner)
         before = await snapshot(runtime, catalog_accounts.owner, cid, tid)
         for who in ("other", "admin"):  # the administrator gets no owner bypass
             async with connected(runtime, transport, mode, getattr(catalog_accounts, who)) as client:
-                foreign = catalog_calls(cid, tid, who + "-foreign")
-                missing = catalog_calls(uuid4().hex, uuid4().hex, who + "-missing")
+                foreign = await catalog_calls(runtime, catalog_accounts.owner, cid, tid, who + "-foreign")
+                missing = await catalog_calls(runtime, catalog_accounts.owner, uuid4().hex, uuid4().hex, who + "-missing")
                 for name in sorted(denied_tools):
                     foreign_text = await failed(client, name, foreign[name])
                     assert "not_found" in foreign_text, (who, name)
                     assert foreign_text == await failed(client, name, missing[name]), (who, name)  # indistinguishable
                 assert (await succeeded(client, "ocr_list_contexts", {}))["items"] == []
+                templates = await succeeded(client, "ocr_list_context_templates", {})
+                assert len(templates["items"]) == 3
+                own = await succeeded(client, "ocr_clone_context_template", foreign["ocr_clone_context_template"])
+                assert own["context_id"] != cid and own["context_revision"] == 1
+                assert (await succeeded(client, "ocr_get_context", {"context_id": own["context_id"]}))["revision"] == 1
+                for item in own["types"]:
+                    assert item["type_id"] != tid and item["revision"] == 1
+                    assert (await succeeded(client, "ocr_get_document_type", {"type_id": item["type_id"]}))["context_id"] == own["context_id"]
         assert await snapshot(runtime, catalog_accounts.owner, cid, tid) == before  # original document intact
 
     run(scenario)
@@ -146,7 +164,8 @@ def test_credentials_without_catalog_scopes_get_insufficient_scope(runtime, cata
         cid, tid = await seed(runtime, catalog_accounts.owner)
         before = await snapshot(runtime, catalog_accounts.owner, cid, tid)
         async with connected(runtime, transport, mode, token) as client:
-            for name, args in catalog_calls(cid, tid, credential).items():
+            calls = await catalog_calls(runtime, catalog_accounts.owner, cid, tid, credential)
+            for name, args in calls.items():
                 assert "insufficient_scope" in await failed(client, name, args), name
         assert await snapshot(runtime, catalog_accounts.owner, cid, tid) == before
 
@@ -179,7 +198,7 @@ def test_reduced_scope_users_cannot_exceed_their_scopes(runtime, catalog_account
         cid, tid = await seed(runtime, catalog_accounts.owner)
         before = await snapshot(runtime, catalog_accounts.owner, cid, tid)
         async with connected(runtime, transport, mode, token) as client:
-            calls = catalog_calls(cid, tid, "reduced")
+            calls = await catalog_calls(runtime, catalog_accounts.owner, cid, tid, "reduced")
             for name in sorted(denied):
                 assert "insufficient_scope" in await failed(client, name, calls[name]), name
             assert await snapshot(runtime, catalog_accounts.owner, cid, tid) == before
@@ -187,6 +206,12 @@ def test_reduced_scope_users_cannot_exceed_their_scopes(runtime, catalog_account
                 await succeeded(client, name, calls[name])
             if "ocr_update_context" not in denied:
                 assert (await succeeded(client, "ocr_update_context", calls["ocr_update_context"]))["revision"] == 2
+                cloned = await succeeded(client, "ocr_clone_context_template", calls["ocr_clone_context_template"])
+                assert cloned["context_revision"] == 1 and cloned["context_id"] != cid
+                assert (await succeeded(client, "ocr_get_context", {"context_id": cloned["context_id"]}))["revision"] == 1
+                for item in cloned["types"]:
+                    assert item["revision"] == 1
+                    assert (await succeeded(client, "ocr_list_document_type_versions", {"type_id": item["type_id"]}))["items"] == []
 
     run(scenario)
     assert not (runtime.root / "stdio-must-not-create").exists()

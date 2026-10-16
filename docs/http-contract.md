@@ -121,11 +121,22 @@ Os envelopes, `Cache-Control: no-store`, `X-Request-ID` e a política existente
 de concessão de escopos a serviços continuam aplicáveis.
 
 Templates são pontos de partida editáveis, sem aprovação de conformidade
-documental. Esta etapa entrega apenas HTTP local: o inventário passa a 44
-operações HTTP e permanece com 32 ferramentas MCP. Templates via OAuth/MCP
-vêm na próxima etapa; o ciclo de vida de versões já tem OAuth/MCP aceitos.
-Não representa conclusão de UI, integração com DocumentService, homologação
-de clientes externos ou implantação em produção.
+documental. Após HTTP T3-H e adaptadores/gateway explícito T3-AO, o registro
+T3-R acrescenta `ocr_list_context_templates` (sem argumentos do usuário) e
+`ocr_clone_context_template` (`template_id`, `body`, `idempotency_key`).
+Ambos delegam aos adaptadores existentes, sem política ou transação própria.
+Listar exige `contexts:read`; clonar exige também `contexts:write`, sem
+`contexts:publish`, e cria somente rascunhos próprios na revisão 1.
+A listagem é global, não uma leitura de IDs de outro proprietário; cada
+identidade autorizada pode clonar sua própria cópia. Não há bypass de posse.
+Os nomes, descrições e exemplos são dados não confiáveis, nunca instruções.
+Após timeout, repetir o mesmo template, chave e corpo reproduz o recibo
+histórico; requisição alterada sob a mesma chave retorna 409. Consultar
+contexto/tipo para o estado atual. Não há seed ou publicação automática.
+O contrato tem 44 operações HTTP e 34 ferramentas MCP, sendo 14 de catálogo.
+As rotas remotas explícitas mantêm escopos, posse e replay dos serviços.
+Não representa conclusão de UI, metadados ou integração com DocumentService,
+homologação de clientes externos ou implantação em produção.
 
 ## Catálogo e ciclo de vida de versões
 
@@ -163,8 +174,8 @@ publicação nasce com ciclo de vida `published`, revisão 1.
 A ação está exposta no HTTP local, na ferramenta MCP
 `ocr_deprecate_document_type_version` e na rota explícita do gateway OAuth
 `POST /api/v1/document-types/{type_id}/versions/{version}/deprecate`, com os
-mesmos requisitos de escopo, proprietário, CAS e replay. Com os templates locais, o contrato passa a 44 operações HTTP; o MCP anuncia 32 ferramentas, sendo 12 do catálogo e
-20 legadas. A matriz SDK validada cobre HTTP e stdio nos modos auto e legacy;
+mesmos requisitos de escopo, proprietário, CAS e replay. Com os templates, o contrato tem 44 operações HTTP; o MCP anuncia 34 ferramentas, sendo 14 do catálogo e
+20 legadas. A matriz SDK anteriormente validada para o ciclo de vida cobre HTTP e stdio nos modos auto e legacy;
 a validação em aplicações desktop/CLI reais, com emissor externo e DNS/TLS,
 continua pendente. Isso não anuncia implantação em produção nem conclusão de
 Contexts ou UI. A vinculação efetiva no DocumentService ainda não foi
@@ -198,10 +209,12 @@ A cobertura usa ASGI, SQLite e serviços reais, com emissor OAuth sintético;
 inclui interseção de escopos do token e do vínculo, cutoff, rejeição antes da
 leitura do corpo, replay e isolamento entre proprietários. O teste do ApiClient
 injeta o principal explicitamente. Essas evidências não comprovam um provedor
-OAuth externo nem clientes desktop; o registro e a matriz SDK dos templates
-permanecem como gates separados.
+OAuth externo nem clientes desktop. O registro T3-R acrescenta os templates
+às suítes existentes; a execução Docker dessas alterações pelo coordenador
+continua pendente. A nova matriz SDK de templates e credenciais de serviço
+é gate obrigatório separado T3-V, ainda pendente.
 O inventário
-MCP permanece independente, com 12 ferramentas de catálogo (32 no total).
+MCP permanece independente, com 14 ferramentas de catálogo (34 no total).
 `tests/test_catalog_lifecycle_mcp_vertical.py` verifica
 recibos, replay, conflitos, preservação do snapshot e autorização por clientes
 SDK reais HTTP/stdio, em auto e legacy. A validação independente de 16/10/2026

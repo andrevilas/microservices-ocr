@@ -16,6 +16,7 @@ from app.application import JobApplication
 from app.catalog_mcp_tools import CATALOG_OPERATIONS, register_catalog_tools
 from app.catalog_models import (ContextInput, ContextUpdateInput, TypeDeprecateInput, TypeInput, TypePublishInput,
                                 TypeUpdateInput)
+from app.context_templates import TemplateCloneInput
 from app.main import create_app
 from app.mcp_stdio import ApiClient, MAX_RESPONSE_BYTES
 from app.mcp_tools import OcrMCPServer
@@ -24,11 +25,13 @@ from app.services.storage_service import JobStore
 from test_catalog_http import CTX, CTX2, OWNER, TYP, TYP2
 from test_mcp_vertical import ROOT
 
-READ_ONLY = {"ocr_list_contexts", "ocr_get_context", "ocr_list_document_types", "ocr_get_document_type",
+READ_ONLY = {"ocr_list_context_templates", "ocr_list_contexts", "ocr_get_context", "ocr_list_document_types", "ocr_get_document_type",
              "ocr_list_document_type_versions", "ocr_get_document_type_version"}
 UPDATES = {"ocr_update_context", "ocr_update_document_type"}
 DEPRECATIONS = {"ocr_deprecate_document_type_version"}
 INVOKE_ARGS = {  # tool -> positional arguments seen by invoke, in matrix order
+    "ocr_list_context_templates": ("list_context_templates",),
+    "ocr_clone_context_template": ("clone_context_template", "starter-template", TemplateCloneInput, "clone-template-01"),
     "ocr_list_contexts": ("list_contexts", 25, None),
     "ocr_create_context": ("create_context", ContextInput, "create-context-1"),
     "ocr_get_context": ("get_context", "a" * 32),
@@ -44,6 +47,10 @@ INVOKE_ARGS = {  # tool -> positional arguments seen by invoke, in matrix order
                                              TypeDeprecateInput, "deprecate-000001"),
 }
 ARGUMENTS = {
+    "ocr_list_context_templates": {},
+    "ocr_clone_context_template": {"template_id": "starter-template",
+                                   "body": {"expected_version": 1, "expected_sha256": "c" * 64},
+                                   "idempotency_key": "clone-template-01"},
     "ocr_list_contexts": {},
     "ocr_get_context": {"context_id": "a" * 32},
     "ocr_list_document_types": {"context_id": "a" * 32},
@@ -72,13 +79,13 @@ def isolated_server(invoke):
     return server
 
 
-def test_registry_lists_exactly_twelve_tools_with_schemas_and_annotations():
+def test_registry_lists_exactly_fourteen_tools_with_schemas_and_annotations():
     async def scenario():
         async with Client(isolated_server(lambda *a: None)) as client:
             return (await client.list_tools()).tools
     tools = {tool.name: tool for tool in run(scenario())}
-    assert set(tools) == set(INVOKE_ARGS) == set(ARGUMENTS) and len(tools) == 12
-    assert len(CATALOG_OPERATIONS) == 12 and {a[0] for a in INVOKE_ARGS.values()} == CATALOG_OPERATIONS
+    assert set(tools) == set(INVOKE_ARGS) == set(ARGUMENTS) and len(tools) == 14
+    assert len(CATALOG_OPERATIONS) == 14 and {a[0] for a in INVOKE_ARGS.values()} == CATALOG_OPERATIONS
     for name, tool in tools.items():
         hints = tool.annotations
         assert hints.open_world_hint is False
@@ -101,6 +108,34 @@ def test_registry_lists_exactly_twelve_tools_with_schemas_and_annotations():
     assert "historical" in tools["ocr_publish_document_type"].description
     assert "current lifecycle" in tools["ocr_get_document_type_version"].description
     assert "deprecated" in tools["ocr_list_document_type_versions"].description
+    listing = tools["ocr_list_context_templates"]
+    assert listing.input_schema["properties"] == {}
+    assert not listing.input_schema.get("required", [])
+    assert set(listing.output_schema["properties"]) == {"items"}
+    assert listing.output_schema["properties"]["items"]["minItems"] == 3
+    assert listing.output_schema["properties"]["items"]["maxItems"] == 3
+    clone = tools["ocr_clone_context_template"]
+    schema = clone.input_schema
+    assert set(schema["properties"]) == set(schema["required"]) == {
+        "template_id", "body", "idempotency_key"}
+    slug = schema["properties"]["template_id"]
+    assert slug["type"] == "string" and slug["maxLength"] == 64
+    assert slug["pattern"] == "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    body = schema["properties"]["body"]
+    if "$ref" in body:
+        body = schema["$defs"][body["$ref"].rsplit("/", 1)[-1]]
+    assert body["additionalProperties"] is False
+    assert set(body["properties"]) == set(body["required"]) == {"expected_version", "expected_sha256"}
+    version = body["properties"]["expected_version"]
+    assert version["type"] == "integer" and version["minimum"] == 1
+    digest = body["properties"]["expected_sha256"]
+    assert digest["type"] == "string"
+    assert digest["minLength"] == digest["maxLength"] == 64
+    assert digest["pattern"] == "^[0-9a-f]{64}$"
+    assert set(clone.output_schema["properties"]) == {
+        "template_id", "template_version", "template_sha256", "context_id",
+        "context_revision", "types", "created_at"}
+    assert "historical" in clone.description and "current state" in clone.description
 
 
 def test_version_record_keeps_schema_alias_in_output_schema_and_structured_content():
@@ -135,7 +170,7 @@ def test_tools_pass_typed_arguments_to_invoke_in_matrix_order():
                 assert result.is_error
         return seen
     seen = run(scenario())
-    assert len(seen) == 12 and [call[0] for call in seen] == [expected[0] for expected in INVOKE_ARGS.values()]
+    assert len(seen) == 14 and [call[0] for call in seen] == [expected[0] for expected in INVOKE_ARGS.values()]
     for (operation, *args), (name, expected) in zip(seen, INVOKE_ARGS.items()):
         assert operation == expected[0] and len(args) == len(expected) - 1, name
         for got, want in zip(args, expected[1:]):
@@ -183,6 +218,47 @@ def test_deprecation_invalid_arguments_never_invoke(override):
             assert result.is_error
     run(scenario())
     assert seen == []
+
+
+@pytest.mark.parametrize("override", [
+    {"template_id": "Uppercase"}, {"template_id": "../private"},
+    {"template_id": "nonascii-é"}, {"template_id": "a" * 65},
+    {"template_id": "double--hyphen"}, {"template_id": "trailing-"},
+    {"body": {}}, {"body": {"expected_version": True, "expected_sha256": "c" * 64}},
+    {"body": {"expected_version": "1", "expected_sha256": "c" * 64}},
+    {"body": {"expected_version": 0, "expected_sha256": "c" * 64}},
+    {"body": {"expected_version": 1, "expected_sha256": "C" * 64}},
+    {"body": {"expected_version": 1, "expected_sha256": "c" * 63}},
+    {"body": {"expected_version": 1, "expected_sha256": "g" * 64}},
+    {"body": {"expected_version": 1, "expected_sha256": "c" * 64, "owner": "PRIVATE"}},
+    {"owner": "PRIVATE"}, {"name": "PRIVATE"}, {"publish": True},
+    {"idempotency_key": "short"},
+])
+def test_template_clone_invalid_arguments_never_invoke(override):
+    seen = []
+
+    async def scenario():
+        async def invoke(ctx, operation, *args):
+            seen.append(operation)
+            raise ToolError("unexpected invocation")
+        async with Client(isolated_server(invoke)) as client:
+            result = await client.call_tool("ocr_clone_context_template", {
+                **ARGUMENTS["ocr_clone_context_template"], **override})
+            assert result.is_error
+    run(scenario())
+    assert seen == []
+
+
+@pytest.mark.parametrize("missing", ["template_id", "body", "idempotency_key"])
+def test_template_clone_requires_every_public_argument(missing):
+    async def scenario():
+        async def invoke(ctx, operation, *args):
+            raise AssertionError("invoke must not run for missing input")
+        args = {key: value for key, value in ARGUMENTS["ocr_clone_context_template"].items() if key != missing}
+        async with Client(isolated_server(invoke)) as client:
+            assert (await client.call_tool("ocr_clone_context_template", args)).is_error
+            assert (await client.call_tool("ocr_list_context_templates", {"owner": "PRIVATE"})).is_error
+    run(scenario())
 
 
 # -- real ASGI app + real stores: every mapping, alias, replay and CAS through ApiClient and the MCP registry
@@ -419,11 +495,11 @@ import app.catalog_mcp_tools, app.mcp_stdio, app.mcp_tools
 from mcp.server import MCPServer
 server = MCPServer('test')
 app.catalog_mcp_tools.register_catalog_tools(server, lambda *a: None)
-assert len(asyncio.run(server.list_tools())) == 12
+assert len(asyncio.run(server.list_tools())) == 14
 shared = MCPServer('test')
 app.mcp_tools.register_tools(shared, lambda *a: None)
 names = [tool.name for tool in asyncio.run(shared.list_tools())]
-assert len(names) == len(set(names)) == 32, len(names)
+assert len(names) == len(set(names)) == 34, len(names)
 app.mcp_stdio.register_tools(MCPServer('test'), lambda *a: None)
 blocked = {'app.main', 'app.config', 'app.application', 'app.services.storage_service', 'app.services.job_queue',
            'app.services.catalog_runtime', 'app.services.context_service', 'app.services.type_service', 'app.routes.catalog'}
