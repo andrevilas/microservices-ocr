@@ -557,3 +557,77 @@ def test_commit_audit_prior_revision_and_retention_are_preserved(env):
         assert row[2] == NOW.isoformat()
     assert len(operations) == 2
     assert env.capacity(job_id=job_id) == (MIB + 18, 3)
+
+
+@pytest.mark.parametrize("legacy_owner", [None, ""])
+def test_quota_effective_owner_legacy_fallback_preserves_history(env, legacy_owner):
+    who, job_id = principal(), env.job()
+    first = env.reserve(job_id, who, **request()).pending
+    env.commit(first, who)
+    history = env.snapshot()
+    head = env.svc.get_head(who, job_id)
+    with env.jobs._lock:
+        job = env.jobs.jobs[job_id]
+        assert job.owner_user_id == 1
+        job.owner_principal_id = legacy_owner
+        env.jobs._persist(job)
+        assert job.effective_owner == who.subject
+    # An unrelated ownerless job has no metadata and consumes no quota.
+    env.jobs.create("s.pdf", b"x", owner_user_id=None)
+    # Check before reopening: JobStore may backfill the legacy owner on load.
+    pending = env.reserve(job_id, who, **request(head=head)).pending
+    assert pending.owner == who.subject
+    assert (pending.charged_slots, pending.charged_bytes,
+            pending.approval_slots, pending.approval_bytes) == (1, MIB, 0, 0)
+    assert env.rows("metadata_pending") == env.snapshot()["metadata_pending"]
+    assert len(env.rows("metadata_pending")) == 1
+    for table in TABLES:
+        if table != "metadata_pending":
+            assert env.rows(table) == history[table]
+    assert env.capacity(owner=who.subject) == (3 * MIB, 3)
+    env.commit(pending, who)
+    assert env.rows("metadata_revisions")[:1] == history["metadata_revisions"]
+    assert len(env.rows("metadata_revisions")) == 2
+    assert not env.rows("metadata_pending")
+    assert len(env.rows("metadata_heads")) == 1
+    assert env.svc.get_head(who, job_id).approval_bytes == MIB
+    assert env.capacity(owner=who.subject) == env.capacity() == (3 * MIB, 3)
+
+
+@pytest.mark.parametrize("legacy_owner", [None, ""])
+@pytest.mark.parametrize("invalid_user_id", ["SENSITIVE_MARKER", 1.5])
+def test_quota_rejects_corrupt_durable_fallback_owner(env, legacy_owner, invalid_user_id):
+    referenced = env.job()
+    env.commit(env.reserve(referenced, **request()).pending)
+    other = principal(2)
+    target = env.job(other)
+    # Only durable SQL is corrupted; the separate target's cached job is valid.
+    with env.svc._transaction() as conn:
+        conn.execute(
+            "UPDATE jobs SET owner_principal_id=?,owner_user_id=? WHERE job_id=?",
+            (legacy_owner, invalid_user_id, referenced))
+        stored_type = conn.execute(
+            "SELECT typeof(owner_user_id) FROM jobs WHERE job_id=?",
+            (referenced,)).fetchone()[0]
+    assert stored_type == ("text" if isinstance(invalid_user_id, str) else "real")
+    before, charged = env.snapshot(), env.capacity()
+    error("metadata_unavailable", 503,
+          lambda: env.reserve(target, other, **request()))
+    assert env.snapshot() == before
+    assert env.capacity() == charged == (2 * MIB, 2)
+    assert env.capacity(job_id=target) == (0, 0)
+
+
+def test_quota_rejects_missing_durable_job_with_metadata(env):
+    referenced = env.job()
+    env.commit(env.reserve(referenced, **request()).pending)
+    other = principal(2)
+    target = env.job(other)
+    with env.svc._transaction() as conn:
+        conn.execute("DELETE FROM jobs WHERE job_id=?", (referenced,))
+    before, charged = env.snapshot(), env.capacity()
+    error("metadata_unavailable", 503,
+          lambda: env.reserve(target, other, **request()))
+    assert env.snapshot() == before
+    assert env.capacity() == charged == (2 * MIB, 2)
+    assert env.capacity(job_id=target) == (0, 0)
