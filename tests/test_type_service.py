@@ -9,7 +9,7 @@ from app.application import ApplicationError, Principal
 from app.document_models import ContextCreate, TypeDraft
 from app.services.context_service import ContextService
 from app.services.storage_service import JobStore
-from app.services.type_service import TypeService
+from app.services.type_service import TypeService, TypeVersionRecord
 
 BOTH = frozenset({"contexts:read", "contexts:write"})
 FIELD = dict(name="synthetic_field", type="string", description="synthetic field")
@@ -330,10 +330,10 @@ def test_publish_snapshots_stay_intact_after_edits_and_reopen(tmp_path, store, c
     assert stored(store, tid, 1) == before and stored(store, tid, 1)[2:4] == ("Typ", "Ctx")
     reopened = TypeService(JobStore(tmp_path))
     record = reopened.get_version(p, tid, 1)
-    assert record.schema == json.loads(before[0]) and record.schema_sha256 == before[1]
-    assert [f["name"] for f in record.schema["common_fields"]] == ["common_one"]
-    assert [f["name"] for f in record.schema["specific_fields"]] == ["own_one"]
-    assert [f["name"] for f in record.schema["fields"]] == ["common_one", "own_one"]
+    assert record.schema_document == json.loads(before[0]) and record.schema_sha256 == before[1]
+    assert [f["name"] for f in record.schema_document["common_fields"]] == ["common_one"]
+    assert [f["name"] for f in record.schema_document["specific_fields"]] == ["own_one"]
+    assert [f["name"] for f in record.schema_document["fields"]] == ["common_one", "own_one"]
     assert (record.type_name, record.context_name, record.draft_revision) == ("Typ", "Ctx", 1)
     assert "Typ" not in before[0].decode() and cid not in before[0].decode() and tid not in before[0].decode()
     assert svc.get(p, tid).revision == 2  # the draft stays editable; no published state in the draft
@@ -418,10 +418,23 @@ def test_returned_values_are_isolated(contexts, svc):
     _, tid = published_type(contexts, svc, p, specific=[spec("own_one")])
     pub(svc, p, tid, "pub-key-0001")
     record = svc.get_version(p, tid, 1)
-    record.schema["fields"].clear()
-    record.schema["schema_version"] = "tampered"
+    record.schema_document["fields"].clear()
+    record.schema_document["schema_version"] = "tampered"
     again = svc.get_version(p, tid, 1)
-    assert len(again.schema["fields"]) == 1 and again.schema["schema_version"] != "tampered"
+    assert len(again.schema_document["fields"]) == 1 and again.schema_document["schema_version"] != "tampered"
+
+
+def test_version_record_wire_name_is_schema(contexts, svc):
+    p = who(scopes=PUB)
+    _, tid = published_type(contexts, svc, p, specific=[spec("own_one")])
+    summary, _ = pub(svc, p, tid, "pub-key-0001")
+    record = svc.get_version(p, tid, 1)
+    dumped = record.model_dump(by_alias=True)
+    assert "schema" in dumped and "schema_document" not in dumped
+    assert dumped["schema"] == record.schema_document
+    assert "schema" in TypeVersionRecord.model_json_schema(by_alias=True)["properties"]
+    assert "schema" not in summary.model_dump(by_alias=True)
+    assert "schema_document" not in summary.model_dump(by_alias=True)
 
 
 def test_concurrent_publish_same_key_yields_one_version(store, contexts, svc):
@@ -463,7 +476,7 @@ def test_publish_versus_context_update_freezes_expected_revision_or_conflicts(st
         assert outcome == (409, "context_revision_conflict") and version_rows(store) == 0
     else:
         assert outcome.context_revision == 1
-        names = [f["name"] for f in svc.get_version(p, tid, 1).schema["common_fields"]]
+        names = [f["name"] for f in svc.get_version(p, tid, 1).schema_document["common_fields"]]
         assert names == ["common_one"]
 
 
@@ -496,7 +509,7 @@ def test_list_versions_pagination_summaries_and_query_validation(contexts, svc):
     seen, after = [], None
     while True:
         page = svc.list_versions(p, tid, limit=2, after=after)
-        assert len(page.items) <= 2 and all(not hasattr(i, "schema") for i in page.items)
+        assert len(page.items) <= 2 and all("schema" not in i.model_dump(by_alias=True) for i in page.items)
         seen += [i.version for i in page.items]
         if page.next_cursor is None:
             break
@@ -515,7 +528,7 @@ def test_list_versions_pagination_summaries_and_query_validation(contexts, svc):
 
 def test_corrupted_stored_version_is_503_without_content(store, contexts, svc):
     p = who(scopes=PUB)
-    _, tid = published_type(contexts, svc, p, specific=[spec("Sensitive-Field")])
+    _, tid = published_type(contexts, svc, p, specific=[spec("sensitive_field")])
     pub(svc, p, tid, "pub-key-0001")
     pub(svc, p, tid, "pub-key-0002")
     pub(svc, p, tid, "pub-key-0003")
@@ -529,7 +542,7 @@ def test_corrupted_stored_version_is_503_without_content(store, contexts, svc):
         with pytest.raises(ApplicationError) as error:
             svc.get_version(p, tid, version)
         assert (error.value.status, error.value.code) == (503, "storage_unavailable")
-        assert "Sensitive-Field" not in error.value.message
+        assert "sensitive_field" not in error.value.message
     with pytest.raises(ApplicationError) as error:
         svc.list_versions(p, tid)
     assert error.value.status == 503

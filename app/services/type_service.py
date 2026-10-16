@@ -78,7 +78,8 @@ class TypeVersionSummary(BaseModel):
 
 
 class TypeVersionRecord(TypeVersionSummary):
-    schema: dict  # decoded from the stored canonical bytes, never recomputed
+    # Python name avoids shadowing BaseModel.schema; the wire name stays "schema" (serialize with by_alias=True).
+    schema_document: dict = Field(alias="schema")  # decoded from the stored canonical bytes, never recomputed
 
 
 class TypeVersionPage(BaseModel):
