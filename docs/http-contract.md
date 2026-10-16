@@ -217,8 +217,13 @@ a operação. Após a correção, sete suítes passaram no Docker: 168 testes
 aprovados em 161,84 s e três verificações de aplicativos reais ignoradas por
 ausência dos binários no contêiner. A cobertura inclui HTTP e stdio, auto e
 legacy, respostas malformadas, replay e propagação dos erros de aplicação.
-A nova matriz SDK de templates e credenciais de serviço é gate obrigatório
-separado T3-V, ainda pendente.
+A matriz específica `tests/test_context_templates_vertical.py` também passou
+nas quatro combinações HTTP/stdio e auto/legacy (29,83 s), com credencial de
+serviço emitida pela API administrativa real. Verifica replay entre API e
+MCP, edição posterior preservada, entradas inválidas, ausência de publicação
+automática, escopos reduzidos e isolamento entre usuários e administrador.
+Esses testes usam identidades sintéticas locais e não substituem a
+homologação nos aplicativos externos.
 O inventário
 MCP permanece independente, com 14 ferramentas de catálogo (34 no total).
 `tests/test_catalog_lifecycle_mcp_vertical.py` verifica
