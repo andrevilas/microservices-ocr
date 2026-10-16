@@ -15,14 +15,14 @@
 </div>
 <section id="template-section" class="panel" aria-labelledby="template-title" aria-busy="false" hidden>
   <h2 id="template-title">Modelos de contexto</h2>
-  <p class="hint">Consulte os modelos e seus campos. A validação completa dos campos é feita pelo servidor.</p>
+  <p class="hint">Consulte modelos para organizar os campos dos seus documentos.</p>
   <div class="catalog-actions"><button id="template-load" type="button" disabled>Carregar modelos</button></div>
   <p id="template-status" role="status" aria-live="polite">Aguardando sessão com permissão de leitura.</p>
   <ul id="template-list" class="entity-list"></ul>
   <section id="template-preview" aria-labelledby="template-preview-title" hidden>
     <h3 id="template-preview-title">Modelo selecionado</h3>
     <p id="template-edition" class="hint"></p>
-    <p class="hint">SHA-256 informado pelo servidor como referência; não verificado pelo navegador.</p>
+    <p class="hint">Referência do modelo (SHA-256)</p>
     <p id="template-hash" class="mono"></p>
     <h4 id="template-context-name"></h4>
     <p id="template-context-description" class="catalog-description"></p>
@@ -32,7 +32,14 @@
     <p id="template-type-description" class="catalog-description"></p>
     <h4 id="template-specific-title">Campos específicos do tipo do modelo</h4>
     <div id="template-specific" class="catalog-fields" aria-labelledby="template-specific-title"></div>
+    <button id="template-clone" type="button" aria-describedby="template-clone-status" hidden disabled>Criar contexto a partir deste modelo</button>
   </section>
+  <p id="template-clone-status" role="status" aria-live="polite"></p>
+  <div class="catalog-actions">
+    <button id="template-recover" type="button" hidden disabled>Recuperar clonagem</button>
+    <button id="template-abandon" type="button" hidden disabled>Abandonar recuperação</button>
+    <button id="template-open" type="button" hidden disabled>Abrir contexto criado</button>
+  </div>
 </section>
 <div class="catalog-layout">
   <section class="panel catalog-list" aria-labelledby="context-list-title">

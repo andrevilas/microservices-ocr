@@ -66,7 +66,7 @@
   let pendingPublish = null, publicationStale = false;
   let pendingDeprecation = null;
   let programmatic = false, confirming = false, logoutBypass = false;
-  let approvedDeparture = false, pageInactive = false;
+  let approvedDeparture = false, pageInactive = false, templateWriteOwner = null;
   let activeKind = contextKind, parentContext = null;
   let typeGeneration = 0, typeListing = false, typeSummaries = [], typeCursor = null;
   const typeSummaryOk = (parentId, value) => identityOk("type", parentId, value) && value.state === "draft" && typeof value.name === "string" && revisionOk(value.revision) && dateOk(value.created_at) && dateOk(value.updated_at);
@@ -79,9 +79,9 @@
   });
   const status = (text) => { $("status").textContent = text; };
   const listStatus = (text) => { $("list-status").textContent = text; };
-  const protectedState = () => dirty || !!pendingCreate || !!uncertainUpdate || !!pendingPublish || !!pendingDeprecation || writing;
+  const protectedState = () => templates.protected() || dirty || !!pendingCreate || !!uncertainUpdate || !!pendingPublish || !!pendingDeprecation || writing;
   const active = () => !pageInactive && !approvedDeparture && ready && !expired && canRead;
-  const mutable = () => active() && canWrite && !writing && !reading && !pendingCreate && !uncertainUpdate && !pendingPublish && !pendingDeprecation && (activeKind !== "type" || !!parentContext);
+  const mutable = () => active() && canWrite && !templates.protected() && !writing && !reading && !pendingCreate && !uncertainUpdate && !pendingPublish && !pendingDeprecation && (activeKind !== "type" || !!parentContext);
   const editor = window.OcrCatalogFields.create($("fields"), {
     idPrefix: "context-common", readonly: true,
     onChange: (fields) => {
@@ -97,9 +97,31 @@
   });
   const templates = window.OcrCatalogTemplates.create({
     get: (path, {valid} = {}) => request(path, {method: "GET", valid}),
-    getState: () => ({active: active(), writing, reading, confirming,
+    post: (id, {body, key, valid}) => {
+      if (!["generic", "real-estate-deed", "procurement-notice"].includes(id)) throw new Error("Invalid template identity");
+      return request(`/api/v1/context-templates/${id}/clone`, {method: "POST", body, key, valid});
+    },
+    getState: () => ({active: active(), canWrite, expired, dirty, writing, reading, confirming,
+      blocked: dirty || conflict || !!pendingCreate || !!uncertainUpdate || !!pendingPublish || !!pendingDeprecation || writing || reading || confirming,
       departing: approvedDeparture || pageInactive}),
-    object, clone, freeze, equal, forbidden, edgeWhitespace,
+    beginWrite: () => {
+      if (!active() || !canWrite || writing || reading || confirming || templateWriteOwner) return null;
+      const owner = Symbol();
+      templateWriteOwner = owner; writing = true; update();
+      return {current: () => templateWriteOwner === owner && writing,
+        release: () => {
+          if (templateWriteOwner !== owner) return;
+          templateWriteOwner = null; writing = false; update();
+        }};
+    },
+    confirm: async (options) => {
+      if (!active() || writing || reading || confirming) return false;
+      confirming = true; update();
+      try { return await ui.confirmAction(options); }
+      finally { confirming = false; update(); }
+    },
+    onStateChange: update, refreshContexts: () => loadList(), openContext: select,
+    entityRecordOk, object, clone, freeze, equal, forbidden, edgeWhitespace,
   });
   const versionUi = (id) => document.getElementById(`version-${id}`);
   const reader = window.OcrCatalogVersions.create({
@@ -123,11 +145,11 @@
       originalRevision === r.draftRevision && parentContext?.context_id === r.parentId && parentContext?.revision === r.contextRevision;
   }
   function publicationEligible() {
-    return canPublish && versionBound() && !!savedSnapshot && revisionOk(originalRevision) && !confirming &&
+    return !templates.protected() && canPublish && versionBound() && !!savedSnapshot && revisionOk(originalRevision) && !confirming &&
       !dirty && !conflict && !uncertainUpdate && !pendingCreate && !pendingPublish && !pendingDeprecation && !publicationStale && !writing && !reading;
   }
   function canRecoverPublication() {
-    return canPublish && versionBound() && !!pendingPublish && !pendingDeprecation && publicationPair(pendingPublish) && !writing && !reading && !confirming;
+    return !templates.protected() && canPublish && versionBound() && !!pendingPublish && !pendingDeprecation && publicationPair(pendingPublish) && !writing && !reading && !confirming;
   }
   function publicationCurrent(intent, generation, binding) {
     return canPublish && pendingPublish === intent && generation === selectionGeneration && versionBound(binding) && publicationPair(intent);
@@ -158,13 +180,13 @@
       reader.getBinding() === r.binding;
   }
   function deprecationEligible(snapshot = reader.getDisplayed()) {
-    return active() && canPublish && versionBound() && !!snapshot &&
+    return !templates.protected() && active() && canPublish && versionBound() && !!snapshot &&
       snapshot.lifecycle.state === "published" && snapshot.lifecycle.revision === 1 &&
       !writing && !reading && !confirming && !pendingCreate && !uncertainUpdate && !conflict &&
       !pendingPublish && !pendingDeprecation;
   }
   function canRecoverDeprecation() {
-    return active() && canPublish && !!pendingDeprecation && deprecationPair(pendingDeprecation) &&
+    return !templates.protected() && active() && canPublish && !!pendingDeprecation && deprecationPair(pendingDeprecation) &&
       !writing && !reading && !confirming && !pendingCreate && !uncertainUpdate && !pendingPublish && !conflict;
   }
   function canAbandonDeprecation() {
@@ -618,10 +640,11 @@
     if (!force && !protectedState()) return true;
     confirming = true; update();
     try {
-      return await ui.confirmAction({title: "Sair deste rascunho?", body: pendingCreate || uncertainUpdate || pendingPublish || pendingDeprecation || writing ? "Existe uma operação pendente ou com resultado incerto. Ela pode ter sido gravada no servidor. Sair abandona a recuperação e as alterações locais; confira as listas antes de criar ou publicar novamente." : "As alterações não salvas serão descartadas.", confirmLabel: "Descartar e continuar", danger: true});
+      return await ui.confirmAction({title: "Sair deste rascunho?", body: templates.protected() || pendingCreate || uncertainUpdate || pendingPublish || pendingDeprecation || writing ? "Existe uma operação pendente ou com resultado incerto. Ela pode ter sido gravada no servidor. Sair abandona a recuperação e as alterações locais; confira as listas antes de criar ou publicar novamente." : "As alterações não salvas serão descartadas.", confirmLabel: "Descartar e continuar", danger: true});
     } finally { confirming = false; update(); }
   }
   function abandonState() {
+    templates.resetClone();
     ++selectionGeneration; reading = false;
     pendingCreate = null; pendingPublish = null; publicationStale = false; publicationStatus("");
     pendingDeprecation = null; deprecationStatus("");
