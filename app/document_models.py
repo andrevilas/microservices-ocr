@@ -82,11 +82,14 @@ class FieldSpec(BaseModel):
     required: StrictBool = False
     critical: StrictBool = False
     evidence_required: StrictBool = False
-    enum: Annotated[
-        list[EnumValue] | None,
-        BeforeValidator(lambda v: v if v is None else _must_be_list(v)),
-        Field(min_length=1, max_length=MAX_ENUM_VALUES),
-    ] = None
+    enum: (
+        Annotated[
+            list[EnumValue],
+            BeforeValidator(_must_be_list),
+            Field(min_length=1, max_length=MAX_ENUM_VALUES),
+        ]
+        | None
+    ) = None
 
     @model_validator(mode="after")
     def _enum_rules(self):
@@ -158,9 +161,13 @@ class ComposedSchema:
     sha256: str
 
 
-def _snapshot(fields: Sequence[FieldSpec]) -> list[dict]:
+def _check_sequence(fields) -> None:
     if isinstance(fields, (str, bytes)) or not isinstance(fields, Sequence):
         raise ValueError("Fields must be a sequence of FieldSpec.")
+
+
+def _snapshot(fields: Sequence[FieldSpec]) -> list[dict]:
+    _check_sequence(fields)
     out = []
     for f in fields:
         if not isinstance(f, FieldSpec):
@@ -171,10 +178,12 @@ def _snapshot(fields: Sequence[FieldSpec]) -> list[dict]:
 
 
 def compose_schema(common: Sequence[FieldSpec], specific: Sequence[FieldSpec]) -> ComposedSchema:
+    _check_sequence(common)
+    _check_sequence(specific)
+    if len(common) + len(specific) > MAX_FIELDS:  # reject before any serialization/copy
+        raise ValueError(f"Composed schema exceeds {MAX_FIELDS} fields.")
     common_s, specific_s = _snapshot(common), _snapshot(specific)
     fields = common_s + specific_s
-    if len(fields) > MAX_FIELDS:
-        raise ValueError(f"Composed schema exceeds {MAX_FIELDS} fields.")
     names = [f["name"] for f in fields]
     if len(set(names)) != len(names):
         raise ValueError("Duplicate field name in composition.")

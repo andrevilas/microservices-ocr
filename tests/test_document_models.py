@@ -118,6 +118,39 @@ def test_field_count_limits():
     compose_schema([f(f"c{i}") for i in range(50)], [f(f"s{i}") for i in range(50)])
 
 
+def test_compose_rejects_over_limit_before_snapshot(monkeypatch):
+    import app.document_models as dm
+
+    common, specific = [f(f"c{i}") for i in range(60)], [f(f"s{i}") for i in range(41)]
+    assert len(common) + len(specific) == 101
+
+    def boom(_fields):
+        raise AssertionError("_snapshot must not run above the limit")
+
+    monkeypatch.setattr(dm, "_snapshot", boom)
+    with pytest.raises(ValueError, match="exceeds"):
+        compose_schema(common, specific)
+    with pytest.raises(ValueError, match="exceeds"):
+        compose_schema([], [f(f"s{i}") for i in range(101)])
+    with pytest.raises(ValueError):
+        compose_schema("abc", [])
+    with pytest.raises(ValueError):
+        compose_schema([], b"abc")
+
+
+def test_enum_none_roundtrip_and_type_enum_requires_list():
+    s = f(type="string", enum=None)
+    assert s.enum is None
+    assert FieldSpec.model_validate(s.model_dump()) == s
+    assert FieldSpec.model_validate_json(s.model_dump_json()) == s
+    assert FieldSpec.model_validate(s.model_dump(mode="json", exclude_none=True)) == s
+    compose_schema([s], [])
+    with pytest.raises(ValidationError):
+        f(type="enum", enum=None)
+    with pytest.raises(ValidationError):
+        FieldSpec.model_validate({"name": "a", "type": "enum", "description": "d", "enum": None})
+
+
 def _big_enum_field(name, prefix="", count=100):
     return f(name, "enum", enum=[f"{prefix}{i:04d}".ljust(4000, "x") for i in range(count)])
 
