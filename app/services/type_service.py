@@ -11,9 +11,9 @@ from contextlib import suppress
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from app.application import ApplicationError, Principal
+from app.catalog_models import (MAX_REVISION, TypePage, TypeReceipt, TypeRecord, TypeSummary, TypeVersionPage,
+                                TypeVersionRecord, TypeVersionSummary)
 from app.document_models import SCHEMA_VERSION, ContextCreate, TypeDraft, compose_schema
 from app.document_values import validate_values
 from app.services.batch_service import request_identity
@@ -22,70 +22,7 @@ from app.services.storage_service import JobStore
 MAX_TYPES_PER_OWNER = 100
 MAX_VERSIONS_PER_OWNER = 100
 MAX_VERSIONS_PER_TYPE = 20
-MAX_REVISION = 2**31 - 1
 _ID = re.compile(r"[0-9a-f]{32}")
-_DTO = ConfigDict(extra="forbid", frozen=True)
-
-
-class TypeReceipt(BaseModel):
-    """Creation receipt only; it is not the current state of the type."""
-    model_config = _DTO
-    type_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    context_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    revision: int = Field(default=1, ge=1, le=1)
-    created_at: datetime
-
-
-class TypeSummary(BaseModel):
-    model_config = _DTO
-    type_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    context_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    name: str
-    revision: int = Field(ge=1, le=MAX_REVISION)
-    created_at: datetime
-    updated_at: datetime
-
-
-class TypeRecord(BaseModel):
-    model_config = _DTO
-    type_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    context_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    revision: int = Field(ge=1, le=MAX_REVISION)
-    created_at: datetime
-    updated_at: datetime
-    body: TypeDraft
-
-
-class TypePage(BaseModel):
-    model_config = _DTO
-    items: list[TypeSummary]
-    next_cursor: str | None = None
-
-
-class TypeVersionSummary(BaseModel):
-    """Stable consumer reference: type_id + version + schema_sha256 (the hash covers only the canonical envelope)."""
-    model_config = _DTO
-    type_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    context_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    version: int = Field(ge=1)
-    draft_revision: int = Field(ge=1, le=MAX_REVISION)
-    context_revision: int = Field(ge=1, le=MAX_REVISION)
-    type_name: str
-    context_name: str
-    schema_version: str
-    schema_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    created_at: datetime
-
-
-class TypeVersionRecord(TypeVersionSummary):
-    # Python name avoids shadowing BaseModel.schema; the wire name stays "schema" (serialize with by_alias=True).
-    schema_document: dict = Field(alias="schema")  # decoded from the stored canonical bytes, never recomputed
-
-
-class TypeVersionPage(BaseModel):
-    model_config = _DTO
-    items: list[TypeVersionSummary]
-    next_cursor: int | None = None
 
 
 def _type_not_found() -> ApplicationError:

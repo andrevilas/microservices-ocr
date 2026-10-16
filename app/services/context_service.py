@@ -6,49 +6,14 @@ from contextlib import suppress
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from app.application import ApplicationError, Principal
+from app.catalog_models import MAX_REVISION, ContextPage, ContextReceipt, ContextRecord, ContextSummary
 from app.document_models import ContextCreate
 from app.services.batch_service import request_identity
 from app.services.storage_service import JobStore
 
 MAX_CONTEXTS_PER_OWNER = 100
-MAX_REVISION = 2**31 - 1
 _ID = re.compile(r"[0-9a-f]{32}")
-_DTO = ConfigDict(extra="forbid", frozen=True)
-
-
-class ContextReceipt(BaseModel):
-    """Creation receipt only; it is not the current state of the context."""
-    model_config = _DTO
-    context_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    revision: int = Field(default=1, ge=1, le=1)
-    created_at: datetime
-
-
-class ContextSummary(BaseModel):
-    model_config = _DTO
-    context_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    name: str
-    revision: int = Field(ge=1, le=MAX_REVISION)
-    created_at: datetime
-    updated_at: datetime
-
-
-class ContextRecord(BaseModel):
-    model_config = _DTO
-    context_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    revision: int = Field(ge=1, le=MAX_REVISION)
-    created_at: datetime
-    updated_at: datetime
-    body: ContextCreate
-
-
-class ContextPage(BaseModel):
-    model_config = _DTO
-    items: list[ContextSummary]
-    next_cursor: str | None = None
 
 
 def _not_found() -> ApplicationError:
