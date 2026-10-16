@@ -325,6 +325,7 @@ class WriteAttempt:
         self._temp_inode = None
         self._final_pending = False
         self._final_inode = None
+        self._ancestor_chain = None
         self._needs_sync = False
 
     @_guard
@@ -341,6 +342,7 @@ class WriteAttempt:
             if _optional_stat(directories.fd, self._temp) is not None:
                 _reject()
             directories.check()
+            self._ancestor_chain = tuple(zip(directories.names, directories.identities))
             # Set the phase BEFORE open: it may create and then throw without an FD.
             self._temp_pending = True
             self._needs_sync = True
@@ -392,15 +394,13 @@ class WriteAttempt:
         self._closed = True
         if not (self._temp_pending or self._final_pending or self._needs_sync):
             return
+        if self._ancestor_chain is None:
+            _reject()
         directories = _Directories()
         try:
-            if not directories.open(self._target, allow_missing=True):
-                # A safely anchored missing parent proves both exact names absent.
-                _sync(directories)
-                self._temp_pending = False
-                self._final_pending = False
-                self._needs_sync = False
-                return
+            directories.open(self._target)
+            if tuple(zip(directories.names, directories.identities)) != self._ancestor_chain:
+                _reject()
             failed = False
             for flag, name, inode in (
                 ("_temp_pending", self._temp, self._temp_inode),

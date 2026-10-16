@@ -385,7 +385,8 @@ def test_failures_leave_only_owned_files_for_cleanup(case, monkeypatch, phase):
 
 
 @pytest.mark.parametrize("component", ["metadata", "results", "job"])
-def test_cleanup_rejects_replaced_publication_ancestry(case, component):
+@pytest.mark.parametrize("replacement", [True, False])
+def test_cleanup_rejects_replaced_publication_ancestry(case, component, replacement):
     c = case
     attempt = prepare(c)
     attempt.publish(c.data)
@@ -394,9 +395,21 @@ def test_cleanup_rejects_replaced_publication_ancestry(case, component):
     relative_final = final(c).relative_to(path)
     kept = path.with_name("kept-" + path.name)
     path.rename(kept)
-    path.mkdir()
+    if replacement:
+        path.mkdir()
+    state = (attempt._temp_pending, attempt._final_pending, attempt._needs_sync)
     try:
         unavailable(attempt.cleanup)
-    finally:
         assert (kept / relative_final).read_bytes() == c.data
-    assert list(path.iterdir()) == []
+        assert (attempt._temp_pending, attempt._final_pending, attempt._needs_sync) == state
+        if replacement:
+            assert list(path.iterdir()) == []
+        else:
+            assert not path.exists()
+    finally:
+        if replacement:
+            path.rmdir()
+        kept.rename(path)
+    attempt.cleanup()
+    attempt.cleanup()
+    assert not final(c).exists() and not temporary(c).exists()
