@@ -6,7 +6,7 @@ import re
 from urllib.parse import urlsplit
 
 from app.remote import https_url
-from app.services.identity_store import SERVICE_SCOPES
+from app.scopes import OAUTH_SCOPES
 
 
 def build_realm(resource_origin, clients):
@@ -37,7 +37,7 @@ def build_realm(resource_origin, clients):
             "directAccessGrantsEnabled": False, "serviceAccountsEnabled": False,
             "consentRequired": True, "redirectUris": redirects, "webOrigins": [],
             "attributes": {"pkce.code.challenge.method": "S256"},
-            "defaultClientScopes": ["ocr-audience"], "optionalClientScopes": sorted(SERVICE_SCOPES),
+            "defaultClientScopes": ["ocr-audience"], "optionalClientScopes": sorted(OAUTH_SCOPES),
         })
     # The environment substitution is performed by Keycloak's realm importer.
     # Only this confidential client can authenticate our introspection requests.
@@ -65,7 +65,7 @@ def build_realm(resource_origin, clients):
     scopes = [{"name": name, "protocol": "openid-connect",
                "attributes": {"include.in.token.scope": "true", "display.on.consent.screen": "true",
                               "consent.screen.text": name}, "protocolMappers": []}
-              for name in sorted(SERVICE_SCOPES)]
+              for name in sorted(OAUTH_SCOPES)]
     return {
         "realm": "ocr", "enabled": True, "sslRequired": "all",
         "registrationAllowed": False, "resetPasswordAllowed": False,
