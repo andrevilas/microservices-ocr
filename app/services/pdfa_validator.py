@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Sequence
 
+from app.services.cancellation import ProcessTerminationError, checkpoint
+
 PdfaStatus = Literal["passed", "failed", "indeterminate"]
 
 PROFILE_2B = "2b"
@@ -180,12 +182,13 @@ class VeraPdfValidator:
         # refuse before any process is started instead of risking an orphaned descendant.
         if not platform_supported():
             raise _ReportError(REASON_UNSUPPORTED_PLATFORM)
+        checkpoint()
         # Own session so descendants holding the pipe are reachable through killpg.
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, shell=False, start_new_session=True)
         deadline = time.monotonic() + self._timeout
         chunks: list[bytes] = []
-        state = {"size": 0, "overflow": False}
+        state = {"size": 0}
         overflow = threading.Event()
 
         def reader() -> None:
@@ -197,7 +200,6 @@ class VeraPdfValidator:
                         return
                     state["size"] += len(chunk)
                     if state["size"] > self._max_report_bytes:
-                        state["overflow"] = True
                         overflow.set()
                         return
                     chunks.append(chunk)
@@ -206,34 +208,35 @@ class VeraPdfValidator:
 
         thread = threading.Thread(target=reader, daemon=True)
         thread.start()
-        timed_out = False
-        # Single deadline covers both process exit and EOF on stdout (descendants included).
-        while thread.is_alive() and not overflow.is_set():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                timed_out = True
-                break
-            thread.join(timeout=min(remaining, 0.05))
-        if not timed_out and not overflow.is_set():
-            remaining = deadline - time.monotonic()
-            try:
-                proc.wait(timeout=max(remaining, 0.0))
-            except subprocess.TimeoutExpired:
-                timed_out = True
-        if timed_out or overflow.is_set():
-            _kill_tree(proc)
+        try:
+            # Single deadline covers both EOF on stdout (descendants included) and process exit;
+            # every wait slice is a cancellation checkpoint.
+            while thread.is_alive() and not overflow.is_set():
+                checkpoint()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(argv, self._timeout)
+                thread.join(timeout=min(remaining, 0.05))
+            if overflow.is_set():
+                raise _ReportError(REASON_OUTPUT_TOO_LARGE)
+            while proc.poll() is None:
+                checkpoint()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(argv, self._timeout)
+                try:
+                    proc.wait(timeout=min(remaining, 0.05))
+                except subprocess.TimeoutExpired:
+                    pass
+            return _ProcessOutput(proc.returncode, b"".join(chunks))
+        finally:
+            # Every exit (normal, timeout, overflow, JobCancelled, interrupts) sweeps the group; an
+            # unconfirmed termination raises ProcessTerminationError instead of the original error.
+            _terminate_group(proc)
             # Bounded: never block on close while a reader may still be attached.
             thread.join(timeout=_CLEANUP_GRACE)
             if not thread.is_alive() and proc.stdout is not None:
                 proc.stdout.close()
-            if state["overflow"]:
-                raise _ReportError(REASON_OUTPUT_TOO_LARGE)
-            raise subprocess.TimeoutExpired(argv, self._timeout)
-        # Normal exit: still sweep the group in case a descendant outlived the leader.
-        _kill_tree(proc)
-        if proc.stdout is not None:
-            proc.stdout.close()
-        return _ProcessOutput(proc.returncode, b"".join(chunks))
 
 
 def platform_supported() -> bool:
@@ -249,21 +252,54 @@ def unavailable_result(reason: str, digest: str | None = None) -> PdfaValidation
     return PdfaValidationResult("indeterminate", PROFILE_2B, digest, reason_codes=(reason,))
 
 
-def _kill_tree(proc: subprocess.Popen) -> None:
-    """Best-effort, time-bounded termination of the process and its session (POSIX only)."""
+def _terminate_group(proc: subprocess.Popen) -> None:
+    """Kill the validator session and confirm it is gone (POSIX only); never swallow a survivor."""
+    pgid = proc.pid
     try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
         pass
-    if proc.poll() is None:
-        try:
-            proc.kill()
-        except OSError:
-            pass
+    except OSError:
+        # e.g. EPERM on a zombie leader: fall through to the explicit confirmation below.
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
     try:
         proc.wait(timeout=_CLEANUP_GRACE)
     except subprocess.TimeoutExpired:
-        pass
+        raise ProcessTerminationError("Validator process did not exit.") from None
+    deadline = time.monotonic() + _CLEANUP_GRACE
+    while _group_alive(pgid):
+        if time.monotonic() >= deadline:
+            raise ProcessTerminationError("Validator process group termination could not be confirmed.")
+        time.sleep(0.02)
+
+
+def _group_alive(pgid: int) -> bool:
+    """True while a non-zombie member of ``pgid`` exists; zombies left for init are already dead."""
+    if os.path.isfile("/proc/self/stat"):
+        for entry in os.scandir("/proc"):
+            if not entry.name.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry.name}/stat", "rb") as handle:
+                    data = handle.read()
+            except OSError:
+                continue
+            # Fields after the command's closing parenthesis: state ppid pgrp ...
+            fields = data[data.rfind(b")") + 2:].split()
+            if len(fields) >= 3 and fields[2] == str(pgid).encode() and fields[0] not in (b"Z", b"X"):
+                return True
+        return False
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def sha256_file(path: Path) -> str:

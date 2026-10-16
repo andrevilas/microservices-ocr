@@ -143,10 +143,12 @@ class JobApplication:
             next_cursor = base64.urlsafe_b64encode(json.dumps([last.created_at.isoformat(), last.job_id, binding]).encode()).decode()
         return JobPage(items=[self._response(j) for j in page], next_cursor=next_cursor)
 
-    def _result(self, principal: Principal, job_id: str) -> tuple[JobRecord, JobReport]:
+    def _result(self, principal: Principal, job_id: str, *,
+                allow_failed: bool = False) -> tuple[JobRecord, JobReport]:
         principal.require("artifacts:read")
         job = self._record(principal, job_id)
-        if job.status != "completed":
+        # A failed job may retain its diagnostic report (e.g. PDF/A verdict); text/artifact never.
+        if job.status != "completed" and not (allow_failed and job.status == "failed"):
             raise ApplicationError(409, "result_not_ready", "Result is not ready.")
         try:
             report = read_report(job.working_dir)
@@ -164,7 +166,7 @@ class JobApplication:
         principal.require("jobs:read")
         principal.require("artifacts:read")
         with self.store.artifact_lease(job_id, principal.subject):
-            return self._result(principal, job_id)[1]
+            return self._result(principal, job_id, allow_failed=True)[1]
 
     def text(self, principal: Principal, job_id: str, page: int = 1, offset: int = 0,
              max_chars: int = 8000) -> TextChunk:

@@ -135,13 +135,14 @@ class CapabilityService:
         engines["verapdf"] = self._probe_verapdf()
         warnings = ["probe_is_not_ocr_homologation", "defaults_may_be_unavailable",
                     "extract_text_does_not_recognize_scans", "economic_compression_is_experimental"]
+        pdfa_ready = ready and engines["verapdf"].available
         if not engines["verapdf"].available:
-            # PDF/A remains selectable, but such jobs fail closed until a validator is available.
-            warnings.append("pdfa_validator_unavailable_pdfa_jobs_will_fail")
+            # PDF/A is not offered (and is rejected at admission) until a validator is available.
+            warnings.append("pdfa_validator_unavailable_pdfa_not_offered")
         return Capabilities(
             engines=engines, languages=languages if ready else [],
             processing_modes=["extract_text", "preserve_existing_text"] if ready else ["extract_text"],
-            output_formats=["pdf_searchable", "pdfa"] if ready else ["pdf_searchable"],
+            output_formats=["pdf_searchable", "pdfa"] if pdfa_ready else ["pdf_searchable"],
             compression_profiles=["none", "economic", "balanced", "preservation"] if ready else ["none"],
             fallback_policies=["disabled", "if_low_quality"] if ready and fallback_ready and languages == ["eng", "por"] else ["disabled"],
             fallback_language_sets=[["eng", "por"]] if fallback_ready else [],
@@ -172,6 +173,9 @@ class CapabilityService:
             raise ApplicationError(503, "ocr_unavailable", "OCR dependencies are unavailable.")
         if not options.languages or not set(options.languages) <= set(capabilities.languages):
             raise ApplicationError(422, "language_unavailable", "Requested OCR language is not installed or supported.")
+        if options.output_format == "pdfa" and "pdfa" not in capabilities.output_formats:
+            # Checked before admission and again by the worker (refresh=True) before processing.
+            raise ApplicationError(503, "pdfa_validator_unavailable", "PDF/A output requires an available veraPDF validator.")
         if options.fallback_policy == "if_low_quality":
             if options.languages != ("eng", "por"):
                 raise ApplicationError(422, "unsupported_option_combination", "Fallback requires the eng and por language pair.")

@@ -41,7 +41,7 @@ class QualityReport(BaseModel):
 
 
 class StageReport(BaseModel):
-    name: Literal["primary", "fallback", "build", "finalize"]
+    name: Literal["primary", "fallback", "build", "finalize", "pdfa_validation"]
     duration_ms: int = Field(ge=0)
 
 
