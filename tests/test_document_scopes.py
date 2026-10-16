@@ -63,7 +63,7 @@ def env(monkeypatch):
 def denied(token):
     with pytest.raises(ApplicationError) as error:
         security.authenticate_bearer(token)
-    assert error.value.status_code == 401
+    assert error.value.status == 401
     assert "scope" not in str(error.value.args).lower() and "ocr_authz" not in str(error.value.args)
 
 
