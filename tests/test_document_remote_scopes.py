@@ -11,9 +11,10 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from app.application import ApplicationError, JobApplication
+from app.catalog_models import ContextInput, TypeInput
 from app.config import settings
 from app.main import create_app
-from app.remote import IntrospectionVerifier, RemoteConfig, create_remote_app
+from app.remote import MAX_JSON, IntrospectionVerifier, RemoteConfig, create_remote_app
 from app.scopes import (DOCUMENT_SCOPES, LEGACY_SCOPES, LOCAL_ALLOWED_SCOPES, OAUTH_SCOPES, SERVICE_SCOPES,
                         effective_local_scopes, local_role_scopes)
 from app.services import identity_store
@@ -317,13 +318,14 @@ def test_reductions_apply_immediately_and_roles_grant_nothing(config):
 # ---- 10. discovery and route boundaries ------------------------------------
 
 def test_discovery_lists_eleven_and_routes_stay_private(config, tmp_path):
+    assert MAX_JSON == 65536
     full = bound(config, sorted(OAUTH_SCOPES), time.time() - 1000)
     verifier, _ = verifier_for(full, claims(full))
     jobs = JobStore(tmp_path / "data")
     app = create_remote_app(full, verifier=verifier, service_provider=lambda: JobApplication(jobs))
     async def run():
-        await verifier.start()
         try:
+            await verifier.start()
             async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url=full.origin) as client:
                 for path in ("/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"):
                     response = await client.get(path)
@@ -331,10 +333,301 @@ def test_discovery_lists_eleven_and_routes_stay_private(config, tmp_path):
                     assert response.json()["scopes_supported"] == sorted(OAUTH_SCOPES) and len(OAUTH_SCOPES) == 11
                 headers = {"authorization": "Bearer ocr_svc_" + "0" * 32 + "." + "A" * 43}
                 assert (await client.get("/api/v1/me", headers=headers)).status_code == 401
-                for path in ("/api/v1/service-principals", "/api/v1/contexts", "/api/v1/metadata", "/api/v1/future"):
+                for path in ("/api/v1/service-principals", "/api/v1/metadata", "/api/v1/future",
+                             "/api/v1/admin", "/api/v1/account", "/api/v1/accounts", "/api/v1/legacy",
+                             "/admin", "/account", "/accounts", "/docs", "/redoc", "/openapi.json",
+                             "/api/v1/document-types"):
                     assert (await client.get(path, headers={"authorization": "Bearer synthetic-access-token"})).status_code == 404
                     assert (await client.post(path, json={"name": "x"}, headers={"authorization": "Bearer synthetic-access-token"})).status_code == 404
+
+                context_path = "/api/v1/contexts/" + "a" * 32
+                type_path = "/api/v1/document-types/" + "b" * 32
+                allowed = (
+                    ("GET", "/api/v1/contexts"),
+                    ("POST", "/api/v1/contexts"),
+                    ("GET", context_path),
+                    ("PUT", context_path),
+                    ("GET", context_path + "/types"),
+                    ("POST", context_path + "/types"),
+                    ("GET", type_path),
+                    ("PUT", type_path),
+                    ("GET", type_path + "/versions"),
+                    ("POST", type_path + "/versions"),
+                    ("GET", type_path + "/versions/1"),
+                )
+                for method, path in allowed:
+                    response = await client.request(method, path)
+                    assert response.status_code == 401, (method, path, response.text)
+                    assert response.headers["www-authenticate"] == full.challenge
+                response = await client.get(type_path + "/versions/9223372036854775807")
+                assert response.status_code == 401
+                assert response.headers["www-authenticate"] == full.challenge
+
+                auth = bearer("synthetic-access-token")
+                catalog_paths = {path for _, path in allowed}
+                for path in catalog_paths:
+                    for method in ("DELETE", "PATCH", "HEAD"):
+                        response = await client.request(method, path, headers=auth)
+                        assert response.status_code == 404, (method, path)
+                    for suffix in ("/", "/extra"):
+                        response = await client.get(path + suffix, headers=auth)
+                        assert response.status_code == 404, path + suffix
+                for method, path in (
+                    ("POST", context_path), ("POST", type_path), ("POST", type_path + "/versions/1"),
+                    ("PUT", "/api/v1/contexts"), ("PUT", context_path + "/types"),
+                    ("PUT", type_path + "/versions"), ("PUT", type_path + "/versions/1"),
+                ):
+                    response = await client.request(method, path, headers=auth)
+                    assert response.status_code == 404, (method, path)
+
+                for bad_id in ("A" * 32, "a" * 31, "a" * 33, "g" * 32):
+                    for path in (
+                        "/api/v1/contexts/" + bad_id,
+                        "/api/v1/contexts/" + bad_id + "/types",
+                        "/api/v1/document-types/" + bad_id,
+                        "/api/v1/document-types/" + bad_id + "/versions",
+                        "/api/v1/document-types/" + bad_id + "/versions/1",
+                    ):
+                        for method in ("GET", "POST", "PUT"):
+                            response = await client.request(method, path, headers=auth)
+                            assert response.status_code == 404, (method, path)
+                for version in ("0", "-1", "+1", "01", "1x", "1" + "0" * 19, "١"):
+                    path = type_path + "/versions/" + version
+                    response = await client.get(path, headers=auth)
+                    assert response.status_code == 404, path
         finally:
-            await verifier.close()
-            jobs._conn.close()
+            try:
+                await verifier.close()
+            finally:
+                jobs._conn.close()
+    asyncio.run(run())
+
+
+# ---- 11. real catalog services through the OAuth surface -------------------
+
+def catalog_headers():
+    return {**bearer("synthetic-access-token"), "Idempotency-Key": uuid4().hex}
+
+
+def test_oauth_catalog_eleven_operations_and_owner_isolation(config, tmp_path):
+    cutoff = time.time() - 1000
+    full = RemoteConfig(
+        config.origin, config.issuer, config.introspection_client_id, config.secret_file,
+        {
+            "subject-one": {"user_id": 1, "scopes": sorted(OAUTH_SCOPES),
+                            "document_scopes_not_before": cutoff},
+            "subject-two": {"user_id": 2, "scopes": sorted(OAUTH_SCOPES),
+                            "document_scopes_not_before": cutoff},
+        },
+        config.allowed_clients,
+    )
+    token_claims = claims(full, iat=cutoff)
+    verifier, users = verifier_for(full, token_claims)
+    users[2] = {"id": 2, "role": "admin"}
+    jobs = JobStore(tmp_path / "data")
+    app = create_remote_app(full, verifier=verifier, service_provider=lambda: JobApplication(jobs))
+    ctx = ContextInput.model_config['json_schema_extra']['examples'][0]
+    typ = TypeInput.model_config['json_schema_extra']['examples'][0]
+    auth = bearer("synthetic-access-token")
+
+    async def run():
+        try:
+            await verifier.start()
+            async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url=full.origin) as client:
+                response = await client.get("/api/v1/contexts", headers=auth)
+                assert response.status_code == 200, response.text
+                assert response.json()["items"] == []
+
+                response = await client.post("/api/v1/contexts", json=ctx, headers=catalog_headers())
+                assert response.status_code == 201, response.text
+                context_id = response.json()["context_id"]
+                context_path = "/api/v1/contexts/" + context_id
+
+                response = await client.get("/api/v1/contexts", headers=auth)
+                assert response.status_code == 200, response.text
+                assert [item["context_id"] for item in response.json()["items"]] == [context_id]
+                response = await client.get(context_path, headers=auth)
+                assert response.status_code == 200, response.text
+                assert response.json()["context_id"] == context_id
+                response = await client.put(context_path, json={"body": ctx, "expected_revision": 1}, headers=auth)
+                assert response.status_code == 200, response.text
+                assert response.json()["revision"] == 2
+
+                response = await client.post(context_path + "/types", json=typ, headers=catalog_headers())
+                assert response.status_code == 201, response.text
+                type_id = response.json()["type_id"]
+                type_path = "/api/v1/document-types/" + type_id
+
+                response = await client.get(context_path + "/types", headers=auth)
+                assert response.status_code == 200, response.text
+                assert [item["type_id"] for item in response.json()["items"]] == [type_id]
+                response = await client.get(type_path, headers=auth)
+                assert response.status_code == 200, response.text
+                assert response.json()["type_id"] == type_id
+                response = await client.put(type_path, json={"body": typ, "expected_revision": 1}, headers=auth)
+                assert response.status_code == 200, response.text
+                assert response.json()["revision"] == 2
+
+                publish_body = {"expected_revision": 2, "expected_context_revision": 2}
+                response = await client.post(type_path + "/versions", json=publish_body, headers=catalog_headers())
+                assert response.status_code == 201, response.text
+                receipt = response.json()
+                assert receipt["version"] == 1
+                assert len(receipt["schema_sha256"]) == 64
+                response = await client.get(type_path + "/versions", headers=auth)
+                assert response.status_code == 200, response.text
+                assert [item["version"] for item in response.json()["items"]] == [1]
+                version_path = type_path + "/versions/1"
+                response = await client.get(version_path, headers=auth)
+                assert response.status_code == 200, response.text
+                assert "schema" in response.json() and "schema_document" not in response.json()
+
+                # Nineteen ASCII digits pass the gateway; the route enforces int64.
+                for version in ("9223372036854775808", "9999999999999999999"):
+                    response = await client.get(type_path + "/versions/" + version, headers=auth)
+                    assert response.status_code == 422, response.text
+
+                # Introspection is repeated: the same token now identifies another bound admin user.
+                token_claims["sub"] = "subject-two"
+                response = await client.get("/api/v1/contexts", headers=auth)
+                assert response.status_code == 200, response.text
+                assert response.json()["items"] == []
+                for path in (context_path, context_path + "/types", type_path,
+                             type_path + "/versions", version_path):
+                    response = await client.get(path, headers=auth)
+                    assert response.status_code == 404, (path, response.text)
+                for path, body in ((context_path, ctx), (type_path, typ)):
+                    response = await client.put(path, json={"body": body, "expected_revision": 2}, headers=auth)
+                    assert response.status_code == 404, (path, response.text)
+                response = await client.post(type_path + "/versions", json=publish_body, headers=catalog_headers())
+                assert response.status_code == 404, response.text
+                response = await client.post(context_path + "/types", json=typ, headers=catalog_headers())
+                assert response.status_code == 404, response.text
+
+                token_claims["sub"] = "subject-one"
+                response = await client.get("/api/v1/contexts", headers=auth)
+                assert response.status_code == 200, response.text
+                assert [item["context_id"] for item in response.json()["items"]] == [context_id]
+                response = await client.get(context_path, headers=auth)
+                assert response.status_code == 200 and response.json()["revision"] == 2
+                response = await client.get(context_path + "/types", headers=auth)
+                assert response.status_code == 200, response.text
+                assert [item["type_id"] for item in response.json()["items"]] == [type_id]
+                response = await client.get(type_path + "/versions", headers=auth)
+                assert response.status_code == 200, response.text
+                assert [item["version"] for item in response.json()["items"]] == [1]
+        finally:
+            try:
+                await verifier.close()
+            finally:
+                jobs._conn.close()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("binding_scopes,token_scopes,read_status", [
+    (["contexts:read"], ["contexts:read"], 200),
+    (["metadata:read"], ["metadata:read"], 403),
+    (sorted(LEGACY_SCOPES), sorted(LEGACY_SCOPES), 403),
+    (sorted(LEGACY_SCOPES), sorted(OAUTH_SCOPES), 403),
+    (sorted(OAUTH_SCOPES), ["jobs:read"], 403),
+])
+def test_oauth_catalog_requires_explicit_grants_before_body_parsing(
+        config, tmp_path, binding_scopes, token_scopes, read_status):
+    cutoff = time.time() - 1000
+    restricted = bound(config, binding_scopes, cutoff)
+    token_claims = claims(restricted, scope=" ".join(token_scopes), iat=cutoff)
+    verifier, _ = verifier_for(restricted, token_claims)
+    jobs = JobStore(tmp_path / "data")
+    app = create_remote_app(restricted, verifier=verifier, service_provider=lambda: JobApplication(jobs))
+    ctx = ContextInput.model_config['json_schema_extra']['examples'][0]
+    auth = bearer("synthetic-access-token")
+
+    async def run():
+        try:
+            await verifier.start()
+            async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url=restricted.origin) as client:
+                response = await client.get("/api/v1/contexts", headers=auth)
+                assert response.status_code == read_status, response.text
+                if read_status == 200:
+                    assert response.json()["items"] == []
+                response = await client.post("/api/v1/contexts", json=ctx, headers=catalog_headers())
+                assert response.status_code == 403, response.text
+                response = await client.post(
+                    "/api/v1/contexts", content="{",
+                    headers={**catalog_headers(), "Content-Type": "application/json"},
+                )
+                assert response.status_code == 403, response.text
+
+                # Verify denied requests left the injected catalog empty using a fresh explicit grant.
+                verifier.config = bound(config, sorted(OAUTH_SCOPES), cutoff)
+                token_claims["scope"] = " ".join(sorted(OAUTH_SCOPES))
+                response = await client.get("/api/v1/contexts", headers=auth)
+                assert response.status_code == 200, response.text
+                assert response.json()["items"] == []
+        finally:
+            try:
+                await verifier.close()
+            finally:
+                jobs._conn.close()
+    asyncio.run(run())
+
+
+def test_oauth_catalog_read_only_cannot_update_create_types_or_publish(config, tmp_path):
+    cutoff = time.time() - 1000
+    full = bound(config, sorted(OAUTH_SCOPES), cutoff)
+    token_claims = claims(full, iat=cutoff)
+    verifier, _ = verifier_for(full, token_claims)
+    jobs = JobStore(tmp_path / "data")
+    app = create_remote_app(full, verifier=verifier, service_provider=lambda: JobApplication(jobs))
+    ctx = ContextInput.model_config['json_schema_extra']['examples'][0]
+    typ = TypeInput.model_config['json_schema_extra']['examples'][0]
+    auth = bearer("synthetic-access-token")
+
+    async def run():
+        try:
+            await verifier.start()
+            async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url=full.origin) as client:
+                response = await client.post("/api/v1/contexts", json=ctx, headers=catalog_headers())
+                assert response.status_code == 201, response.text
+                context_path = "/api/v1/contexts/" + response.json()["context_id"]
+                response = await client.post(context_path + "/types", json=typ, headers=catalog_headers())
+                assert response.status_code == 201, response.text
+                type_path = "/api/v1/document-types/" + response.json()["type_id"]
+                type_id = response.json()["type_id"]
+
+                verifier.config = bound(config, ["contexts:read"], cutoff)
+                token_claims["scope"] = "contexts:read"
+                for path in (context_path, context_path + "/types", type_path, type_path + "/versions"):
+                    response = await client.get(path, headers=auth)
+                    assert response.status_code == 200, (path, response.text)
+
+                writes = (
+                    ("PUT", context_path, {"body": ctx, "expected_revision": 1}),
+                    ("POST", context_path + "/types", typ),
+                    ("PUT", type_path, {"body": typ, "expected_revision": 1}),
+                    ("POST", type_path + "/versions", {"expected_revision": 1, "expected_context_revision": 1}),
+                )
+                for method, path, body in writes:
+                    response = await client.request(method, path, json=body, headers=catalog_headers())
+                    assert response.status_code == 403, (method, path, response.text)
+                    response = await client.request(
+                        method, path, content="{",
+                        headers={**catalog_headers(), "Content-Type": "application/json"},
+                    )
+                    assert response.status_code == 403, (method, path, response.text)
+
+                response = await client.get(context_path, headers=auth)
+                assert response.status_code == 200 and response.json()["revision"] == 1
+                response = await client.get(type_path, headers=auth)
+                assert response.status_code == 200 and response.json()["revision"] == 1
+                response = await client.get(context_path + "/types", headers=auth)
+                assert response.status_code == 200, response.text
+                assert [item["type_id"] for item in response.json()["items"]] == [type_id]
+                response = await client.get(type_path + "/versions", headers=auth)
+                assert response.status_code == 200 and response.json()["items"] == []
+        finally:
+            try:
+                await verifier.close()
+            finally:
+                jobs._conn.close()
     asyncio.run(run())
