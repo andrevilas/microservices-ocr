@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.application import ApplicationError, Principal
 from app.config import settings
+from app.scopes import effective_local_scopes
 from app.services.auth_service import decode_token
 from app.services.user_store import get_user_store
 from app.services.identity_store import get_identity_store
@@ -24,7 +25,7 @@ def authenticate_bearer(token: str | None) -> Principal:
         if identity is None:
             raise denied
         return Principal(subject=identity["subject"], user_id=None, scopes=frozenset(identity["scopes"]),
-                         kind="service", credential_id=identity["credential_id"])
+                         kind="service", credential_id=identity["credential_id"], auth_source="service")
     payload = decode_token(token, settings.jwt_secret)
     if not isinstance(payload, dict):
         raise denied
@@ -40,9 +41,12 @@ def authenticate_bearer(token: str | None) -> Principal:
     user = get_user_store().get_user_by_id(user_id) if 0 < user_id <= 9223372036854775807 else None
     if user is None:
         raise denied
-    return Principal(subject=f"user:{user_id}", user_id=user_id,
-                     scopes=frozenset({"jobs:read", "artifacts:read", "jobs:submit", "jobs:cancel", "artifacts:delete"}),
-                     is_admin=user.get("role") == "admin")
+    try:
+        scopes = effective_local_scopes(payload, user.get("role"))
+    except ValueError:
+        raise denied from None
+    return Principal(subject=f"user:{user_id}", user_id=user_id, scopes=scopes,
+                     is_admin=user.get("role") == "admin", auth_source="local_jwt")
 
 
 def require_principal(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> Principal:

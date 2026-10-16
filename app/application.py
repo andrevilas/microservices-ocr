@@ -25,6 +25,7 @@ class Principal:
     kind: Literal["user", "service", "legacy"] = "user"
     credential_id: str | None = None
     is_admin: bool = False
+    auth_source: Literal["unknown", "local_jwt", "service", "oauth", "legacy"] = "unknown"
 
     def require(self, scope: str) -> None:
         if scope not in self.scopes:
