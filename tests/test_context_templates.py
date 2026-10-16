@@ -11,7 +11,8 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from pydantic import ValidationError
+from jsonschema import Draft202012Validator
+from pydantic import TypeAdapter, ValidationError
 
 import app.context_templates as templates
 from app.document_models import ContextCreate, FieldSpec, TypeDraft, compose_schema
@@ -435,6 +436,77 @@ def test_receipt_json_preserves_closed_fields_and_strict_revisions(nested, chang
         target["revision" if nested else "context_revision"] = bad_revision
     with pytest.raises(ValidationError):
         templates.TemplateCloneReceipt.model_validate_json(json.dumps(payload))
+
+
+_IDENTIFIER_CASES = {
+    "Sha256": (
+        ["a" * 64, "0123456789abcdef" * 4],
+        ["", "a" * 63, "a" * 65, "A" * 64, "g" * 64,
+         "é" * 64, "/" + "a" * 63, "a" * 64 + "\n", "a" * 63 + "\n",
+         123, True, None],
+    ),
+    "ObjectId": (
+        ["b" * 32, "0123456789abcdef" * 2],
+        ["", "b" * 31, "b" * 33, "B" * 32, "g" * 32,
+         "é" * 32, "/" + "b" * 31, "b" * 32 + "\n", "b" * 31 + "\n",
+         123, True, None],
+    ),
+    "TemplateId": (
+        ["a", "generic", "real-estate-deed", "a0-b2", "a" * 64],
+        ["", "a" * 65, "Generic", "genérico", "generic/child",
+         "generic\n", "a\nb", "generic_", "a--b", "a-", "-a", "0a",
+         123, True, None],
+    ),
+}
+
+
+@pytest.mark.parametrize("alias", list(_IDENTIFIER_CASES))
+def test_identifier_alias_json_schemas_and_runtime_boundaries(alias):
+    adapter = TypeAdapter(getattr(templates, alias))
+    schema = adapter.json_schema()
+    Draft202012Validator.check_schema(schema)
+    validator = Draft202012Validator(schema)
+    valid, invalid = _IDENTIFIER_CASES[alias]
+    for value in valid:
+        validator.validate(value)
+        assert adapter.validate_python(value) == value
+    for value in invalid:
+        assert not validator.is_valid(value), (alias, value)
+        with pytest.raises(ValidationError):
+            adapter.validate_python(value)
+
+
+@pytest.mark.parametrize("model_name,path,alias", [
+    ("ContextTemplateDefinition", ("template_id",), "TemplateId"),
+    ("ContextTemplateRecord", ("template_id",), "TemplateId"),
+    ("ContextTemplateRecord", ("template_sha256",), "Sha256"),
+    ("TemplateCloneInput", ("expected_sha256",), "Sha256"),
+    ("TemplateCloneReceipt", ("template_id",), "TemplateId"),
+    ("TemplateCloneReceipt", ("template_sha256",), "Sha256"),
+    ("TemplateCloneReceipt", ("context_id",), "ObjectId"),
+    ("TemplateCloneReceipt", ("types", 0, "type_id"), "ObjectId"),
+])
+def test_identifier_constraints_in_actual_dto_json_schemas(model_name, path, alias):
+    receipt = _receipt()
+    receipt["created_at"] = "2026-01-01T00:00:00Z"
+    examples = {
+        "ContextTemplateDefinition": _expected_definitions()[0],
+        "ContextTemplateRecord": _expected_record(),
+        "TemplateCloneInput": {"expected_version": 1, "expected_sha256": "a" * 64},
+        "TemplateCloneReceipt": receipt,
+    }
+    validator = Draft202012Validator(getattr(templates, model_name).model_json_schema())
+    example = examples[model_name]
+    validator.validate(example)
+    valid, invalid = _IDENTIFIER_CASES[alias]
+    for accepted, values in ((True, valid), (False, invalid)):
+        for value in values:
+            payload = json.loads(json.dumps(example))
+            target = payload
+            for part in path[:-1]:
+                target = target[part]
+            target[path[-1]] = value
+            assert validator.is_valid(payload) is accepted, (model_name, path, value)
 
 
 def test_import_does_not_open_store_or_load_application(monkeypatch):

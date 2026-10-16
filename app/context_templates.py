@@ -90,9 +90,29 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-TemplateId = Annotated[StrictStr, AfterValidator(_template_id)]
-Sha256 = Annotated[StrictStr, AfterValidator(_sha256)]
-ObjectId = Annotated[StrictStr, AfterValidator(_object_id)]
+TemplateId = Annotated[
+    StrictStr,
+    Field(min_length=1, max_length=64, json_schema_extra={
+        "pattern": r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+        # JSON Schema patterns search; $ alone can admit a final newline.
+        "not": {"pattern": r"[^a-z0-9-]"},
+    }),
+    AfterValidator(_template_id),
+]
+Sha256 = Annotated[
+    StrictStr,
+    Field(min_length=64, max_length=64, json_schema_extra={
+        "pattern": r"^[0-9a-f]{64}$",
+    }),
+    AfterValidator(_sha256),
+]
+ObjectId = Annotated[
+    StrictStr,
+    Field(min_length=32, max_length=32, json_schema_extra={
+        "pattern": r"^[0-9a-f]{32}$",
+    }),
+    AfterValidator(_object_id),
+]
 Version = Annotated[int, Field(strict=True, ge=1)]
 InitialRevision = Annotated[Literal[1], BeforeValidator(_revision)]
 UTCDateTime = Annotated[

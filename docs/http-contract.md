@@ -182,14 +182,16 @@ runtime. A suíte de identidades mantém a autorização real HTTP/MCP.
 `tests/test_catalog_http.py` acrescenta o inventário exato das 14 operações de
 catálogo e casos de depreciação sobre ASGI e SQLite reais: recibos, ciclo de
 vida, CAS, replay persistido, integridade, limites e isolamento.
-`tests/test_context_templates_http.py` propõe cobertura HTTP/SQLite real para
+`tests/test_context_templates_http.py` verifica os fluxos HTTP/SQLite reais de
 listagem sem escrita, clone de cada template, revisões iniciais, replay após
 edição/publicação, conflitos, entradas inválidas, escopos antes do corpo,
 limite em streaming, posse e isolamento do provider. Usa override explícito
 de principal; não comprova autenticação por credenciais reais.
 As verificações gerais de inventário HTTP passam de 42 para 44.
-A execução das suítes afetadas e a regeneração/verificação offline de
-`docs/openapi-v1.json` cabem ao coordenador; esta proposta não executou testes.
+Após corrigir as restrições de hashes e identificadores no JSON Schema,
+170 testes das seis suítes afetadas passaram em 43,67 s. O OpenAPI foi
+regenerado e verificado offline; os digests dos três templates permaneceram
+iguais. A revisão independente encerrou a pendência do contrato.
 O inventário
 MCP permanece independente, com 12 ferramentas de catálogo (32 no total).
 `tests/test_catalog_lifecycle_mcp_vertical.py` verifica

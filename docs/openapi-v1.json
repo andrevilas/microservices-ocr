@@ -633,10 +633,19 @@
             "$ref": "#/components/schemas/ContextCreate"
           },
           "template_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "not": {
+              "pattern": "[^a-z0-9-]"
+            },
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
             "title": "Template Id",
             "type": "string"
           },
           "template_sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
             "title": "Template Sha256",
             "type": "string"
           },
@@ -2299,6 +2308,9 @@
         "additionalProperties": false,
         "properties": {
           "context_id": {
+            "maxLength": 32,
+            "minLength": 32,
+            "pattern": "^[0-9a-f]{32}$",
             "title": "Context Id",
             "type": "string"
           },
@@ -2313,10 +2325,19 @@
             "type": "string"
           },
           "template_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "not": {
+              "pattern": "[^a-z0-9-]"
+            },
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
             "title": "Template Id",
             "type": "string"
           },
           "template_sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
             "title": "Template Sha256",
             "type": "string"
           },
@@ -2356,6 +2377,9 @@
             "type": "integer"
           },
           "type_id": {
+            "maxLength": 32,
+            "minLength": 32,
+            "pattern": "^[0-9a-f]{32}$",
             "title": "Type Id",
             "type": "string"
           },
@@ -6043,6 +6067,10 @@
             "required": true,
             "schema": {
               "maxLength": 64,
+              "minLength": 1,
+              "not": {
+                "pattern": "[^a-z0-9-]"
+              },
               "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
               "title": "Template Id",
               "type": "string"
@@ -6075,6 +6103,9 @@
                 ],
                 "properties": {
                   "expected_sha256": {
+                    "maxLength": 64,
+                    "minLength": 64,
+                    "pattern": "^[0-9a-f]{64}$",
                     "title": "Expected Sha256",
                     "type": "string"
                   },

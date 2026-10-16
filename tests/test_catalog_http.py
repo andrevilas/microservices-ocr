@@ -535,8 +535,10 @@ def test_openapi_contract_and_wire_name(api):
     assert clone_keys[0]["schema"]["maxLength"] == 128
     identifier = next(p for p in parameters if p["name"] == "template_id")
     assert identifier["in"] == "path" and identifier["required"]
+    assert identifier["schema"]["minLength"] == 1
     assert identifier["schema"]["maxLength"] == 64
     assert identifier["schema"]["pattern"] == r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    assert identifier["schema"]["not"] == {"pattern": r"[^a-z0-9-]"}
     clone_input = clone["requestBody"]["content"]["application/json"]["schema"]
     assert "$ref" not in clone_input and clone_input["additionalProperties"] is False
     assert set(clone_input["required"]) == {"expected_version", "expected_sha256"}
@@ -589,6 +591,60 @@ def test_openapi_contract_and_wire_name(api):
                             env={**os.environ, "OCR_TMP_DIR": str(api.all[0].root / "no-runtime")})
     assert result.returncode == 0, result.stderr
     assert "shadow" not in result.stderr.lower()
+
+
+def test_template_identifier_constraints_in_exported_openapi(api):
+    h = api()
+    clone = h.schema["paths"]["/api/v1/context-templates/{template_id}/clone"]["post"]
+    listing = h.schema["paths"]["/api/v1/context-templates"]["get"]
+    request = clone["requestBody"]["content"]["application/json"]["schema"]
+    catalog = listing["responses"]["200"]["content"]["application/json"]
+    slug_cases = (
+        ["a", "generic", "real-estate-deed", "a0-b2", "a" * 64],
+        ["", "a" * 65, "Generic", "genérico", "generic/child", "generic\n",
+         "a\nb", "generic_", "a--b", "a-", "-a", "0a", 123, True, None],
+    )
+    hash_cases = (
+        ["a" * 64, "0123456789abcdef" * 4],
+        ["", "a" * 63, "a" * 65, "A" * 64, "g" * 64, "é" * 64,
+         "/" + "a" * 63, "a" * 64 + "\n", "a" * 63 + "\n", 123, True, None],
+    )
+    object_cases = (
+        ["b" * 32, "0123456789abcdef" * 2],
+        ["", "b" * 31, "b" * 33, "B" * 32, "g" * 32, "é" * 32,
+         "/" + "b" * 31, "b" * 32 + "\n", "b" * 31 + "\n", 123, True, None],
+    )
+    identifier = next(p for p in clone["parameters"] if p["name"] == "template_id")
+    path_validator = Draft202012Validator(identifier["schema"])
+    for value in slug_cases[0]:
+        path_validator.validate(value)
+    for value in slug_cases[1]:
+        assert not path_validator.is_valid(value), value
+
+    checks = [
+        (request, request["examples"][0], ("expected_sha256",), hash_cases),
+        (catalog["schema"], catalog["example"], ("items", 0, "template_id"), slug_cases),
+        (catalog["schema"], catalog["example"], ("items", 0, "template_sha256"), hash_cases),
+    ]
+    for status in ("200", "201"):
+        receipt = clone["responses"][status]["content"]["application/json"]
+        checks.extend([
+            (receipt["schema"], receipt["example"], ("template_id",), slug_cases),
+            (receipt["schema"], receipt["example"], ("template_sha256",), hash_cases),
+            (receipt["schema"], receipt["example"], ("context_id",), object_cases),
+            (receipt["schema"], receipt["example"], ("types", 0, "type_id"), object_cases),
+        ])
+    for schema, example, path, (valid, invalid) in checks:
+        validator = Draft202012Validator({"components": h.schema["components"], **schema})
+        validator.validate(example)
+        for accepted, values in ((True, valid), (False, invalid)):
+            for value in values:
+                payload = json.loads(json.dumps(example))
+                target = payload
+                for part in path[:-1]:
+                    target = target[part]
+                target[path[-1]] = value
+                assert validator.is_valid(payload) is accepted, (path, value)
 
 
 def test_isolated_apps_and_provider_on_state(api):

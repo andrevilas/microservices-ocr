@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, Path, Query, Request, Response
+from pydantic import TypeAdapter
 from starlette.concurrency import run_in_threadpool
 
 from app.application import Principal
@@ -16,7 +17,7 @@ from app.catalog_models import (
     TypeVersionPage, TypeVersionRecord, TypeVersionSummary, TypeVersionViewSummary,
 )
 from app.context_templates import (
-    ContextTemplateList, TemplateCloneInput, TemplateCloneReceipt,
+    ContextTemplateList, TemplateCloneInput, TemplateCloneReceipt, TemplateId,
     list_context_templates as template_catalog_snapshot,
 )
 from app.document_models import ContextCreate, TypeDraft, compose_schema
@@ -119,7 +120,8 @@ def list_context_templates(principal: Principal = Depends(require_principal),
              responses=_reply(TemplateCloneReceipt, 201, 200, idempotent=True))
 async def clone_context_template(
         request: Request, response: Response,
-        template_id: str = Path(..., max_length=64, pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"),
+        template_id: str = Path(..., max_length=64, pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+                                json_schema_extra=TypeAdapter(TemplateId).json_schema()),
         idempotency_key: str = _key(), principal: Principal = Depends(require_principal),
         services: CatalogServices = Depends(get_catalog_services)):
     """Clone the expected template edition into caller-owned context/type drafts at revision 1. Never publishes. Returns 201 on creation or 200 with the original receipt on replay, including after later edits or publication. No automatic retry: reuse the same key and body after an uncertain outcome."""
