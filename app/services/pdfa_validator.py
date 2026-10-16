@@ -1,6 +1,6 @@
 """Isolated PDF/A validation through an external veraPDF executable.
 
-Candidate OCR-EV-01A: not wired to the orchestrator, API or settings yet.
+Candidate OCR-EV-01B (validator hardening): not wired to the orchestrator, API or settings yet.
 The command is fixed by the server; requests may only choose the file.
 """
 from __future__ import annotations
@@ -8,8 +8,13 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import re
+import shutil
+import signal
+import tempfile
 import subprocess
 import threading
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +27,17 @@ _PROFILE_NAMES = {PROFILE_2B: "PDF/A-2B"}
 _HASH_CHUNK = 1024 * 1024
 _READ_CHUNK = 64 * 1024
 _STAT_KEYS = ("passedRules", "failedRules", "passedChecks", "failedChecks")
+_CLEANUP_GRACE = 2.0
+# ASCII digits only, bounded length: str.isdigit() accepts Unicode digits that int() may reject.
+_COUNTER = re.compile(r"[0-9]{1,12}\Z")
+_BATCH_ZERO_KEYS = ("failedToParse", "encrypted", "outOfMemory", "veraExceptions")
+REASON_BATCH_SUMMARY = "invalid_batch_summary"
+
+
+def _counter(value: str | None, reason: str) -> int:
+    if value is None or not _COUNTER.match(value):
+        raise _ReportError(reason)
+    return int(value)
 
 # Reason codes are stable identifiers; they never contain paths or raw XML.
 REASON_COMPLIANT = "compliant"
@@ -92,13 +108,30 @@ class VeraPdfValidator:
         if profile not in _PROFILE_NAMES:
             raise ValueError(f"unsupported PDF/A profile: {profile!r}")
         try:
-            target = Path(pdf_path).resolve(strict=True)
-            if not target.is_file():
+            source = Path(pdf_path).resolve(strict=True)
+            if not source.is_file():
                 raise OSError("not a regular file")
-            digest_before = sha256_file(target)
         except OSError:
             return self._indeterminate(profile, None, REASON_INPUT_UNREADABLE)
+        # Validate a private frozen copy; the reported hash covers exactly those bytes, and the
+        # source must still match them afterwards so the delivered file is the validated one.
+        with tempfile.TemporaryDirectory(prefix="pdfa-validate-", ignore_cleanup_errors=True) as private_dir:
+            target = Path(private_dir) / "candidate.pdf"
+            try:
+                shutil.copyfile(source, target)
+                digest_before = sha256_file(target)
+            except OSError:
+                return self._indeterminate(profile, None, REASON_INPUT_UNREADABLE)
+            result = self._validate_frozen(target, profile, digest_before)
+        try:
+            source_digest = sha256_file(source)
+        except OSError:
+            return self._indeterminate(profile, None, REASON_INPUT_CHANGED)
+        if REASON_INPUT_CHANGED not in result.reason_codes and source_digest != digest_before:
+            return self._indeterminate(profile, source_digest, REASON_INPUT_CHANGED)
+        return result
 
+    def _validate_frozen(self, target: Path, profile: str, digest_before: str) -> PdfaValidationResult:
         argv = [*self._command, "--format", "xml", "--flavour", profile, str(target)]
         try:
             output = self._run(argv)
@@ -138,45 +171,91 @@ class VeraPdfValidator:
         return PdfaValidationResult("indeterminate", profile, digest, reason_codes=(reason,))
 
     def _run(self, argv: list[str]) -> _ProcessOutput:
+        # Own process group/session so descendants holding the pipe are reachable.
+        if os.name == "nt":
+            flags = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
+        else:
+            flags = {"start_new_session": True}
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, shell=False)
+                                stderr=subprocess.DEVNULL, shell=False, **flags)
+        deadline = time.monotonic() + self._timeout
         chunks: list[bytes] = []
         state = {"size": 0, "overflow": False}
+        overflow = threading.Event()
 
         def reader() -> None:
             assert proc.stdout is not None
-            while True:
-                chunk = proc.stdout.read(_READ_CHUNK)
-                if not chunk:
-                    return
-                state["size"] += len(chunk)
-                if state["size"] > self._max_report_bytes:
-                    state["overflow"] = True
-                    proc.kill()
-                    return
-                chunks.append(chunk)
+            try:
+                while True:
+                    chunk = proc.stdout.read1(_READ_CHUNK)
+                    if not chunk:
+                        return
+                    state["size"] += len(chunk)
+                    if state["size"] > self._max_report_bytes:
+                        state["overflow"] = True
+                        overflow.set()
+                        return
+                    chunks.append(chunk)
+            except (OSError, ValueError):
+                return
 
         thread = threading.Thread(target=reader, daemon=True)
         thread.start()
-        try:
+        timed_out = False
+        # Single deadline covers both process exit and EOF on stdout (descendants included).
+        while thread.is_alive() and not overflow.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            thread.join(timeout=min(remaining, 0.05))
+        if not timed_out and not overflow.is_set():
+            remaining = deadline - time.monotonic()
             try:
-                returncode = proc.wait(timeout=self._timeout)
+                proc.wait(timeout=max(remaining, 0.0))
             except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-                raise
-            thread.join(timeout=self._timeout)
-            if thread.is_alive():
-                raise subprocess.TimeoutExpired(argv, self._timeout)
-        finally:
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
-            if proc.stdout is not None:
+                timed_out = True
+        if timed_out or overflow.is_set():
+            _kill_tree(proc)
+            # Bounded: never block on close while a reader may still be attached.
+            thread.join(timeout=_CLEANUP_GRACE)
+            if not thread.is_alive() and proc.stdout is not None:
                 proc.stdout.close()
-        if state["overflow"]:
-            raise _ReportError(REASON_OUTPUT_TOO_LARGE)
-        return _ProcessOutput(returncode, b"".join(chunks))
+            if state["overflow"]:
+                raise _ReportError(REASON_OUTPUT_TOO_LARGE)
+            raise subprocess.TimeoutExpired(argv, self._timeout)
+        # Normal exit: still sweep the group in case a descendant outlived the leader.
+        _kill_tree(proc)
+        if proc.stdout is not None:
+            proc.stdout.close()
+        return _ProcessOutput(proc.returncode, b"".join(chunks))
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Best-effort, time-bounded termination of the process and its group/descendants."""
+    try:
+        if os.name == "nt":
+            if proc.poll() is None:
+                subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=_CLEANUP_GRACE,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if proc.poll() is None:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    try:
+        proc.wait(timeout=_CLEANUP_GRACE)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def sha256_file(path: Path) -> str:
@@ -236,9 +315,24 @@ def _interpret_report(
         raise _ReportError(REASON_JOB_COUNT)
     job = jobs[0]
 
-    for summary in _children(root, "batchSummary"):
-        if summary.get("totalJobs") not in (None, "1"):
-            raise _ReportError(REASON_JOB_COUNT)
+    summaries = _children(root, "batchSummary")
+    if len(summaries) != 1:
+        raise _ReportError(REASON_BATCH_SUMMARY)
+    summary = summaries[0]
+    if _counter(summary.get("totalJobs"), REASON_BATCH_SUMMARY) != 1:
+        raise _ReportError(REASON_JOB_COUNT)
+    for key in _BATCH_ZERO_KEYS:
+        if _counter(summary.get(key), REASON_BATCH_SUMMARY) != 0:
+            raise _ReportError(REASON_JOB_FAILED)
+    summary_reports = _children(summary, "validationReports")
+    if len(summary_reports) != 1:
+        raise _ReportError(REASON_BATCH_SUMMARY)
+    summary_compliant = _counter(summary_reports[0].get("compliant"), REASON_BATCH_SUMMARY)
+    summary_non_compliant = _counter(summary_reports[0].get("nonCompliant"), REASON_BATCH_SUMMARY)
+    if _counter(summary_reports[0].get("failedJobs"), REASON_BATCH_SUMMARY) != 0:
+        raise _ReportError(REASON_JOB_FAILED)
+    if summary_compliant + summary_non_compliant != 1:
+        raise _ReportError(REASON_BATCH_SUMMARY)
 
     items = _children(job, "item")
     names = [name for item in items for name in _children(item, "name")]
@@ -267,20 +361,17 @@ def _interpret_report(
     if verdict not in ("true", "false"):
         raise _ReportError(REASON_INVALID_VERDICT)
     compliant = verdict == "true"
+    if summary_compliant != (1 if compliant else 0):
+        raise _ReportError(REASON_BATCH_SUMMARY)
 
-    stats: dict[str, int] = {}
+    # Fail closed: all four counters are mandatory and must agree with the verdict.
     details = _children(report, "details")
-    if len(details) > 1:
+    if len(details) != 1:
         raise _ReportError(REASON_INVALID_DETAILS)
-    if details:
-        for key in _STAT_KEYS:
-            value = details[0].get(key)
-            if value is None:
-                continue
-            if not value.isdigit():
-                raise _ReportError(REASON_INVALID_DETAILS)
-            stats[key] = int(value)
-    if compliant and (not details or stats.get("failedRules") != 0 or stats.get("failedChecks") != 0):
+    stats = {key: _counter(details[0].get(key), REASON_INVALID_DETAILS) for key in _STAT_KEYS}
+    if compliant and (stats["failedRules"] != 0 or stats["failedChecks"] != 0):
+        raise _ReportError(REASON_INVALID_DETAILS)
+    if not compliant and stats["failedRules"] == 0 and stats["failedChecks"] == 0:
         raise _ReportError(REASON_INVALID_DETAILS)
 
     return compliant, stats, _validator_version(root)
