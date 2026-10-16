@@ -1,4 +1,4 @@
-"""CI2 acceptance: real authenticated catalog reads; no type write UI."""
+"""CI3 acceptance: authenticated type reads, writer controls and read-only scope."""
 from copy import deepcopy
 import re
 from urllib.parse import urlsplit
@@ -47,26 +47,39 @@ def loaded_types(page, count):
     expect(page.locator('#type-list button')).to_have_count(count)
 
 
-def open_type(page, item):
+def open_type(page, item, readonly=False):
     expect(page.locator('#type-refresh')).to_be_enabled()
     expect(page.locator('#type-list-status')).not_to_contain_text('Carregando')
     page.locator('#type-list').get_by_role(
         'button', name=item['body']['name'], exact=True).click()
-    type_view(page, item)
+    type_view(page, item, readonly=readonly)
 
 
-def type_view(page, item):
+def type_view(page, item, readonly=False):
     expect(page.locator('#context-form')).to_be_visible()
     expect(page.locator('#context-name')).to_have_value(item['body']['name'])
     expect(page.locator('#context-description')).to_have_value(item['body']['description'])
     expect(page.locator('#context-revision')).to_contain_text(
-        re.compile(r'\bRevisão ' + str(item['revision']) + r'\b'))
+        re.compile(r'^Rascunho — tipo de documento · Revisão ' + str(item['revision']) + r'\b'))
     expect(page.locator('#context-status')).to_have_text(
-        'Tipo de documento carregado. Consulta somente para leitura.')
-    expect(page.locator('#context-save')).to_be_hidden()
-    for selector in ('#context-name', '#context-description'):
-        expect(page.locator(selector)).to_have_attribute('readonly', '')
-    for selector in ('#context-fields', '#type-common-fields'):
+        'Tipo de documento carregado.' +
+        (' Consulta somente para leitura.' if readonly else ''))
+    save = page.locator('#context-save')
+    expect(save).to_be_disabled()
+    if readonly:
+        for selector in ('#context-name', '#context-description'):
+            expect(page.locator(selector)).not_to_be_editable()
+    else:
+        expect(save).to_be_visible()
+        expect(save).to_have_text('Salvar tipo')
+        for selector in ('#context-name', '#context-description'):
+            expect(page.locator(selector)).to_be_editable()
+        expect(page.locator('#context-fields').get_by_label(
+            'Chave do campo', exact=True).first).to_be_editable()
+        expect(page.locator('#context-fields').get_by_role(
+            'button', name='Adicionar campo', exact=True)).to_be_enabled()
+    containers = ('#context-fields', '#type-common-fields') if readonly else ('#type-common-fields',)
+    for selector in containers:
         controls = page.locator(selector).locator('input, select, textarea, button')
         assert controls.count() > 0
         for control in controls.all():
@@ -107,7 +120,7 @@ def keys(page, container, expected):
         expect(card.locator('input').first).to_have_value(name)
 
 
-def test_writer_type_snapshot_and_responsive_readonly(ui):
+def test_writer_type_snapshot_and_responsive_controls(ui):
     common = field('origem', type='enum', enum=['A', 'B'], label='Origem',
                    examples=['A'], required_when={'field': 'numero', 'equals': '0012'})
     local = field('numero', type='identifier', label=None, critical=True,
@@ -253,7 +266,7 @@ def test_real_pagination_refresh_and_stale_list_isolation(ui):
     expect(page.locator('#context-name')).to_have_value('Rascunho paginação')
     page.locator('#type-list button').first.click()
     discard(page, True)
-    expect(page.locator('#context-status')).to_have_text('Tipo de documento carregado. Consulta somente para leitura.')
+    expect(page.locator('#context-status')).to_have_text('Tipo de documento carregado.')
     active = next(item for item in items if item['body']['name'] == page.locator('#context-name').input_value())
     type_view(page, active)
     page.locator('#type-refresh').click()
@@ -303,7 +316,7 @@ def test_reduced_read_scope_browses_without_upgrading(ui):
     assert set(me.json()['scopes']) == {'contexts:read'}
     expect(page.locator('#context-new')).to_be_disabled()
     select(page, parent['body']['name'])
-    open_type(page, item)
+    open_type(page, item, readonly=True)
     keys(page, '#context-fields', ['local_leitura'])
     keys(page, '#type-common-fields', ['comum_leitura'])
     page.locator('#type-edit-context').click()
