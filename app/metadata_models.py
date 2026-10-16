@@ -16,6 +16,7 @@ from pydantic import (
     StrictInt,
     StrictStr,
     StringConstraints,
+    TypeAdapter,
     ValidationInfo,
     model_validator,
 )
@@ -251,10 +252,15 @@ def _user_actor(value: str) -> str:
     return value
 
 
+_AWARE_DATETIME_ADAPTER = TypeAdapter(AwareDatetime)
+
+
 def _datetime_input(value, info: ValidationInfo):
     if info.mode == "json":
         if type(value) is not str:
             raise ValueError("A timezone-aware datetime string is required.")
+        # Preserve strict JSON datetime parsing before returning a Python datetime.
+        return _AWARE_DATETIME_ADAPTER.validate_json(json.dumps(value), strict=True)
     elif not isinstance(value, datetime):
         raise ValueError("A timezone-aware datetime is required.")
     return value
@@ -318,6 +324,20 @@ class SchemaSnapshot(_ClosedModel):
     schema_document: Annotated[
         dict[StrictStr, object], BeforeValidator(_schema_document)
     ] = Field(alias="schema")
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _instance_alias(cls, value, handler):
+        # Adapt actual instances before core revalidation exposes internal names.
+        # Keep original Python values and every extra for strict validation.
+        if isinstance(value, cls):
+            data = dict(value.__dict__)
+            if value.__pydantic_extra__:
+                data.update(value.__pydantic_extra__)
+            if "schema_document" in data and "schema" not in data:
+                data["schema"] = data.pop("schema_document")
+            value = data
+        return handler(value)
 
     @model_validator(mode="after")
     def _schema(self):

@@ -574,6 +574,27 @@ def test_snapshot_provenance_and_approval_are_strict_and_closed():
             models.ApprovalRecord(**approval(**updates))
 
 
+@pytest.mark.parametrize("record,date_key,factory", [
+    (models.ProvenanceRecord, "recorded_at", provenance),
+    (models.ApprovalRecord, "approved_at", approval),
+])
+def test_record_dates_accept_only_aware_json_strings(record, date_key, factory):
+    wire = json.loads(record(**factory()).model_dump_json())
+    for stamp in ("2026-10-16T12:00:00Z", "2026-10-16T09:00:00-03:00"):
+        wire[date_key] = stamp
+        restored = record.model_validate_json(canonical(wire), strict=True)
+        assert getattr(restored, date_key) == STAMP
+        assert getattr(restored, date_key).utcoffset() == timedelta(0)
+        assert record.model_validate_json(restored.model_dump_json(), strict=True) == restored
+        with pytest.raises(ValidationError):
+            record.model_validate(factory(**{date_key: stamp}), strict=True)
+    for invalid in (None, 0, 1.0, True, False, [], {}, "", "invalid",
+                    "2026-10-16", "2026-10-16T12:00:00"):
+        wire[date_key] = invalid
+        with pytest.raises(ValidationError):
+            record.model_validate_json(canonical(wire), strict=True)
+
+
 def test_snapshot_dates_normalize_and_roundtrip_without_python_string_coercion():
     offset = timezone(timedelta(hours=-3))
     local = STAMP.astimezone(offset)
@@ -695,6 +716,74 @@ def test_schema_snapshot_rejects_noncanonical_or_oversized_envelopes(mutation):
         source["schema_sha256"] = hashlib.sha256(canonical(document)).hexdigest()
     with pytest.raises(ValidationError):
         models.SchemaSnapshot(**source)
+
+
+def test_schema_snapshot_instance_roundtrip_preserves_bytes_and_alias_boundary():
+    source = frozen_schema()
+    original = models.SchemaSnapshot(**source)
+    checked = models.SchemaSnapshot.model_validate(original, strict=True)
+    assert checked is not original
+    assert checked.model_dump(mode="python", by_alias=True) == source
+    assert checked.schema_document is not original.schema_document
+    root = models.MetadataSnapshot.model_validate(snapshot(), strict=True)
+    expected = models.snapshot_bytes(snapshot())
+    assert models.snapshot_bytes(root) == expected
+    assert models.snapshot_bytes(root.model_copy(update={"schemas": [checked]})) == expected
+    with pytest.raises(ValidationError):
+        models.SchemaSnapshot.model_validate(
+            {"schema_sha256": original.schema_sha256,
+             "schema_document": original.schema_document}, strict=True
+        )
+
+
+@pytest.mark.parametrize("method", ["construct", "copy", "mutation"])
+@pytest.mark.parametrize("mutation", ["tuple", "field_bool", "hash", "extra"])
+def test_schema_snapshot_instances_cannot_bypass_nested_validation(method, mutation):
+    root = models.MetadataSnapshot.model_validate(snapshot(), strict=True)
+    expected = models.snapshot_bytes(root)
+    original = root.schemas[0]
+    document = copy.deepcopy(original.schema_document)
+    updates = {"schema_document": document}
+    if mutation == "tuple":
+        document["common_fields"] = tuple(document["common_fields"])
+    elif mutation == "field_bool":
+        for key in ("common_fields", "fields"):
+            document[key][0]["max_items"] = True
+    elif mutation == "hash":
+        updates["schema_sha256"] = "0" * 64
+    else:
+        updates["unexpected"] = "SENSITIVE_SCHEMA_EXTRA"
+    if method == "construct":
+        # model_construct ignores unknown keys; retain extras via model_copy below.
+        forged = models.SchemaSnapshot.model_construct(**{
+            **original.__dict__, **{k: v for k, v in updates.items() if k != "unexpected"}
+        })
+        if mutation == "extra":
+            forged = forged.model_copy(update={"unexpected": updates["unexpected"]})
+    elif method == "copy":
+        forged = original.model_copy(update=updates)
+    else:
+        forged = models.SchemaSnapshot(**frozen_schema())
+        if mutation == "tuple":
+            forged.schema_document["common_fields"] = document["common_fields"]
+        elif mutation == "field_bool":
+            for key in ("common_fields", "fields"):
+                forged.schema_document[key][0]["max_items"] = True
+        elif mutation == "hash":
+            forged.schema_document["fields"].clear()
+        else:
+            forged.schema_document["unexpected"] = updates["unexpected"]
+    with pytest.raises(ValidationError):
+        models.SchemaSnapshot.model_validate(forged, strict=True)
+    with pytest.raises(ValueError) as caught:
+        models.snapshot_bytes(root.model_copy(update={"schemas": [forged]}))
+    assert str(caught.value) == "Invalid metadata snapshot."
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert models.snapshot_bytes(root) == expected
+    assert models.snapshot_bytes(
+        models.MetadataSnapshot.model_validate_json(expected, strict=True)
+    ) == expected
 
 
 def test_schema_original_byte_limit_is_checked_before_composition(monkeypatch):

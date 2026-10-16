@@ -339,6 +339,94 @@ def test_compose_rejects_non_fieldspec_and_unvalidated_mutation():
         compose_schema([bad], [])
 
 
+@pytest.mark.parametrize("method", ["construct", "copy"])
+@pytest.mark.parametrize("attribute,bad", [
+    ("max_items", True), ("max_items", 1.0),
+    ("enum", ("x",)), ("examples", ("sample",)),
+    ("required_when", "bad_equals"), ("required_when", "bad_field"),
+])
+def test_shared_revalidation_rejects_original_forged_types(method, attribute, bad):
+    import warnings
+    from app.document_models import RequiredWhen, revalidate_field
+    from app.document_values import validate_values
+
+    original = f("b", "enum", enum=["x"], examples=["sample"],
+                 required_when={"field": "a", "equals": True})
+    if bad == "bad_equals":
+        replacement = RequiredWhen.model_construct(field="a", equals=["SENSITIVE_FIELD_MARKER"])
+    elif bad == "bad_field":
+        replacement = original.required_when.model_copy(update={"field": True})
+    else:
+        replacement = bad
+    updates = {attribute: replacement}
+    forged = (FieldSpec.model_construct(**{**original.__dict__, **updates})
+              if method == "construct" else original.model_copy(update=updates))
+    with warnings.catch_warnings(record=True) as warnings_seen:
+        warnings.simplefilter("always")
+        for invoke in (
+            lambda: revalidate_field(forged),
+            lambda: compose_schema([f("a"), forged], []),
+            lambda: validate_values([f("a"), forged], {}),
+        ):
+            with pytest.raises(ValueError):
+                invoke()
+        with pytest.raises(ValueError) as caught:
+            revalidate_field(forged)
+    assert not warnings_seen
+    assert str(caught.value) == "Invalid field specification."
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize("attribute", ["enum", "examples"])
+def test_shared_revalidation_rejects_later_list_mutation(attribute):
+    from app.document_models import revalidate_field
+    from app.document_values import validate_values
+
+    original = f("a", "enum", enum=["x"], examples=["sample"])
+    getattr(original, attribute).append(None)
+    for invoke in (
+        lambda: revalidate_field(original),
+        lambda: compose_schema([original], []),
+        lambda: validate_values([original], {}),
+    ):
+        with pytest.raises(ValueError):
+            invoke()
+
+
+@pytest.mark.parametrize("equals", [True, False, 1, 0, "0012"])
+def test_shared_revalidation_detaches_lists_and_preserves_equals_type(equals):
+    from app.document_models import revalidate_field
+
+    original = f("b", "enum", enum=["x"], examples=["sample"],
+                 required_when={"field": "a", "equals": equals})
+    expected = compose_schema([f("a"), original], [])
+    checked = revalidate_field(original)
+    assert checked == original and checked is not original
+    assert checked.enum is not original.enum
+    assert checked.examples is not original.examples
+    assert checked.required_when is not original.required_when
+    assert checked.required_when.equals == equals
+    assert type(checked.required_when.equals) is type(equals)
+    assert compose_schema([f("a"), checked], []) == expected
+    original.enum.append("y")
+    original.examples.clear()
+    assert checked.enum == ["x"]
+    assert checked.examples == ["sample"]
+    assert compose_schema([f("a"), checked], []) == expected
+
+
+@pytest.mark.parametrize("value", [None, {}, {"name": "a"}, object()])
+def test_shared_revalidation_requires_fieldspec(value):
+    from app.document_models import revalidate_field
+
+    with pytest.raises(ValueError) as caught:
+        revalidate_field(value)
+    assert str(caught.value) == "Invalid field specification."
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
 def test_compose_constructed_serializer_warning_is_sanitized_error():
     import warnings
 

@@ -438,7 +438,7 @@ def test_model_construct_serializer_warning_becomes_sanitized_error():
     caught, err = _warnings_for(lambda: validate_values([bad], {}))
     assert not caught
     assert str(err) == "Invalid field specification."
-    assert err.__cause__ is None and err.__suppress_context__
+    assert err.__cause__ is None and err.__context__ is None
     assert secret not in str(err)
 
 

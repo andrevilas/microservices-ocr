@@ -216,15 +216,20 @@ def _check_sequence(fields) -> None:
 
 
 def revalidate_field(field: FieldSpec) -> FieldSpec:
-    """Re-validate from a dump so model_construct bypasses and later mutation are caught.
+    """Strictly validate original nested values before detaching via a Python dump.
 
-    Serializer warnings are promoted to errors and every failure is replaced by a fixed message,
-    so neither warnings nor exceptions can echo field content.
+    Replace every failure outside its handler so sensitive validation errors and
+    serializer warnings are neither exposed nor retained as exception context.
     """
     try:
-        return FieldSpec.model_validate(field.model_dump(mode="json", warnings="error"))
+        if not isinstance(field, FieldSpec):
+            raise ValueError("A FieldSpec instance is required.")
+        checked = FieldSpec.model_validate(field, strict=True)
+        dump = checked.model_dump(mode="python", warnings="error")
+        return FieldSpec.model_validate(dump, strict=True)
     except Exception:
-        raise ValueError("Invalid field specification.") from None
+        pass
+    raise ValueError("Invalid field specification.")
 
 
 def _snapshot(fields: Sequence[FieldSpec]) -> list[dict]:
