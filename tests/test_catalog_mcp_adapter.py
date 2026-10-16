@@ -91,7 +91,9 @@ def test_registry_lists_exactly_eleven_tools_with_schemas_and_annotations():
 def test_version_record_keeps_schema_alias_in_output_schema_and_structured_content():
     record = {"type_id": "a" * 32, "context_id": "b" * 32, "version": 1, "draft_revision": 2, "context_revision": 1,
               "type_name": "T", "context_name": "C", "schema_version": "1", "schema_sha256": "c" * 64,
-              "created_at": "2026-01-01T00:00:00Z", "schema": {"type": "object"}}
+              "created_at": "2026-01-01T00:00:00Z",
+              "lifecycle": {"state": "published", "revision": 1, "changed_at": "2026-01-01T00:00:00Z"},
+              "schema": {"type": "object"}}
 
     async def scenario():
         async def invoke(ctx, operation, *args):
@@ -204,7 +206,10 @@ def test_api_client_exercises_all_eleven_operations_over_real_http(live):
             assert summary["version"] == 1 and "schema" not in summary
             assert await invoke(None, "publish_document_type", tid, publish, "publish-0000001") == summary
             versions = await invoke(None, "list_document_type_versions", tid, 25, None)
-            assert versions["items"] == [summary] and versions["next_cursor"] is None
+            assert [{k: v for k, v in item.items() if k != "lifecycle"}
+                    for item in versions["items"]] == [summary] and versions["next_cursor"] is None
+            assert versions["items"][0]["lifecycle"] == {
+                "state": "published", "revision": 1, "changed_at": summary["created_at"]}
             record = await invoke(None, "get_document_type_version", tid, 1)
             assert record["schema"] and "schema_document" not in record
 

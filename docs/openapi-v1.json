@@ -2429,6 +2429,12 @@
             "title": "Revision",
             "type": "integer"
           },
+          "state": {
+            "const": "draft",
+            "default": "draft",
+            "title": "State",
+            "type": "string"
+          },
           "type_id": {
             "pattern": "^[0-9a-f]{32}$",
             "title": "Type Id",
@@ -2474,6 +2480,12 @@
             "title": "Revision",
             "type": "integer"
           },
+          "state": {
+            "const": "draft",
+            "default": "draft",
+            "title": "State",
+            "type": "string"
+          },
           "type_id": {
             "pattern": "^[0-9a-f]{32}$",
             "title": "Type Id",
@@ -2501,7 +2513,7 @@
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/TypeVersionSummary"
+              "$ref": "#/components/schemas/TypeVersionViewSummary"
             },
             "title": "Items",
             "type": "array"
@@ -2553,6 +2565,9 @@
             "title": "Draft Revision",
             "type": "integer"
           },
+          "lifecycle": {
+            "$ref": "#/components/schemas/VersionLifecycle"
+          },
           "schema": {
             "additionalProperties": true,
             "title": "Schema",
@@ -2593,6 +2608,7 @@
           "schema_version",
           "schema_sha256",
           "created_at",
+          "lifecycle",
           "schema"
         ],
         "title": "TypeVersionRecord",
@@ -2665,6 +2681,78 @@
           "created_at"
         ],
         "title": "TypeVersionSummary",
+        "type": "object"
+      },
+      "TypeVersionViewSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "context_id": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Context Id",
+            "type": "string"
+          },
+          "context_name": {
+            "title": "Context Name",
+            "type": "string"
+          },
+          "context_revision": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
+            "title": "Context Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "draft_revision": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
+            "title": "Draft Revision",
+            "type": "integer"
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/VersionLifecycle"
+          },
+          "schema_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Schema Sha256",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "type_id": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Type Id",
+            "type": "string"
+          },
+          "type_name": {
+            "title": "Type Name",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "type_id",
+          "context_id",
+          "version",
+          "draft_revision",
+          "context_revision",
+          "type_name",
+          "context_name",
+          "schema_version",
+          "schema_sha256",
+          "created_at",
+          "lifecycle"
+        ],
+        "title": "TypeVersionViewSummary",
         "type": "object"
       },
       "UploadReceipt": {
@@ -2780,6 +2868,37 @@
           "code"
         ],
         "title": "ValidationDetail",
+        "type": "object"
+      },
+      "VersionLifecycle": {
+        "additionalProperties": false,
+        "properties": {
+          "changed_at": {
+            "format": "date-time",
+            "title": "Changed At",
+            "type": "string"
+          },
+          "revision": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "published",
+              "deprecated"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "revision",
+          "changed_at"
+        ],
+        "title": "VersionLifecycle",
         "type": "object"
       }
     },
@@ -7256,6 +7375,7 @@
                       "created_at": "2026-10-16T12:00:00Z",
                       "name": "Contrato de serviço",
                       "revision": 1,
+                      "state": "draft",
                       "type_id": "22222222222222222222222222222222",
                       "updated_at": "2026-10-16T12:00:00Z"
                     }
@@ -8515,6 +8635,7 @@
                   "context_id": "11111111111111111111111111111111",
                   "created_at": "2026-10-16T12:00:00Z",
                   "revision": 2,
+                  "state": "draft",
                   "type_id": "22222222222222222222222222222222",
                   "updated_at": "2026-10-16T12:00:00Z"
                 },
@@ -9252,6 +9373,7 @@
                   "context_id": "11111111111111111111111111111111",
                   "created_at": "2026-10-16T12:00:00Z",
                   "revision": 2,
+                  "state": "draft",
                   "type_id": "22222222222222222222222222222222",
                   "updated_at": "2026-10-16T12:00:00Z"
                 },
@@ -9764,6 +9886,11 @@
                       "context_revision": 1,
                       "created_at": "2026-10-16T12:00:00Z",
                       "draft_revision": 1,
+                      "lifecycle": {
+                        "changed_at": "2026-10-16T12:00:00Z",
+                        "revision": 1,
+                        "state": "published"
+                      },
                       "schema_sha256": "4613daacde21e9f83f0b24c4ef30c160fc7b03743c45bf20a33cfed840c11ebc",
                       "schema_version": "1",
                       "type_id": "22222222222222222222222222222222",
@@ -10840,6 +10967,11 @@
                   "context_revision": 1,
                   "created_at": "2026-10-16T12:00:00Z",
                   "draft_revision": 1,
+                  "lifecycle": {
+                    "changed_at": "2026-10-16T12:00:00Z",
+                    "revision": 1,
+                    "state": "published"
+                  },
                   "schema": {
                     "common_fields": [
                       {

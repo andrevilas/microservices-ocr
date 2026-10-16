@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from app.application import ApplicationError, Principal
 from app.catalog_models import (MAX_REVISION, TypePage, TypeReceipt, TypeRecord, TypeSummary, TypeVersionPage,
-                                TypeVersionRecord, TypeVersionSummary)
+                                TypeVersionRecord, TypeVersionSummary, TypeVersionViewSummary, VersionLifecycle)
 from app.document_models import SCHEMA_VERSION, ContextCreate, TypeDraft, compose_schema
 from app.document_values import validate_values
 from app.services.batch_service import request_identity
@@ -64,6 +64,11 @@ _TYPE_ROW = ("SELECT t.type_id, t.context_id, t.revision, t.created_at, t.update
 
 _VERSION_COLUMNS = ("type_id, context_id, version, draft_revision, context_revision, type_name, context_name, "
                     "schema_version, schema_sha256, created_at")
+_VERSION_VIEW_COLUMNS = (", ".join("v." + column for column in _VERSION_COLUMNS.split(", "))
+                         + ", d.type_id, d.state, d.lifecycle_revision, d.changed_at")
+_VERSION_VIEW_FROM = (
+    " FROM document_type_versions v LEFT JOIN document_type_deprecations d "
+    "ON d.owner=v.owner AND d.type_id=v.type_id AND d.version=v.version ")
 
 
 class TypeService:
@@ -87,6 +92,12 @@ class TypeService:
                     PRIMARY KEY(type_id, version), UNIQUE(owner, key_hash))""")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_document_type_versions_owner_type "
                              "ON document_type_versions(owner, type_id, version)")
+                conn.execute("""CREATE TABLE IF NOT EXISTS document_type_deprecations (
+                    owner TEXT NOT NULL, type_id TEXT NOT NULL, version INTEGER NOT NULL,
+                    state TEXT NOT NULL CHECK(state='deprecated'),
+                    lifecycle_revision INTEGER NOT NULL CHECK(lifecycle_revision=2),
+                    changed_at TEXT NOT NULL, actor TEXT NOT NULL, key_hash TEXT NOT NULL,
+                    request_hash TEXT NOT NULL, PRIMARY KEY(type_id, version), UNIQUE(owner, key_hash))""")
         except sqlite3.Error:
             raise _unavailable() from None
 
@@ -295,19 +306,31 @@ class TypeService:
 
         return self._write(work)
 
-    def get_version(self, principal: Principal, type_id: str, version: int) -> TypeVersionRecord:
-        principal.require("contexts:read")
-        if not _strict_int(version, 1, 2**63 - 1):
-            raise _query_error()
-        if not _valid_id(type_id):
-            raise _type_not_found()
-        row = self._read(lambda conn: conn.execute(
-            "SELECT " + _VERSION_COLUMNS + ", canonical FROM document_type_versions "
-            "WHERE owner=? AND type_id=? AND version=?", (principal.subject, type_id, version)).fetchone())
+    @staticmethod
+    def _lifecycle(summary: TypeVersionSummary, metadata) -> VersionLifecycle:
+        """Validate joined operational metadata; only a genuinely absent row means published."""
+        try:
+            marker, state, revision, changed_at = metadata
+            if marker is None:
+                if any(value is not None for value in (state, revision, changed_at)):
+                    raise ValueError
+                return VersionLifecycle(state="published", revision=1, changed_at=summary.created_at)
+            if marker != summary.type_id or state != "deprecated" or type(revision) is not int or revision != 2:
+                raise ValueError
+            return VersionLifecycle(state=state, revision=revision, changed_at=datetime.fromisoformat(changed_at))
+        except Exception:
+            raise _unavailable() from None
+
+    def _version_snapshot(self, conn, owner: str, type_id: str, version: int) -> TypeVersionRecord:
+        """Read and validate a stored snapshot on the caller's connection; never acquire a lock here."""
+        row = conn.execute(
+            "SELECT " + _VERSION_VIEW_COLUMNS + ", v.canonical" + _VERSION_VIEW_FROM
+            + "WHERE v.owner=? AND v.type_id=? AND v.version=?", (owner, type_id, version)).fetchone()
         if row is None:
             raise ApplicationError(404, "type_version_not_found", "Type version not found.")
         summary = self._summary(row)
-        canonical = row[10]
+        lifecycle = self._lifecycle(summary, row[10:14])
+        canonical = row[14]
         try:
             if not isinstance(canonical, bytes) or hashlib.sha256(canonical).hexdigest() != summary.schema_sha256:
                 raise ValueError
@@ -318,7 +341,15 @@ class TypeService:
                 raise ValueError
         except Exception:
             raise _unavailable() from None  # integrity failure; never echo stored content
-        return TypeVersionRecord(**summary.model_dump(), schema=schema)
+        return TypeVersionRecord(**summary.model_dump(), lifecycle=lifecycle, schema=schema)
+
+    def get_version(self, principal: Principal, type_id: str, version: int) -> TypeVersionRecord:
+        principal.require("contexts:read")
+        if not _strict_int(version, 1, 2**63 - 1):
+            raise _query_error()
+        if not _valid_id(type_id):
+            raise _type_not_found()
+        return self._read(lambda conn: self._version_snapshot(conn, principal.subject, type_id, version))
 
     def list_versions(self, principal: Principal, type_id: str, *, limit: int = 25,
                       after: int | None = None) -> TypeVersionPage:
@@ -333,10 +364,14 @@ class TypeService:
             if conn.execute("SELECT 1 FROM document_types WHERE type_id=? AND owner=?", (type_id, owner)).fetchone() is None:
                 raise _type_not_found()
             # Summary columns only: canonical BLOBs are never loaded for listings.
-            return conn.execute("SELECT " + _VERSION_COLUMNS + " FROM document_type_versions "
-                                "WHERE owner=? AND type_id=? AND version>? ORDER BY version ASC LIMIT ?",
+            return conn.execute("SELECT " + _VERSION_VIEW_COLUMNS + _VERSION_VIEW_FROM
+                                + "WHERE v.owner=? AND v.type_id=? AND v.version>? ORDER BY v.version ASC LIMIT ?",
                                 (owner, type_id, after or 0, limit + 1)).fetchall()
 
         rows = self._read(work)
-        items = [self._summary(r) for r in rows[:limit]]
+        items = []
+        for row in rows[:limit]:
+            summary = self._summary(row)
+            items.append(TypeVersionViewSummary(**summary.model_dump(),
+                                                lifecycle=self._lifecycle(summary, row[10:14])))
         return TypeVersionPage(items=items, next_cursor=items[-1].version if len(rows) > limit else None)

@@ -12,7 +12,7 @@ from app.application import Principal
 from app.catalog_models import (
     ContextInput, ContextPage, ContextReceipt, ContextRecord, ContextSummary, ContextUpdateInput,
     TypeInput, TypePage, TypePublishInput, TypeReceipt, TypeRecord, TypeSummary, TypeUpdateInput,
-    TypeVersionPage, TypeVersionRecord, TypeVersionSummary,
+    TypeVersionPage, TypeVersionRecord, TypeVersionSummary, TypeVersionViewSummary,
 )
 from app.document_models import ContextCreate, TypeDraft, compose_schema
 from app.http_contract import error_responses, operation
@@ -35,6 +35,8 @@ _COMPOSED = compose_schema(_CONTEXT.common_fields, _TYPE.specific_fields)
 _VERSION = TypeVersionSummary(type_id=_TYPE_ID, context_id=_CONTEXT_ID, version=1, draft_revision=1, context_revision=1,
                               type_name=_TYPE.name, context_name=_CONTEXT.name, schema_version="1",
                               schema_sha256=_COMPOSED.sha256, created_at=_NOW)
+_VERSION_VIEW = TypeVersionViewSummary(**_VERSION.model_dump(),
+                                       lifecycle={"state": "published", "revision": 1, "changed_at": _NOW})
 _EXAMPLES = {
     ContextReceipt: ContextReceipt(context_id=_CONTEXT_ID, created_at=_NOW),
     ContextSummary: ContextSummary(context_id=_CONTEXT_ID, name=_CONTEXT.name, revision=1, created_at=_NOW, updated_at=_NOW),
@@ -43,11 +45,12 @@ _EXAMPLES = {
     TypeSummary: TypeSummary(type_id=_TYPE_ID, context_id=_CONTEXT_ID, name=_TYPE.name, revision=1, created_at=_NOW, updated_at=_NOW),
     TypeRecord: TypeRecord(type_id=_TYPE_ID, context_id=_CONTEXT_ID, revision=2, created_at=_NOW, updated_at=_NOW, body=_TYPE),
     TypeVersionSummary: _VERSION,
-    TypeVersionRecord: TypeVersionRecord(**_VERSION.model_dump(), schema=json.loads(_COMPOSED.canonical)),
+    TypeVersionRecord: TypeVersionRecord(**_VERSION.model_dump(), lifecycle=_VERSION_VIEW.lifecycle,
+                                         schema=json.loads(_COMPOSED.canonical)),
 }
 _EXAMPLES[ContextPage] = ContextPage(items=[_EXAMPLES[ContextSummary]])
 _EXAMPLES[TypePage] = TypePage(items=[_EXAMPLES[TypeSummary]])
-_EXAMPLES[TypeVersionPage] = TypeVersionPage(items=[_VERSION])
+_EXAMPLES[TypeVersionPage] = TypeVersionPage(items=[_VERSION_VIEW])
 _REPLAYED = {"Idempotency-Replayed": {"description": "true when the original persisted receipt for this identity/key is replayed.",
                                       "schema": {"type": "string", "enum": ["true", "false"]}}}
 

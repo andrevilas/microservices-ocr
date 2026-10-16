@@ -1,9 +1,9 @@
 """Pure catalog DTOs and closed HTTP/MCP inputs. Imports only Pydantic, typing, datetime and document_models:
 never application, services, storage or runtime, so MCP stdio can import it without opening any store."""
-from datetime import datetime
-from typing import Annotated
+from datetime import datetime, timedelta, timezone
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.document_models import ContextCreate, TypeDraft
 
@@ -56,6 +56,7 @@ class TypeReceipt(BaseModel):
 
 class TypeSummary(BaseModel):
     model_config = _DTO
+    state: Literal["draft"] = "draft"
     type_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     context_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     name: str
@@ -66,6 +67,7 @@ class TypeSummary(BaseModel):
 
 class TypeRecord(BaseModel):
     model_config = _DTO
+    state: Literal["draft"] = "draft"
     type_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     context_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     revision: int = Field(ge=1, le=MAX_REVISION)
@@ -95,14 +97,32 @@ class TypeVersionSummary(BaseModel):
     created_at: datetime
 
 
-class TypeVersionRecord(TypeVersionSummary):
+class VersionLifecycle(BaseModel):
+    model_config = ConfigDict(**_DTO, hide_input_in_errors=True)
+    state: Literal["published", "deprecated"]
+    revision: Revision
+    changed_at: datetime
+
+    @field_validator("changed_at")
+    @classmethod
+    def utc_changed_at(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None or value.utcoffset() != timedelta(0):
+            raise ValueError("changed_at must be timezone-aware UTC.")
+        return value.astimezone(timezone.utc)
+
+
+class TypeVersionViewSummary(TypeVersionSummary):
+    lifecycle: VersionLifecycle
+
+
+class TypeVersionRecord(TypeVersionViewSummary):
     # Python name avoids shadowing BaseModel.schema; the wire name stays "schema" (serialize with by_alias=True).
     schema_document: dict = Field(alias="schema")  # decoded from the stored canonical bytes, never recomputed
 
 
 class TypeVersionPage(BaseModel):
     model_config = _DTO
-    items: list[TypeVersionSummary]
+    items: list[TypeVersionViewSummary]
     next_cursor: int | None = None
 
 

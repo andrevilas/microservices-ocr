@@ -55,7 +55,8 @@ def test_type_dtos_are_reexported(name):
 def _version_record():
     return catalog_models.TypeVersionRecord(
         type_id=ID, context_id=ID, version=1, draft_revision=1, context_revision=1, type_name="T", context_name="C",
-        schema_version="1", schema_sha256="a" * 64, created_at=NOW, schema={"fields": []})
+        schema_version="1", schema_sha256="a" * 64, created_at=NOW,
+        lifecycle={"state": "published", "revision": 1, "changed_at": NOW}, schema={"fields": []})
 
 
 def test_schema_alias_is_the_only_wire_name():

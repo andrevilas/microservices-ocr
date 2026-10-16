@@ -157,6 +157,12 @@ def text_documents(result):
     return [json.loads(text) for text in texts]
 
 
+def publication_fields(document):
+    assert document["lifecycle"] == {
+        "state": "published", "revision": 1, "changed_at": document["created_at"]}
+    return {k: v for k, v in document.items() if k not in {"schema", "lifecycle"}}
+
+
 def check_version(result, summary, http_json):
     """structured_content and every text block expose the wire alias 'schema' with the exact envelope and hash."""
     structured = result.structured_content
@@ -169,7 +175,8 @@ def check_version(result, summary, http_json):
         assert envelope["fields"] == envelope["common_fields"] + envelope["specific_fields"]
         assert len(canonical(envelope)) <= 262144
         assert hashlib.sha256(canonical(envelope)).hexdigest() == document["schema_sha256"] == summary["schema_sha256"]
-        assert {k: v for k, v in document.items() if k != "schema"} == summary
+        assert publication_fields(document) == summary
+    assert publication_fields(http_json) == summary
     assert documents[1] == structured
     assert structured == http_json
     return structured
@@ -246,7 +253,7 @@ async def catalog_flow(runtime, accounts, client):
         assert summary["type_name"] == TYP2["name"] and summary["context_name"] == CTX2["name"]
         assert await tools("ocr_publish_document_type", publish) == summary
         versions = await tools("ocr_list_document_type_versions", {"type_id": tid})
-        assert versions["items"] == [summary] and versions["next_cursor"] is None
+        assert [publication_fields(item) for item in versions["items"]] == [summary] and versions["next_cursor"] is None
         listed = await http.get(f"/api/v1/document-types/{tid}/versions")
         assert listed.status_code == 200 and listed.json() == versions
 
@@ -267,9 +274,9 @@ async def catalog_flow(runtime, accounts, client):
         assert summary2["version"] == 2 and summary2["schema_sha256"] != summary["schema_sha256"]
         assert summary2["type_name"] == TYP3["name"] and summary2["context_name"] == CTX3["name"]
         first = await tools("ocr_list_document_type_versions", {"type_id": tid, "limit": 1})
-        assert first["items"] == [summary] and first["next_cursor"] == 1
+        assert [publication_fields(item) for item in first["items"]] == [summary] and first["next_cursor"] == 1
         last = await tools("ocr_list_document_type_versions", {"type_id": tid, "limit": 1, "after": 1})
-        assert last["items"] == [summary2] and last["next_cursor"] is None
+        assert [publication_fields(item) for item in last["items"]] == [summary2] and last["next_cursor"] is None
         assert all("schema" not in item for item in first["items"] + last["items"])
         assert (await get_version(tools, http, tid, 1, summary)) == before
         await get_version(tools, http, tid, 2, summary2)
