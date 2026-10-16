@@ -353,7 +353,7 @@ class SourceTests(ErrorAssertions):
             replace(canonical, page=2),
         ):
             self.assert_metadata_error(
-                "evidence_invalid", lambda: _PageCache(identity(), lambda n: returned).get(1)
+                "canonical_source_invalid", lambda: _PageCache(identity(), lambda n: returned).get(1)
             )
 
     def test_absent_page_is_operation_failure(self):
@@ -621,7 +621,7 @@ def test_public_checks_all_proofs_even_optional_with_valid_proof(bad_first, crit
 def test_public_well_formed_unrelated_source(updates):
     canonical = page("literal")
     snapshot = make_snapshot([spec()], [record(evidence=[reference(canonical)])])
-    public_error("evidence_invalid", snapshot, lambda number: replace(canonical, **updates))
+    public_error("canonical_source_invalid", snapshot, lambda number: replace(canonical, **updates))
 
 
 @pytest.mark.parametrize("case", [

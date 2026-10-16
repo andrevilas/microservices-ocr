@@ -116,7 +116,7 @@ class _PageCache:
             or page.canonical_sha256 != self._canonical_sha256
             or page.page != number
         ):
-            raise MetadataValidationError("evidence_invalid")
+            raise MetadataValidationError("canonical_source_invalid")
         self._total_chars += size
         self._pages[number] = page
         return page
