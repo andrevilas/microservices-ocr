@@ -36,17 +36,18 @@
   // Python's str.strip whitespace, without silently changing the label.
   const edgeWhitespace = /^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]$/u;
 
-  function create(container, {idPrefix = 'catalog', readonly = false, onChange} = {}) {
+  function create(container, {idPrefix = 'catalog', readonly = false, displayOnly = false, onChange} = {}) {
+    const display = Boolean(displayOnly);
     const prefix = `${idPrefix}-${++instanceSequence}`;
     const controller = new AbortController();
     let records = [], inherited = [], sequence = 0, generation = 0;
-    let dead = false, locked = Boolean(readonly), attempted = false, firstError = null;
-    const root = el('section', {className: 'catalog-fields', 'aria-label': 'Editor de campos do catálogo'});
+    let dead = false, locked = display || Boolean(readonly), attempted = false, firstError = null;
+    const root = el('section', {className: `catalog-fields${display ? ' catalog-fields--display' : ''}`, 'aria-label': display ? 'Propriedades dos campos do catálogo' : 'Editor de campos do catálogo'});
     const status = el('p', {className: 'catalog-fields__status', role: 'status', 'aria-live': 'polite'});
     const inheritedInfo = el('p', {className: 'catalog-fields__hint'});
     const globalError = el('p', {className: 'catalog-fields__error', role: 'alert', tabIndex: -1, hidden: true});
     const list = el('div', {className: 'catalog-fields__list'});
-    const add = el('button', {type: 'button', text: 'Adicionar campo'});
+    const add = el('button', {type: 'button', text: 'Adicionar campo', hidden: display});
     root.append(status, inheritedInfo, globalError, list, add);
     container.append(root);
 
@@ -69,7 +70,22 @@
       add.disabled = locked || records.length >= 100;
       records.forEach((record, index) => {
         const name = typeof record.data.name === 'string' && record.data.name ? record.data.name : 'sem chave';
-        record.title.textContent = `Campo ${index + 1}: ${name}`;
+        if (display) {
+          record.headingLabel.textContent = record.data.label === null ? name : String(record.data.label);
+          record.headingKey.textContent = `Chave: ${name}`;
+          record.displayType.textContent = TYPES[record.data.type] || String(record.data.type);
+          record.description.textContent = typeof record.data.description === 'string' ? record.data.description : String(record.data.description);
+          const badges = [
+            record.data.required === true ? 'Obrigatório' : null,
+            record.data.critical === true ? 'Crítico' : null,
+            ({public: 'Público', internal: 'Interno', restricted: 'Restrito'})[record.data.sensitivity] || String(record.data.sensitivity),
+            record.data.evidence_required === true ? 'Exige evidência' : null,
+          ];
+          record.badges.forEach((badge, i) => {
+            badge.hidden = badges[i] === null;
+            badge.textContent = badges[i] || '';
+          });
+        } else record.title.textContent = `Campo ${index + 1}: ${name}`;
         for (const control of record.card.querySelectorAll('input, textarea, select, button')) control.disabled = locked;
         record.up.disabled = locked || index === 0;
         record.down.disabled = locked || index === records.length - 1;
@@ -78,8 +94,9 @@
         record.remove.setAttribute('aria-label', `Remover campo ${index + 1}`);
         record.controls.label.disabled = locked || record.data.label === null;
         record.controls.type.disabled = locked || record.pending;
-        record.maxWrap.hidden = record.data.cardinality !== 'many';
-        record.enumSection.hidden = record.data.type !== 'enum';
+        record.maxWrap.hidden = !display && record.data.cardinality !== 'many';
+        record.enumSection.hidden = !display && record.data.type !== 'enum';
+        if (display) record.enumSection.querySelector('h4').textContent = record.data.enum === null ? 'Opções da lista: null (sem lista)' : 'Opções da lista (1 a 100)';
         record.exampleAdd.disabled = locked || (Array.isArray(record.data.examples) && record.data.examples.length >= 3);
         record.enumAdd.disabled = locked || (Array.isArray(record.data.enum) && record.data.enum.length >= 100);
         record.refreshCondition();
@@ -106,13 +123,26 @@
       const card = el('article', {className: 'catalog-fields__card', 'aria-labelledby': title.id});
       card.dataset.key = key;
       const grid = el('div', {className: 'catalog-fields__grid'});
-      const details = el('details', {className: 'catalog-fields__details'}, [el('summary', {text: 'Opções avançadas'})]);
+      const details = el('details', {className: 'catalog-fields__details'}, [el('summary', {text: display ? 'Propriedades do campo' : 'Opções avançadas'})]);
       const advanced = el('div', {className: 'catalog-fields__advanced'});
       const error = el('p', {id: `${key}-error`, className: 'catalog-fields__error', role: 'alert', hidden: true});
       record.card = card;
       record.title = title;
       record.details = details;
       record.error = error;
+      let presentation = null;
+      if (display) {
+        record.headingLabel = el('span', {className: 'catalog-fields__display-label'});
+        record.headingKey = el('span', {className: 'catalog-fields__display-key'});
+        title.append(record.headingLabel, record.headingKey);
+        record.displayType = el('p', {className: 'catalog-fields__display-type'});
+        record.description = el('p', {className: 'catalog-fields__display-description'});
+        record.badges = Array.from({length: 4}, () => el('span', {className: 'catalog-fields__display-badge', hidden: true}));
+        presentation = el('div', {className: 'catalog-fields__presentation'}, [
+          record.displayType, record.description,
+          el('div', {className: 'catalog-fields__display-badges'}, record.badges),
+        ]);
+      }
 
       function field(property, label, parent, kind = 'text', choices = null) {
         const id = `${key}-${property}`;
@@ -159,7 +189,7 @@
       field('sensitivity', 'Sensibilidade', advanced, 'select', {public: 'Público', internal: 'Interno', restricted: 'Restrito'});
       field('indexable', 'Previsto para indexação (intenção de metadados)', advanced, 'checkbox');
       field('cardinality', 'Quantidade de valores', advanced, 'select', {one: 'Um valor', many: 'Vários valores'});
-      record.maxWrap = field('max_items', 'Máximo de itens (1 a 100)', advanced);
+      record.maxWrap = field('max_items', display ? 'Limite para listas — max_items (mesmo com um valor)' : 'Máximo de itens (1 a 100)', advanced);
       record.controls.max_items.inputMode = 'numeric';
       field('normalization', 'Normalização prevista', advanced, 'select', {'type-default': 'Padrão do tipo'});
       field('destination', 'Destino previsto dos metadados', advanced, 'select', {sidecar: 'Arquivo auxiliar (sidecar)', xmp: 'Metadados XMP'});
@@ -373,7 +403,7 @@
         const section = el('section', {className: 'catalog-fields__values', 'aria-labelledby': `${key}-${property}-heading`});
         section.append(el('h4', {id: `${key}-${property}-heading`, text: heading}));
         const rows = el('div', {className: 'catalog-fields__value-list'});
-        const button = el('button', {type: 'button', text: property === 'examples' ? 'Adicionar exemplo' : 'Adicionar opção'});
+        const button = el('button', {type: 'button', text: property === 'examples' ? 'Adicionar exemplo' : 'Adicionar opção', hidden: display});
         section.append(rows, button);
         advanced.append(section);
         let rowsController = null;
@@ -389,7 +419,7 @@
             values.forEach((value, index) => {
               const id = `${key}-${property}-${index}`;
               const control = el('textarea', {id, value: typeof value === 'string' ? value : String(value)});
-              const remove = el('button', {type: 'button', text: 'Remover', 'aria-label': `Remover ${property === 'examples' ? 'exemplo' : 'opção'} ${index + 1} do campo ${key}`});
+              const remove = el('button', {type: 'button', text: 'Remover', hidden: display, 'aria-label': `Remover ${property === 'examples' ? 'exemplo' : 'opção'} ${index + 1} do campo ${key}`});
               const row = el('div', {className: 'catalog-fields__value'}, [el('label', {htmlFor: id, text: `${property === 'examples' ? 'Exemplo descritivo' : 'Opção'} ${index + 1}`}), control, remove]);
               nextControls[`${property}.${index}`] = control;
               control.addEventListener('input', () => {
@@ -468,7 +498,7 @@
         options.render();
         changed();
       });
-      const actions = el('div', {className: 'catalog-fields__actions'});
+      const actions = el('div', {className: 'catalog-fields__actions', hidden: display});
       record.up = el('button', {type: 'button', text: 'Subir'});
       record.down = el('button', {type: 'button', text: 'Descer'});
       record.remove = el('button', {type: 'button', text: 'Remover campo'});
@@ -495,8 +525,13 @@
         changed();
         (records[Math.min(index, records.length - 1)]?.controls.name || add).focus();
       });
-      details.append(advanced);
-      card.append(title, grid, details, error, actions);
+      if (display) {
+        details.append(grid, advanced);
+        card.append(title, presentation, details, error, actions);
+      } else {
+        details.append(advanced);
+        card.append(title, grid, details, error, actions);
+      }
       return record;
       } catch (error) {
         record.dispose();
@@ -621,7 +656,7 @@
       },
       setReadonly(value) {
         if (dead) return;
-        locked = Boolean(value);
+        locked = display || Boolean(value);
         generation++;
         records.forEach(record => { record.pending = false; record.request++; });
         refresh();
