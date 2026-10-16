@@ -53,19 +53,32 @@ def test_exact_scope_policy():
 def system(tmp_path, monkeypatch):
     import app.security as security
     identities = IdentityStore(tmp_path / "identities.sqlite3")
-    jobs = JobStore(root_dir=tmp_path / "jobs")
-    monkeypatch.setattr(security, "get_identity_store", lambda: identities)
-    app = create_app(lambda: JobApplication(jobs))
-    app.dependency_overrides[get_identity_store] = lambda: identities
-    client = TestClient(app)
-    users = [get_user_store().create_user(f"Synthetic {role}", f"{uuid4().hex}@test.invalid", "synthetic-password", role=role)
-             for role in ("admin", "user")]
-    tokens = [create_token(u["id"], u["email"], u["role"], settings.jwt_secret) for u in users]
-    service = client.post("/api/v1/service-principals", json={"name": "Test service"}, headers=bearer(tokens[0])).json()
-    yield {"client": client, "identities": identities, "admin": bearer(tokens[0]), "user": bearer(tokens[1]),
-           "service": service, "path": f"/api/v1/service-principals/{service['id']}/credentials", "tmp_path": tmp_path}
-    identities.close()
-    jobs._conn.close()
+    resources = {"identities": identities}
+    jobs = client = None
+    try:
+        jobs = JobStore(root_dir=tmp_path / "jobs")
+        monkeypatch.setattr(security, "get_identity_store", lambda: resources["identities"])
+        app = create_app(lambda: JobApplication(jobs))
+        app.dependency_overrides[get_identity_store] = lambda: resources["identities"]
+        client = TestClient(app)
+        users = [get_user_store().create_user(f"Synthetic {role}", f"{uuid4().hex}@test.invalid", "synthetic-password", role=role)
+                 for role in ("admin", "user")]
+        tokens = [create_token(u["id"], u["email"], u["role"], settings.jwt_secret) for u in users]
+        service = client.post("/api/v1/service-principals", json={"name": "Test service"}, headers=bearer(tokens[0])).json()
+        resources.update({"client": client, "admin": bearer(tokens[0]), "user": bearer(tokens[1]),
+                          "service": service, "path": f"/api/v1/service-principals/{service['id']}/credentials", "tmp_path": tmp_path})
+        yield resources
+    finally:
+        try:
+            if client is not None:
+                client.close()
+        finally:
+            try:
+                if resources["identities"] is not None:
+                    resources["identities"].close()
+            finally:
+                if jobs is not None:
+                    jobs._conn.close()
 
 
 def issue(system, scopes, **extra):
@@ -106,32 +119,32 @@ def test_old_credentials_keep_scopes_and_state_controls_still_apply(system):
     new, new_token = store.issue_credential(service, "new", ["metadata:write", "contexts:read"], 3600, "user:1")
     assert new["scopes"] == ["contexts:read", "metadata:write"]
     store.close()
+    system["identities"] = None
     reopened = IdentityStore(path)
-    try:
-        rows = {row["id"]: row["scopes"] for row in reopened._conn.execute("SELECT id,scopes FROM service_credentials")}
-        assert json.loads(rows[old["id"]]) == sorted(LEGACY_SCOPES)
-        assert reopened.authenticate(old_token)["scopes"] == sorted(LEGACY_SCOPES)
-        assert reopened.authenticate(new_token)["scopes"] == ["contexts:read", "metadata:write"]
-        reopened.revoke_credential(service, new["id"], "user:1")
-        assert reopened.authenticate(new_token) is None
-        with reopened._conn:
-            reopened._conn.execute("UPDATE service_credentials SET expires_at=? WHERE id=?", (time.time() - 1, old["id"]))
-        assert reopened.authenticate(old_token) is None
-    finally:
-        reopened.close()
-        system["identities"] = IdentityStore(path)  # Fixture teardown closes it.
+    system["identities"] = reopened  # Fixture owns and closes the current store, including on failure.
+    rows = {row["id"]: row["scopes"] for row in reopened._conn.execute("SELECT id,scopes FROM service_credentials")}
+    assert json.loads(rows[old["id"]]) == sorted(LEGACY_SCOPES)
+    assert reopened.authenticate(old_token)["scopes"] == sorted(LEGACY_SCOPES)
+    assert reopened.authenticate(new_token)["scopes"] == ["contexts:read", "metadata:write"]
+    reopened.revoke_credential(service, new["id"], "user:1")
+    assert reopened.authenticate(new_token) is None
+    with reopened._conn:
+        reopened._conn.execute("UPDATE service_credentials SET expires_at=? WHERE id=?", (time.time() - 1, old["id"]))
+    assert reopened.authenticate(old_token) is None
 
 
+@pytest.mark.parametrize("last_used_at", [None, 1234.5])
 @pytest.mark.parametrize("stored", ["not json", "{}", '"contexts:read"', "[]", '["unknown"]', '["contexts:publish"]',
-                                    '["jobs:read","metadata:approve"]', '["jobs:read","jobs:read"]', "[true]", "[1]", "null"])
-def test_invalid_persisted_scopes_never_authenticate(system, stored):
+                                    '["jobs:read","metadata:approve"]', '["jobs:read","jobs:read"]', "[true]", "[1]", "null",
+                                    "[" * 1100 + "0" + "]" * 1100])
+def test_invalid_persisted_scopes_never_authenticate(system, stored, last_used_at):
     store, service = system["identities"], system["service"]["id"]
     credential, token = store.issue_credential(service, "cred", ["jobs:read"], 3600, "user:1")
     with store._conn:
-        store._conn.execute("UPDATE service_credentials SET scopes=? WHERE id=?", (stored, credential["id"]))
+        store._conn.execute("UPDATE service_credentials SET scopes=?,last_used_at=? WHERE id=?", (stored, last_used_at, credential["id"]))
     assert store.authenticate(token) is None
     row = store._conn.execute("SELECT last_used_at FROM service_credentials WHERE id=?", (credential["id"],)).fetchone()
-    assert row["last_used_at"] is None
+    assert row["last_used_at"] == last_used_at
 
 
 # ---- 5-9. OAuth bindings ---------------------------------------------------
@@ -206,13 +219,16 @@ def test_legacy_binding_limits_token_with_all_scopes(config):
     assert authenticate(legacy, claims(legacy)).scopes == LEGACY_SCOPES
 
 
-@pytest.mark.parametrize("cutoff", [None, True, False, float("nan"), float("inf"), float("-inf"), 0, -1, 1e12, "1", [1]])
+@pytest.mark.parametrize("cutoff", [None, True, False, float("nan"), float("inf"), float("-inf"), 0, -1, 1e12, "1", [1],
+                                    10**400, -(10**400)])
 def test_document_binding_requires_valid_cutoff(config, cutoff):
-    with pytest.raises(ValueError, match="Invalid explicit OAuth subject binding."):
+    with pytest.raises(ValueError, match="Invalid explicit OAuth subject binding.") as error:
         bound(config, ["contexts:read"], cutoff)
+    assert str(error.value) == "Invalid explicit OAuth subject binding."
     if cutoff is not None:  # An optional cutoff on a legacy binding is validated too.
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError) as error:
             bound(config, ["jobs:read"], cutoff)
+        assert str(error.value) == "Invalid explicit OAuth subject binding."
 
 
 @pytest.mark.parametrize("scopes", [[], ["unknown"], ["jobs:read", "jobs:read"], ["contexts:read", "contexts:read"],
@@ -251,7 +267,8 @@ def test_old_token_keeps_only_legacy_and_bad_iat_is_rejected(config):
     assert authenticate(full, claims(full, iat=now - 50)).scopes == OAUTH_SCOPES
     only_docs = bound(config, ["contexts:read"], now - 50)
     assert authenticate(only_docs, claims(only_docs, iat=now - 60)).scopes == frozenset()
-    for iat in (None, "now", True, float("nan"), float("inf"), 0, -5, now + 600, [], {}):
+    for iat in (None, "now", True, False, float("nan"), float("inf"), float("-inf"), 0, -5, now + 600, [], {},
+                10**400, -(10**400)):
         bad = claims(full, iat=iat)
         denied(full, bad)
     missing = claims(full)

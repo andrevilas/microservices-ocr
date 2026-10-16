@@ -110,7 +110,7 @@ class RemoteConfig:
             cutoff = binding.get("document_scopes_not_before")
             documental = not set(binding["scopes"]) <= LEGACY_SCOPES
             if "document_scopes_not_before" in binding:
-                if type(cutoff) not in (int, float) or not math.isfinite(cutoff) or not 0 < cutoff < 1e12:
+                if type(cutoff) not in (int, float) or not 0 < cutoff < 1e12:
                     raise ValueError("Invalid explicit OAuth subject binding.")
             elif documental:
                 raise ValueError("Invalid explicit OAuth subject binding.")
@@ -241,7 +241,7 @@ class IntrospectionVerifier:
         allowed = frozenset(scopes.split()) & frozenset(binding["scopes"]) & OAUTH_SCOPES
         if allowed & DOCUMENT_SCOPES:
             issued_at = claims.get("iat")
-            if (type(issued_at) not in (int, float) or not math.isfinite(issued_at)
+            if (type(issued_at) not in (int, float)
                     or not 0 < issued_at <= now or not issued_at < expiry):
                 raise denied
             if issued_at < binding.get("document_scopes_not_before", math.inf):

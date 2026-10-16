@@ -154,7 +154,7 @@ class IdentityStore:
             # Persisted scopes are re-validated so an invalid row can never authenticate.
             try:
                 scopes = json.loads(row["scopes"])
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, RecursionError):
                 return None
             if not self._valid_scopes(scopes):
                 return None
