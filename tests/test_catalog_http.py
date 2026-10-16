@@ -282,7 +282,7 @@ def test_deprecation_denied_scopes_precede_body_parsing(api):
     for who in (
         Principal("user:1", 1, frozenset({"contexts:read", "contexts:write"})),
         Principal("user:1", 1, frozenset({"contexts:publish"})),
-        Principal("service:limited", None, frozenset({"jobs:read"})),
+        Principal("service:limited", None, frozenset({"jobs:read"}), kind="service"),
     ):
         h.who = who
         for payload in (b'{"PRIVATE-SENTINEL":', b" " * (2 * 1024 * 1024 + 1)):
@@ -526,7 +526,9 @@ def test_openapi_contract_and_wire_name(api):
     assert "Idempotency-Replayed" in success["headers"]
     assert "deprecated" in success["description"].lower() and "replayed" in success["description"].lower()
     assert "409" in deprecation["responses"] and "503" in deprecation["responses"]
-    key = next(parameter for parameter in deprecation["parameters"] if parameter["name"] == "Idempotency-Key")
+    keys = [parameter for parameter in deprecation["parameters"] if parameter["name"].lower() == "idempotency-key"]
+    assert len(keys) == 1
+    key = keys[0]
     assert key["required"] and key["in"] == "header"
     schemas = h.schema["components"]["schemas"]
     assert schemas["TypeDeprecateInput"]["additionalProperties"] is False
