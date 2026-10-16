@@ -1,5 +1,6 @@
 """Pure catalog component coverage; no application server or service mocks."""
 import copy
+import json
 
 import pytest
 from playwright.sync_api import expect
@@ -511,7 +512,9 @@ def test_condition_structural_validation_does_not_repair_loaded_data(editor_page
     invalid(page)
     # onChange receives the actual draft, including extra keys and invalid
     # literals; unrelated edits must not silently repair or discard it.
-    assert page.evaluate('changes.at(-1)[0].required_when') == condition
+    assert json.loads(page.evaluate('JSON.stringify(changes.at(-1)[0].required_when)')) == condition
+    if condition.get('equals') == '\ud800':
+        assert page.evaluate('changes.at(-1)[0].required_when.equals.charCodeAt(0)') == 0xd800
 
 
 @pytest.mark.parametrize('expression', ['NaN', 'Infinity', '-Infinity'])
@@ -568,6 +571,57 @@ def test_condition_authoring_validation_caret_and_copy_isolation(editor_page):
         changes.at(-1)[0].required_when.equals = 'externo';
     }""")
     assert value(page)[0]['required_when'] == {'field': 'acdb', 'equals': '😀' * 4000}
+
+
+@pytest.mark.parametrize('target_type,literal,compatible', [
+    ('decimal', '001.2300', True),
+    ('decimal', '.5', False),
+    ('decimal', '0' * 127 + '1', True),
+    ('decimal', '0' * 128 + '1', False),
+    ('decimal', '9' * 38, True),
+    ('decimal', '9' * 39, False),
+    ('decimal', '0.' + '0' * 11 + '1', True),
+    ('decimal', '0.' + '0' * 12 + '1', False),
+    ('decimal', '1.2300000000000000', True),
+    ('decimal', '0.' + '0' * 12 + '10', False),
+    ('decimal', '-000.0000', True),
+    ('decimal', '+001.2300', True),
+    ('identifier', '000123', True),
+    ('identifier', 'linha\nsegunda', False),
+    ('identifier', 'linha\tsegunda', False),
+    ('string', 'linha\nsegunda', True),
+    ('string', 'linha\tsegunda', True),
+])
+def test_condition_scalar_compatibility_warnings_preserve_exact_literal(editor_page, target_type, literal, compatible):
+    page = editor_page
+    dependent = field('dependente', label='Antes', required_when={'field': 'origem', 'equals': literal})
+    target = field('origem', type=target_type)
+    load(page, [dependent, target])
+    open_details(page)
+    warning = condition_ui(page).locator('.catalog-fields__condition-warning')
+
+    def check_warning():
+        if compatible:
+            expect(warning).to_be_hidden()
+        else:
+            expect(warning).to_be_visible()
+            expect(warning).to_contain_text('não é compatível')
+
+    check_warning()
+    assert value(page) == [dependent, target]
+    page.locator('.catalog-fields__card').first.get_by_label('Rótulo', exact=True).fill('Depois')
+    dependent['label'] = 'Depois'
+    check_warning()
+    assert value(page) == [dependent, target]
+
+    # Changing the reference type refreshes warnings without converting equals.
+    type_control = page.locator('.catalog-fields__card').nth(1).get_by_label('Tipo', exact=True)
+    type_control.select_option('string')
+    expect(warning).to_be_hidden()
+    assert value(page) == [dependent, {**target, 'type': 'string'}]
+    type_control.select_option(target_type)
+    check_warning()
+    assert value(page) == [dependent, target]
 
 
 def test_condition_reference_edit_does_not_convert_literal(editor_page):

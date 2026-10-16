@@ -275,7 +275,15 @@
         if (target.type === 'integer') return typeof value === 'number' && Number.isSafeInteger(value);
         if (!textOK(value, 0, 4000)) return false;
         if (target.type === 'enum') return Array.isArray(target.enum) && target.enum.includes(value);
-        if (target.type === 'decimal') return /^[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)$/.test(value);
+        if (target.type === 'identifier') return textOK(value, 0, 4000, false);
+        if (target.type === 'decimal') {
+          if (value.length > 128) return false;
+          const match = /^([+-]?)([0-9]+)(?:\.([0-9]+))?$/.exec(value);
+          if (!match) return false;
+          const integer = match[2].replace(/^0+/, '');
+          const fraction = (match[3] || '').replace(/0+$/, '');
+          return (integer + fraction).replace(/^0+/, '').length <= 38 && fraction.length <= 12;
+        }
         if (target.type === 'date') {
           const match = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(value);
           if (!match) return false;
