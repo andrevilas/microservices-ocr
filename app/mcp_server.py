@@ -29,6 +29,11 @@ def _retry_hint(operation):
 
 def execute_catalog(services, principal, operation, args):
     """Explicit mapping to the keyword-aware catalog services; create/publish return only the receipt."""
+    if operation == "list_context_templates":
+        return services.templates.list(principal)
+    if operation == "clone_context_template":
+        template_id, body, key = args
+        return services.templates.clone(principal, template_id, body, key)[0]
     contexts, types = services.contexts, services.types
     if operation == "list_contexts":
         limit, after = args
@@ -111,7 +116,7 @@ def build_mcp_server(service_provider=get_job_application, upload_provider=get_u
             raise ToolError("authentication_required: A valid Bearer token is required.")
 
         def execute():
-            if operation in CATALOG_OPERATIONS or operation == "deprecate_document_type_version":
+            if operation in CATALOG_OPERATIONS or operation in ("deprecate_document_type_version", "list_context_templates", "clone_context_template"):
                 return execute_catalog(catalog_provider(), principal, operation, args)
             if operation in ("cancel", "cancel_many"):
                 return getattr(control_provider(), operation)(principal, *args)

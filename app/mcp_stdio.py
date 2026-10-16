@@ -35,6 +35,14 @@ def catalog_request(operation, args):
     dump = lambda model: model.model_dump(mode="json", by_alias=True)
     key = lambda value: {"Idempotency-Key": value}
     page = lambda limit, after: {k: v for k, v in (("limit", limit), ("after", after)) if v is not None}
+    if operation == "list_context_templates":
+        return "GET", "/context-templates", None, None, None
+    if operation == "clone_context_template":
+        template_id, body, idempotency_key = args
+        if (not isinstance(template_id, str) or not 1 <= len(template_id) <= 64
+                or not re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", template_id)):
+            raise ToolError("validation_error: Invalid template identifier.")
+        return "POST", "/context-templates/" + quote(template_id, safe="") + "/clone", None, dump(body), key(idempotency_key)
     if operation == "list_contexts":
         return "GET", "/contexts", page(*args), None, None
     if operation == "create_context":
@@ -159,7 +167,7 @@ class ApiClient:
         elif operation == "list_batches":
             path = "/batches"
             query = {key: value for key, value in zip(("limit", "cursor"), args) if value is not None}
-        elif operation in CATALOG_OPERATIONS or operation == "deprecate_document_type_version":
+        elif operation in CATALOG_OPERATIONS or operation in ("deprecate_document_type_version", "list_context_templates", "clone_context_template"):
             method, path, query, body, headers = catalog_request(operation, args)
             content = catalog_body(body)
             if content is not None:
