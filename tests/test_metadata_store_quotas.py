@@ -1,5 +1,6 @@
 """Quota and concurrency tests for the SQLite index, not file durability or approval."""
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from threading import Barrier
 from uuid import uuid4
@@ -198,22 +199,23 @@ def race(env, entries):
     return winners[0], failures[0]
 
 
-def test_default_limits_and_real_job_boundary(env):
+@pytest.mark.parametrize("size", [MIB, 1])
+def test_default_limits_and_real_job_boundary(env, size):
     assert (MAX_SNAPSHOT_BYTES, metadata.MAX_REVISIONS_PER_JOB,
             metadata.MAX_JOB_BYTES, metadata.MAX_OWNER_BYTES,
             metadata.MAX_GLOBAL_BYTES) == (MIB, 32, 32 * MIB, 128 * MIB, 512 * MIB)
     job_id = env.job()
     head = None
     for index in range(31):
-        admitted = env.reserve(job_id, **request(head=head))
+        admitted = env.reserve(job_id, **request(size=size, head=head))
         assert admitted.pending is not None
         before_commit = env.capacity(job_id=job_id)
         env.commit(admitted.pending)
         assert env.capacity(job_id=job_id) == before_commit
         head = env.svc.get_head(principal(), job_id)
-        assert env.capacity(job_id=job_id) == ((index + 2) * MIB, index + 2)
+        assert env.capacity(job_id=job_id) == (MIB + (index + 1) * size, index + 2)
     assert len(env.svc.list_revisions(principal(), job_id)) == 31
-    assert env.capacity(job_id=job_id) == (32 * MIB, 32)
+    assert env.capacity(job_id=job_id) == (MIB + 31 * size, 32)
     before = env.snapshot()
     error("metadata_quota_exceeded", 413,
           lambda: env.reserve(job_id, **request(size=1, head=head)))
@@ -479,7 +481,8 @@ def test_commit_rechecks_current_admission_without_releasing_charge(env, revocat
 def test_service_owned_index_and_foreign_admin_denial(env):
     who = service_principal()
     job_id = env.job(who)
-    admin = principal(2, scopes=SCOPES | {"admin"})
+    admin = replace(principal(2, scopes=SCOPES | {"admin"}), is_admin=True)
+    assert admin.is_admin is True
     before = env.snapshot()
     error("job_not_found", 404,
           lambda: env.reserve(job_id, admin, **request()))
