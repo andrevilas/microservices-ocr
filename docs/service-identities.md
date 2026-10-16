@@ -29,6 +29,19 @@ por ID. Não são snapshots de inserções concorrentes. Nenhuma dessas operaç�
 é uma ferramenta MCP de emissão/recebimento de segredo. A gestão mais ampla
 de perfil e administração continua na AM-14.
 
+### Tela administrativa
+
+Administradores acessam **Integrações** (`/admin/integrations`, protegida por
+`require_admin`). A página obtém o Bearer humano pelo `browser-session` e usa
+somente as seis operações acima, paginando com `after` ("Carregar mais"). Criar
+serviço, emitir credencial (permissões mínimas pré-marcadas: `jobs:read` e
+`artifacts:read`; validade de 1 a 365 dias), revogar e desativar exigem ação
+explícita; revogação e desativação pedem confirmação. O segredo emitido aparece
+uma única vez num diálogo, somente como valor do campo (não entra no HTML nem em
+armazenamento do navegador), não é copiado automaticamente e é apagado ao clicar
+em "Concluído"; Esc não fecha o diálogo por engano. Não há reativação de serviço
+nem recuperação de segredo, conforme o contrato.
+
 Corpo de emissão:
 
 ```json
@@ -75,13 +88,14 @@ Isto é o piloto com credencial individual; não implementa OAuth discovery/PKCE
 
 | Escopo | Permite, somente para o proprietário |
 |---|---|
-| jobs:read | Listar/consultar jobs e métricas |
-| artifacts:read | Consultar/download de artefato; também exige jobs:read |
-| jobs:submit | Submeter PDF pela rota multipart legada, inclusive lote |
-| jobs:cancel | Retirar seus jobs pendentes da fila legada |
+| jobs:read | Listar/consultar jobs, lotes e métricas |
+| artifacts:read | Consultar/download de artefato, texto, relatório e ZIP; também exige jobs:read |
+| jobs:submit | Reservar upload, admitir job/lote (v1 e rota multipart legada) e reprocessar |
+| jobs:cancel | Cancelar jobs explícitos (v1) e retirar pendentes da fila legada |
+| artifacts:delete | Excluir arquivos de jobs terminais; nunca concedido implicitamente |
 
-O contrato inicial consolidou os nomes `jobs:*` e `artifacts:read`; os nomes
-`ocr:*` do plano eram propostas. Usuários humanos autenticados mantêm os quatro
+O contrato inicial consolidou os nomes `jobs:*` e `artifacts:*`; os nomes
+`ocr:*` do plano eram propostas. Usuários humanos autenticados mantêm os cinco
 escopos para seus próprios dados. Não há curinga, escopo administrativo delegável
 ou leitura automática de documentos alheios. Um token só de submissão pode
 receber o ID criado, mas precisa de jobs:read para consultá-lo.

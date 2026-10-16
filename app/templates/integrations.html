@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% set active_page = "integrations" %}
+{% block title %}Integrações · {{ app_name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Integrações</h1>
+    <p class="page-head__summary">Identidades de serviço e credenciais para importadores, scripts e clientes MCP locais.</p>
+  </div>
+</div>
+
+<p id="integrations-status" class="form-alert" data-tone="success" role="status" hidden></p>
+<p id="integrations-error" class="form-alert" role="alert" hidden></p>
+
+<div class="callout">
+  <p>Cada serviço é um proprietário independente: os documentos enviados por ele não aparecem no painel de nenhuma pessoa, nem no do administrador. O segredo de uma credencial é exibido uma única vez; para trocar, emita uma nova e revogue a anterior.</p>
+</div>
+
+<details id="create-service-disclosure" class="panel disclosure disclosure-panel">
+  <summary><span class="disclosure__label">Novo serviço</span></summary>
+  <form id="create-service-form" class="form-grid" novalidate>
+    <label class="field form-grid__wide" for="service-name">Nome do serviço
+      <input type="text" id="service-name" maxlength="80" required autocomplete="off" />
+    </label>
+    <div class="form-actions form-grid__wide">
+      <button type="submit" id="create-service-btn" class="button button-primary">Criar serviço</button>
+    </div>
+  </form>
+</details>
+
+<div class="integrations-layout">
+  <section class="panel" aria-labelledby="services-title">
+    <h2 id="services-title" class="panel__title">Serviços</h2>
+    <ul id="service-list" class="entity-list" aria-labelledby="services-title"></ul>
+    <p id="services-empty" class="empty-state" hidden>Nenhum serviço cadastrado.</p>
+    <button id="services-more" type="button" class="button show-more" hidden>Carregar mais serviços</button>
+  </section>
+
+  <section id="service-detail" class="panel" aria-labelledby="service-title" hidden>
+    <div class="history__head">
+      <div>
+        <p class="eyebrow">Serviço</p>
+        <h2 id="service-title" class="panel__title" tabindex="-1"></h2>
+      </div>
+      <button id="service-close" type="button" class="button button-small">Fechar</button>
+    </div>
+    <dl id="service-meta" class="detail-list detail-list-compact"></dl>
+
+    <details id="issue-disclosure" class="disclosure">
+      <summary><span class="disclosure__label">Emitir credencial</span></summary>
+      <form id="issue-form" class="stack-form disclosure__body" novalidate>
+        <label class="field" for="credential-name">Nome da credencial
+          <input type="text" id="credential-name" maxlength="80" required autocomplete="off" />
+        </label>
+        <fieldset class="fieldset">
+          <legend>Permissões</legend>
+          <label class="check"><input type="checkbox" name="scope" value="jobs:read" checked /> Consultar jobs e métricas <code>jobs:read</code></label>
+          <label class="check"><input type="checkbox" name="scope" value="artifacts:read" checked /> Ler resultados: PDF, texto e relatório <code>artifacts:read</code></label>
+          <label class="check"><input type="checkbox" name="scope" value="jobs:submit" /> Enviar documentos <code>jobs:submit</code></label>
+          <label class="check"><input type="checkbox" name="scope" value="jobs:cancel" /> Cancelar jobs <code>jobs:cancel</code></label>
+          <label class="check"><input type="checkbox" name="scope" value="artifacts:delete" /> Excluir arquivos de jobs <code>artifacts:delete</code></label>
+          <p class="hint">Conceda o mínimo necessário. Ler resultados também exige consultar jobs.</p>
+        </fieldset>
+        <label class="field" for="credential-expiry">Validade
+          <select id="credential-expiry">
+            <option value="86400">1 dia</option>
+            <option value="604800">7 dias</option>
+            <option value="2592000" selected>30 dias</option>
+            <option value="7776000">90 dias</option>
+            <option value="31536000">365 dias</option>
+          </select>
+        </label>
+        <div class="form-actions">
+          <button type="submit" id="issue-btn" class="button button-primary">Emitir credencial</button>
+        </div>
+      </form>
+    </details>
+
+    <h3 class="detail-section__title">Credenciais</h3>
+    <ul id="credential-list" class="entity-list"></ul>
+    <p id="credentials-empty" class="hint" hidden>Nenhuma credencial emitida.</p>
+    <button id="credentials-more" type="button" class="button show-more" hidden>Carregar mais credenciais</button>
+
+    <section id="disable-zone" class="detail-section danger-zone" aria-labelledby="disable-title">
+      <h3 id="disable-title" class="detail-section__title">Desativar serviço</h3>
+      <p class="hint">Bloqueia permanentemente todas as credenciais deste serviço. Não há reativação. Os documentos do serviço não são excluídos.</p>
+      <button id="disable-service-btn" type="button" class="button button-danger">Desativar serviço</button>
+    </section>
+  </section>
+</div>
+{% endblock %}
+{% block dialogs %}
+{{ super() }}
+<dialog id="secret-dialog" class="dialog" aria-labelledby="secret-title" aria-describedby="secret-help">
+  <div class="dialog__form">
+    <h2 id="secret-title" class="dialog__title">Credencial emitida</h2>
+    <p id="secret-help" class="dialog__body">Este segredo aparece somente agora. Guarde-o no gerenciador de segredos do consumidor. Não o cole em conversas nem em argumentos de ferramentas MCP.</p>
+    <label class="field" for="secret-value">Segredo
+      <input id="secret-value" class="secret-input" type="text" readonly autocomplete="off" spellcheck="false" />
+    </label>
+    <p id="secret-copy-status" class="hint" role="status"></p>
+    <div class="dialog__actions">
+      <button id="secret-copy" type="button" class="button">Copiar</button>
+      <button id="secret-done" type="button" class="button button-primary">Concluído</button>
+    </div>
+  </div>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script src="/static/integrations.js?v={{ static_asset_version }}" defer></script>
+{% endblock %}

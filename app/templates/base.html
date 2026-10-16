@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}{{ app_name }}{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css?v={{ static_asset_version }}" />
+  </head>
+  <body class="{% block body_class %}app{% endblock %}">
+    <a class="skip-link" href="#conteudo">Ir para o conteúdo</a>
+    {% block header %}
+    <header class="topbar">
+      <a class="brand" href="/">{{ app_name }}</a>
+      <nav class="topnav" aria-label="Navegação principal">
+        <a href="/" {% if active_page == 'documents' %}aria-current="page"{% endif %}>Documentos</a>
+        {% if admin_page or (user is defined and user and user.role == 'admin') %}
+        <a href="/admin/users" {% if active_page == 'users' %}aria-current="page"{% endif %}>Usuários</a>
+        <a href="/admin/integrations" {% if active_page == 'integrations' %}aria-current="page"{% endif %}>Integrações</a>
+        {% endif %}
+      </nav>
+      <div class="account-nav">
+        {% if user is defined and user %}<span class="account-nav__name" title="{{ user.email }}">{{ user.name }}</span>{% endif %}
+        <a href="/account" {% if active_page == 'account' %}aria-current="page"{% endif %}>Minha conta</a>
+        <button id="logout-button" type="button" class="button button-quiet">Sair</button>
+      </div>
+    </header>
+    {% endblock %}
+    <main id="conteudo" class="page {% block main_class %}{% endblock %}" tabindex="-1">
+      {% block content %}{% endblock %}
+    </main>
+    {% block dialogs %}
+    <dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-title" aria-describedby="confirm-body">
+      <form method="dialog" class="dialog__form">
+        <h2 id="confirm-title" class="dialog__title"></h2>
+        <p id="confirm-body" class="dialog__body"></p>
+        <div class="dialog__actions">
+          <button id="confirm-cancel" type="submit" value="cancel" class="button">Voltar</button>
+          <button id="confirm-accept" type="submit" value="confirm" class="button button-primary">Confirmar</button>
+        </div>
+      </form>
+    </dialog>
+    {% endblock %}
+    <script src="/static/shell.js?v={{ static_asset_version }}" defer></script>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>

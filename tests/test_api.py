@@ -85,19 +85,51 @@ def test_homepage_loads() -> None:
     response = client.get("/", cookies=cookies)
     assert response.status_code == 200
     assert "Fluxo OCR" in response.text
-    assert "Selecionar diretório" in response.text
-    assert "Triagem, fila e resultados" in response.text
-    assert "Painel de cards e resultados" in response.text
-    assert "Busca rápida" in response.text
-    assert "Ordenação" in response.text
+    # Every intake path stays reachable: files, directory and single immediate send.
+    assert "Escolher PDFs" in response.text
+    assert "Escolher pasta" in response.text
+    assert "Enviar um único PDF agora" in response.text
+    assert "Opções de processamento" in response.text
+    assert "Histórico" in response.text
+    assert "Buscar por nome ou caminho" in response.text
+    assert "Ordenar por" in response.text
     assert "Concluídos" in response.text
     assert "Selecionar visíveis" in response.text
     assert "Cancelar selecionados" in response.text
+    assert "Baixar ZIP" in response.text
     assert "Limpar visualização" in response.text
     assert "Ocultar encerrados" in response.text
-    assert "Nenhum lote ativo." in response.text
-    assert "Detalhes" in response.text
-    assert "toast-stack" in response.text
+    assert "Mostrar ocultos" in response.text
+    assert "Texto por página" in response.text
+    assert "Relatório" in response.text
+    assert 'id="confirm-dialog"' in response.text
+    assert '<h1 id="page-title"' in response.text and 'class="skip-link"' in response.text
+
+
+def test_integrations_page_is_admin_only_and_renders_no_secret() -> None:
+    response = client.get("/admin/integrations", cookies=_auth_cookies())
+    assert response.status_code == 200
+    assert "Integrações" in response.text and 'id="secret-value"' in response.text
+    assert "ocr_svc_" not in response.text  # secrets only ever arrive through the issuance response
+    _, email, password = _create_common_user()
+    user_cookies = _user_cookies(email, password)
+    denied = client.get("/admin/integrations", cookies=user_cookies, headers={"Accept": "application/json"})
+    assert denied.status_code == 403
+    home = client.get("/", cookies=user_cookies)
+    assert home.status_code == 200
+    assert "/admin/integrations" not in home.text and "/admin/users" not in home.text
+    account = client.get("/account", cookies=user_cookies)
+    assert account.status_code == 200 and "Usuário" in account.text
+    anonymous = _fresh_client().get("/admin/integrations", headers={"Accept": "text/html"}, follow_redirects=False)
+    assert anonymous.status_code == 302
+
+
+def test_login_page_has_no_navigation_and_labelled_fields() -> None:
+    response = _fresh_client().get("/login")
+    assert response.status_code == 200
+    assert 'class="topbar"' not in response.text
+    assert 'for="email"' in response.text and 'for="password"' in response.text
+    assert 'role="alert"' in response.text
 
 
 def test_rejects_non_pdf_upload() -> None:

@@ -1,400 +1,90 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Gestão de usuários - {{ app_name }}</title>
-    <link rel="stylesheet" href="/static/style.css?v={{ static_asset_version }}" />
-  </head>
-  <body>
-    <main class="users-shell">
-      <div class="users-container">
-        <div class="users-topbar">
-          <div class="users-topbar-left">
-            <h1>Gestão de usuários</h1>
-            <a href="/" class="topbar-link">Voltar ao painel</a>
-            <a href="/account" class="topbar-link">Minha conta</a>
-          </div>
-          <button id="logout-btn" class="topbar-btn">Sair</button>
-        </div>
+{% extends "base.html" %}
+{% set active_page = "users" %}
+{% set admin_page = true %}
+{% block title %}Usuários · {{ app_name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Usuários</h1>
+    <p class="page-head__summary">Contas humanas com acesso ao painel. Cada pessoa vê apenas os próprios documentos.</p>
+  </div>
+</div>
 
-        <div id="alert-success" class="users-alert success"></div>
-        <div id="alert-error" class="users-alert error"></div>
+<p id="users-status" class="form-alert" data-tone="success" role="status" hidden></p>
+<p id="users-error" class="form-alert" role="alert" hidden></p>
 
-        <!-- Create user form -->
-        <div class="create-card admin-form-card">
-          <div class="account-card__header">
-            <span class="section-kicker">Cadastro</span>
-            <h2>Novo usuário</h2>
-          </div>
-          <form id="create-form" class="create-form" autocomplete="off">
-            <div class="field">
-              <label for="new-name">Nome</label>
-              <input type="text" id="new-name" required placeholder="Nome completo" />
-            </div>
-            <div class="field">
-              <label for="new-email">E-mail</label>
-              <input type="email" id="new-email" required placeholder="email@exemplo.com" />
-            </div>
-            <div class="field">
-              <label for="new-password">Senha</label>
-              <input type="password" id="new-password" required placeholder="Senha" />
-            </div>
-            <button type="submit" id="create-btn" class="create-btn">Criar</button>
-          </form>
-        </div>
+<details id="create-disclosure" class="panel disclosure disclosure-panel">
+  <summary><span class="disclosure__label">Novo usuário</span></summary>
+  <form id="create-form" class="form-grid" novalidate>
+    <label class="field" for="new-name">Nome
+      <input type="text" id="new-name" required autocomplete="off" />
+    </label>
+    <label class="field" for="new-email">E-mail de acesso
+      <input type="email" id="new-email" required autocomplete="off" />
+    </label>
+    <label class="field" for="new-password">Senha inicial
+      <input type="password" id="new-password" required autocomplete="new-password" />
+    </label>
+    <label class="field" for="new-password-confirm">Confirmar senha
+      <input type="password" id="new-password-confirm" required autocomplete="new-password" />
+    </label>
+    <p class="hint form-grid__wide">A conta é criada com papel de usuário. Entregue a senha por um canal seguro.</p>
+    <div class="form-actions form-grid__wide">
+      <button type="submit" id="create-btn" class="button button-primary">Criar usuário</button>
+    </div>
+  </form>
+</details>
 
-        <div id="edit-card" class="edit-card hidden">
-          <div class="account-card__header">
-            <span class="section-kicker">Edição</span>
-            <h2 id="edit-title">Editar usuário</h2>
-          </div>
-          <form id="edit-form" class="edit-form" autocomplete="off">
-            <input type="hidden" id="edit-id" />
-            <div class="field">
-              <label for="edit-name">Nome</label>
-              <input type="text" id="edit-name" required />
-            </div>
-            <div class="field">
-              <label for="edit-email">Login</label>
-              <input type="email" id="edit-email" required />
-            </div>
-            <div class="field">
-              <label for="edit-password">Nova senha</label>
-              <input type="password" id="edit-password" autocomplete="new-password" placeholder="Deixe em branco para manter" />
-            </div>
-            <div class="form-actions">
-              <button type="submit" id="edit-save-btn" class="create-btn">Salvar alterações</button>
-              <button type="button" id="edit-cancel-btn" class="secondary-button">Cancelar</button>
-            </div>
-          </form>
-        </div>
+<section id="edit-card" class="panel" aria-labelledby="edit-title" hidden>
+  <h2 id="edit-title" class="panel__title" tabindex="-1">Editar usuário</h2>
+  <form id="edit-form" class="form-grid" novalidate>
+    <input type="hidden" id="edit-id" />
+    <label class="field" for="edit-name">Nome
+      <input type="text" id="edit-name" required autocomplete="off" />
+    </label>
+    <label class="field" for="edit-email">E-mail de acesso
+      <input type="email" id="edit-email" required autocomplete="off" />
+    </label>
+    <label class="field" for="edit-password">Nova senha
+      <input type="password" id="edit-password" autocomplete="new-password" aria-describedby="edit-password-hint" />
+    </label>
+    <label class="field" for="edit-password-confirm">Confirmar nova senha
+      <input type="password" id="edit-password-confirm" autocomplete="new-password" />
+    </label>
+    <p id="edit-password-hint" class="hint form-grid__wide">Deixe a senha em branco para mantê-la.</p>
+    <div class="form-actions form-grid__wide">
+      <button type="button" id="edit-cancel-btn" class="button">Cancelar edição</button>
+      <button type="submit" id="edit-save-btn" class="button button-primary">Salvar alterações</button>
+    </div>
+  </form>
+</section>
 
-        <!-- Users table -->
-        <div class="table-card">
-          <div class="account-card__header">
-            <span class="section-kicker">Acessos</span>
-            <h2>Usuários cadastrados</h2>
-          </div>
-          <div id="users-list" class="users-list"></div>
-          <div class="users-table-wrap">
-            <table class="users-table">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Nome</th>
-                  <th>E-mail</th>
-                  <th>Perfil</th>
-                  <th>Ações</th>
-                </tr>
-              </thead>
-              <tbody id="users-tbody">
-                <tr>
-                  <td colspan="5" class="empty-msg">Carregando...</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </main>
-
-    <script>
-      (function () {
-        var tbody = document.getElementById("users-tbody");
-        var usersList = document.getElementById("users-list");
-        var alertSuccess = document.getElementById("alert-success");
-        var alertError = document.getElementById("alert-error");
-        var createForm = document.getElementById("create-form");
-        var createBtn = document.getElementById("create-btn");
-        var editCard = document.getElementById("edit-card");
-        var editForm = document.getElementById("edit-form");
-        var editSaveBtn = document.getElementById("edit-save-btn");
-        var editCancelBtn = document.getElementById("edit-cancel-btn");
-        var editTitle = document.getElementById("edit-title");
-        var logoutBtn = document.getElementById("logout-btn");
-        var currentUsers = [];
-
-        function hideAlerts() {
-          alertSuccess.classList.remove("visible");
-          alertError.classList.remove("visible");
-        }
-
-        function showSuccess(msg) {
-          hideAlerts();
-          alertSuccess.textContent = msg;
-          alertSuccess.classList.add("visible");
-          setTimeout(function () {
-            alertSuccess.classList.remove("visible");
-          }, 4000);
-        }
-
-        function showError(msg) {
-          hideAlerts();
-          alertError.textContent = msg;
-          alertError.classList.add("visible");
-        }
-
-        function formatDate(iso) {
-          if (!iso) return "-";
-          try {
-            var d = new Date(iso);
-            return d.toLocaleDateString("pt-BR") + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-          } catch (e) {
-            return iso;
-          }
-        }
-
-        function roleBadge(role) {
-          var cls = role === "admin" ? "admin" : "user";
-          var span = document.createElement("span");
-          span.className = "role-badge " + cls;
-          span.textContent = role || "user";
-          return span;
-        }
-
-        function setEmptyMessage(message) {
-          var tr = document.createElement("tr");
-          var td = document.createElement("td");
-          td.colSpan = 5;
-          td.className = "empty-msg";
-          td.textContent = message;
-          tr.appendChild(td);
-          tbody.replaceChildren(tr);
-          usersList.innerHTML = '<div class="empty-state empty-state-inline"><strong>' + message + '</strong></div>';
-        }
-
-        function appendCell(row, value) {
-          var td = document.createElement("td");
-          td.textContent = value == null ? "-" : String(value);
-          row.appendChild(td);
-          return td;
-        }
-
-        function appendActionCell(row, user) {
-          var td = document.createElement("td");
-          var button = document.createElement("button");
-          button.type = "submit";
-          button.className = "secondary-button user-row-action";
-          button.dataset.editUserId = user.id;
-          button.textContent = "Editar";
-          td.appendChild(button);
-          row.appendChild(td);
-        }
-
-        function renderUserCards(users) {
-          if (!users.length) {
-            usersList.innerHTML = '<div class="empty-state empty-state-inline"><strong>Nenhum usuário cadastrado.</strong></div>';
-            return;
-          }
-          var fragment = document.createDocumentFragment();
-          for (var i = 0; i < users.length; i++) {
-            var user = users[i];
-            var card = document.createElement("article");
-            card.className = "user-card";
-            var header = document.createElement("div");
-            header.className = "user-card__header";
-            var identity = document.createElement("div");
-            identity.className = "user-card__identity";
-            var name = document.createElement("strong");
-            name.textContent = user.name || "-";
-            var email = document.createElement("span");
-            email.textContent = user.email || "-";
-            identity.appendChild(name);
-            identity.appendChild(email);
-            header.appendChild(identity);
-            header.appendChild(roleBadge(user.role));
-
-            var meta = document.createElement("div");
-            meta.className = "user-card__meta";
-            meta.textContent = "ID " + user.id + " · criado em " + formatDate(user.created_at);
-
-            var action = document.createElement("button");
-            action.type = "button";
-            action.className = "secondary-button user-row-action";
-            action.dataset.editUserId = user.id;
-            action.textContent = "Editar credenciais";
-
-            card.appendChild(header);
-            card.appendChild(meta);
-            card.appendChild(action);
-            fragment.appendChild(card);
-          }
-          usersList.replaceChildren(fragment);
-        }
-
-        function openEdit(user) {
-          document.getElementById("edit-id").value = user.id;
-          document.getElementById("edit-name").value = user.name || "";
-          document.getElementById("edit-email").value = user.email || "";
-          document.getElementById("edit-password").value = "";
-          editTitle.textContent = "Editar " + (user.name || user.email);
-          editCard.classList.remove("hidden");
-          editCard.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-
-        function closeEdit() {
-          editForm.reset();
-          document.getElementById("edit-id").value = "";
-          editCard.classList.add("hidden");
-        }
-
-        function renderUsers(users) {
-          currentUsers = users;
-          if (!users.length) {
-            setEmptyMessage("Nenhum usuário cadastrado.");
-            return;
-          }
-          renderUserCards(users);
-          var fragment = document.createDocumentFragment();
-          for (var i = 0; i < users.length; i++) {
-            var u = users[i];
-            var tr = document.createElement("tr");
-            appendCell(tr, u.id);
-            appendCell(tr, u.name);
-            appendCell(tr, u.email);
-            var roleCell = document.createElement("td");
-            roleCell.appendChild(roleBadge(u.role));
-            tr.appendChild(roleCell);
-            appendActionCell(tr, u);
-            fragment.appendChild(tr);
-          }
-          tbody.replaceChildren(fragment);
-        }
-
-        function loadUsers() {
-          fetch("/api/users", { credentials: "same-origin" })
-            .then(function (res) {
-              if (res.status === 401 || res.status === 302) {
-                window.location.href = "/login";
-                return;
-              }
-              if (!res.ok) throw new Error("Erro ao carregar usuários.");
-              return res.json();
-            })
-            .then(function (data) {
-              if (data) renderUsers(data);
-            })
-            .catch(function (err) {
-              showError(err.message);
-            });
-        }
-
-        createForm.addEventListener("submit", function (e) {
-          e.preventDefault();
-          hideAlerts();
-
-          var name = document.getElementById("new-name").value.trim();
-          var email = document.getElementById("new-email").value.trim();
-          var password = document.getElementById("new-password").value;
-
-          if (!name || !email || !password) {
-            showError("Preencha todos os campos.");
-            return;
-          }
-
-          createBtn.disabled = true;
-          createBtn.textContent = "Criando...";
-
-          fetch("/api/users", {
-            method: "POST",
-            credentials: "same-origin",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: name, email: email, password: password }),
-          })
-            .then(function (res) {
-              if (!res.ok) {
-                return res.json().then(function (data) {
-                  throw new Error(data.detail || "Erro ao criar usuário.");
-                });
-              }
-              return res.json();
-            })
-            .then(function () {
-              showSuccess("Usuário criado com sucesso.");
-              createForm.reset();
-              loadUsers();
-            })
-            .catch(function (err) {
-              showError(err.message);
-            })
-            .finally(function () {
-              createBtn.disabled = false;
-              createBtn.textContent = "Criar";
-            });
-        });
-
-        function handleEditClick(e) {
-          var button = e.target.closest("[data-edit-user-id]");
-          if (!button) return;
-
-          hideAlerts();
-          var userId = Number(button.dataset.editUserId);
-          var user = currentUsers.find(function (item) {
-            return Number(item.id) === userId;
-          });
-          if (user) openEdit(user);
-        }
-
-        tbody.addEventListener("click", handleEditClick);
-        usersList.addEventListener("click", handleEditClick);
-
-        editForm.addEventListener("submit", function (e) {
-          e.preventDefault();
-          hideAlerts();
-
-          var userId = document.getElementById("edit-id").value;
-          var name = document.getElementById("edit-name").value.trim();
-          var email = document.getElementById("edit-email").value.trim();
-          var password = document.getElementById("edit-password").value;
-
-          if (!name || !email) {
-            showError("Informe nome e login.");
-            return;
-          }
-
-          editSaveBtn.disabled = true;
-          editSaveBtn.textContent = "Salvando...";
-
-          fetch("/api/users/" + encodeURIComponent(userId), {
-            method: "PUT",
-            credentials: "same-origin",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: name, email: email, password: password }),
-          })
-            .then(function (res) {
-              if (!res.ok) {
-                return res.json().then(function (data) {
-                  throw new Error(data.detail || "Erro ao atualizar usuário.");
-                });
-              }
-              return res.json();
-            })
-            .then(function () {
-              showSuccess("Usuário atualizado com sucesso.");
-              closeEdit();
-              loadUsers();
-            })
-            .catch(function (err) {
-              showError(err.message);
-            })
-            .finally(function () {
-              editSaveBtn.disabled = false;
-              editSaveBtn.textContent = "Salvar alterações";
-            });
-        });
-
-        editCancelBtn.addEventListener("click", closeEdit);
-
-        logoutBtn.addEventListener("click", function () {
-          fetch("/auth/logout", { method: "POST", credentials: "same-origin" })
-            .then(function () {
-              window.location.href = "/login";
-            });
-        });
-
-        loadUsers();
-      })();
-    </script>
-  </body>
-</html>
+<section class="panel" aria-labelledby="users-title">
+  <div class="history__head">
+    <h2 id="users-title" class="panel__title">Contas cadastradas</h2>
+    <label class="field search-field search-field-compact">
+      <span class="visually-hidden">Buscar usuário</span>
+      <input id="users-search" type="search" placeholder="Buscar por nome ou e-mail" autocomplete="off" />
+    </label>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th scope="col">Nome</th>
+          <th scope="col">E-mail</th>
+          <th scope="col">Papel</th>
+          <th scope="col">Criado em</th>
+          <th scope="col"><span class="visually-hidden">Ações</span></th>
+        </tr>
+      </thead>
+      <tbody id="users-tbody">
+        <tr><td colspan="5" class="empty-cell">Carregando…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="/static/users.js?v={{ static_asset_version }}" defer></script>
+{% endblock %}

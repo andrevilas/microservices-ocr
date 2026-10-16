@@ -1,212 +1,206 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{{ app_name }}</title>
-    <link rel="stylesheet" href="/static/style.css?v={{ static_asset_version }}" />
-  </head>
-  <body>
-    <nav class="app-navbar" aria-label="Menu principal">
-      <a class="app-navbar__brand" href="/">
-        <strong>{{ app_name }}</strong>
-        <span>Triagem, fila e resultados</span>
-      </a>
+{% extends "base.html" %}
+{% set active_page = "documents" %}
+{% block title %}Documentos · {{ app_name }}{% endblock %}
+{% block main_class %}page-documents{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 id="page-title" tabindex="-1">Documentos</h1>
+    <p id="status-summary" class="page-head__summary">Carregando o histórico…</p>
+  </div>
+  <div class="page-head__sync">
+    <span id="sync-status" class="sync-status"></span>
+    <button id="refresh-workspace-button" type="button" class="button button-small">Atualizar</button>
+  </div>
+</div>
 
-      <div class="app-navbar__menus">
-        <details class="nav-menu">
-          <summary>Entrada</summary>
-          <div class="nav-menu__panel nav-menu__panel-wide">
-            <label class="nav-upload">
-              <span>Selecionar diretório</span>
-              <small>Carrega PDFs mantendo o caminho relativo.</small>
-              <input
-                id="directory-input"
-                type="file"
-                name="directory"
-                accept="application/pdf,.pdf"
-                webkitdirectory
-                directory
-                multiple
-              />
-            </label>
-            <label class="nav-upload">
-              <span>Selecionar PDFs</span>
-              <small>Escolha múltiplos arquivos avulsos.</small>
-              <input id="multi-file-input" type="file" name="files" accept="application/pdf,.pdf" multiple />
-            </label>
-            <div class="nav-menu__actions">
-              <button id="queue-button" type="button" disabled>Adicionar selecionados à fila</button>
-              <button id="download-all-button" type="button" class="secondary-button" disabled>
-                Baixar todos os convertidos
-              </button>
-            </div>
-          </div>
-        </details>
+<div id="notice" class="notice" data-tone="info" hidden>
+  <p id="job-state" class="notice__text" tabindex="-1"></p>
+  <button id="notice-close" type="button" class="button button-quiet button-small">Fechar aviso</button>
+</div>
 
-        <details class="nav-menu">
-          <summary>Modo rápido</summary>
-          <div class="nav-menu__panel">
-            <form id="upload-form" class="quick-upload-form">
-              <label class="nav-upload">
-                <span>Selecionar PDF</span>
-                <small>Envio pontual para processamento imediato.</small>
-                <input id="file-input" type="file" name="file" accept="application/pdf,.pdf" required />
-              </label>
-              <button type="submit">Processar arquivo único</button>
-            </form>
-          </div>
-        </details>
+<div class="documents-layout">
+  <section class="panel intake" aria-labelledby="intake-title">
+    <h2 id="intake-title" class="panel__title">Enviar PDFs</h2>
+    <div id="dropzone" class="dropzone">
+      <p class="dropzone__lead">Arraste PDFs para cá ou escolha:</p>
+      <div class="dropzone__actions">
+        <label class="button button-primary file-button">
+          Escolher PDFs
+          <input id="multi-file-input" class="visually-hidden" type="file" name="files" accept="application/pdf,.pdf" multiple />
+        </label>
+        <label class="button file-button">
+          Escolher pasta
+          <input id="directory-input" class="visually-hidden" type="file" name="directory" accept="application/pdf,.pdf" webkitdirectory directory multiple />
+        </label>
+      </div>
+      <form id="upload-form" class="quick-send">
+        <label class="link-label">
+          Enviar um único PDF agora
+          <input id="file-input" class="visually-hidden" type="file" name="file" accept="application/pdf,.pdf" />
+        </label>
+        <span class="hint">sem passar pela lista</span>
+      </form>
+      <p id="limits-note" class="hint"></p>
+    </div>
 
-        <details class="nav-menu nav-menu-account">
-          <summary>{{ user.name }}</summary>
-          <div class="nav-menu__panel">
-            <div class="nav-account">
-              <strong>{{ user.name }}</strong>
-              <span>{{ user.email }}</span>
-            </div>
-            <a class="nav-menu__link" href="/account">Minha conta</a>
-            {% if user.role == 'admin' %}
-            <a class="nav-menu__link" href="/admin/users">Gestão de usuários</a>
-            {% endif %}
-            <button id="logout-button" type="button" class="secondary-button">Sair</button>
+    <details id="options-disclosure" class="disclosure">
+      <summary>
+        <span class="disclosure__label">Opções de processamento</span>
+        <span id="options-summary" class="disclosure__value">Carregando capacidades…</span>
+      </summary>
+      <div class="disclosure__body">
+        <div class="processing-options" role="group" aria-label="Opções de processamento">
+          <label class="field">Modo <select id="processing-mode"><option value="extract_text">Carregando capacidades…</option></select></label>
+          <label class="field">Idioma <select id="ocr-language"></select></label>
+          <label class="field">Formato <select id="output-format"></select></label>
+          <label class="field">Compactação <select id="compression-profile"></select></label>
+          <label class="field">OCR alternativo <select id="fallback-policy"></select></label>
+        </div>
+        <p id="capability-note" class="hint"></p>
+        <button id="capabilities-retry" type="button" class="button button-small" hidden>Consultar capacidades novamente</button>
+        <details class="disclosure disclosure-nested">
+          <summary><span class="disclosure__label">Motores e avisos do servidor</span></summary>
+          <div class="disclosure__body">
+            <ul id="engine-list" class="plain-list"></ul>
+            <ul id="capability-warnings" class="plain-list hint"></ul>
           </div>
         </details>
       </div>
-    </nav>
-    <script>
-      const navMenus = Array.from(document.querySelectorAll(".nav-menu"));
-      window.closeNavMenus = () => {
-        navMenus.forEach((menu) => {
-          menu.open = false;
-        });
-      };
-      navMenus.forEach((menu) => {
-        menu.addEventListener("toggle", () => {
-          if (!menu.open) return;
-          navMenus.forEach((otherMenu) => {
-            if (otherMenu !== menu) otherMenu.open = false;
-          });
-        });
-      });
-      document.addEventListener("click", (event) => {
-        if (event.target.closest(".nav-menu")) return;
-        window.closeNavMenus();
-      });
-      document.getElementById("logout-button").addEventListener("click", async () => {
-        await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
-        window.location.href = "/login";
-      });
-    </script>
-    <main class="shell app-shell">
-      <section class="workspace">
-        <section class="hero-metrics hero-metrics-row">
-          <article class="metric-card">
-            <span class="metric-label">Arquivos no painel</span>
-            <strong id="metric-total">0</strong>
-          </article>
-          <article class="metric-card">
-            <span class="metric-label">Prontos para fila</span>
-            <strong id="metric-ready">0</strong>
-          </article>
-          <article class="metric-card">
-            <span class="metric-label">Concluídos</span>
-            <strong id="metric-completed">0</strong>
-          </article>
-          <article class="metric-card">
-            <span class="metric-label">Volume local selecionado</span>
-            <strong id="metric-volume">0 KB</strong>
-          </article>
-        </section>
+    </details>
 
-        <section class="workspace-main">
-          <section class="content-column">
-            <section class="panel panel-soft status-panel main-panel">
-              <div class="status-header">
-                <div>
-                  <p class="section-kicker">Operação</p>
-                  <h2>Painel de cards e resultados</h2>
-                </div>
-                <p class="section-copy">
-                  Acompanhe seleção, fila, processamento e downloads.
-                </p>
-              </div>
-              <div id="selection-state" class="selection-state hidden"></div>
-              <div class="toolbar">
-                <div class="filter-group" id="filter-group">
-                  <button type="button" class="filter-chip active" data-filter="all">Todos</button>
-                  <button type="button" class="filter-chip" data-filter="ready">Prontos</button>
-                  <button type="button" class="filter-chip" data-filter="queued">Em fila</button>
-                  <button type="button" class="filter-chip" data-filter="processing">Processando</button>
-                  <button type="button" class="filter-chip" data-filter="completed">Concluídos</button>
-                  <button type="button" class="filter-chip" data-filter="failed">Falharam</button><button type="button" class="filter-chip" data-filter="cancel_requested">Cancelando</button><button type="button" class="filter-chip" data-filter="canceled">Cancelados</button>
-                </div>
-                <div class="toolbar-controls">
-                  <label class="search-box">
-                    <span>Busca rápida</span>
-                    <input id="search-input" type="search" placeholder="Nome do arquivo ou caminho relativo" />
-                  </label>
-                  <label class="sort-box">
-                    <span>Ordenação</span>
-                    <select id="sort-select">
-                      <option value="status">Estado primeiro</option>
-                      <option value="name">Nome A-Z</option>
-                      <option value="size_desc">Maior tamanho</option>
-                      <option value="size_asc">Menor tamanho</option>
-                      <option value="recent">Mais recentes</option>
-                    </select>
-                  </label>
-                </div>
-              </div>
-              <section class="processing-options" aria-label="Opções de processamento">
-                <label>Modo <select id="processing-mode"><option value="extract_text">Carregando capacidades…</option></select></label>
-                <label>Idioma <select id="ocr-language"></select></label>
-                <label>Formato <select id="output-format"></select></label>
-                <label>Compactação <select id="compression-profile"></select></label>
-                <label>Fallback <select id="fallback-policy"></select></label>
-                <p id="capability-note" role="status"></p>
-              </section>
-              <section class="progress-panel">
-                <div class="progress-copy">
-                  <strong id="progress-label">Nenhum lote ativo.</strong>
-                  <span id="progress-detail">Carregue arquivos para iniciar a sessão de processamento.</span>
-                </div>
-                <div class="progress-track" aria-hidden="true">
-                  <span id="progress-fill" class="progress-fill"></span>
-                </div>
-              </section>
-              <div class="mass-actions"><button id="refresh-workspace-button" type="button" class="secondary-button">Restaurar histórico</button>
-                <button id="select-visible-button" type="button" class="secondary-button">Selecionar visíveis</button>
-                <button id="clear-selection-button" type="button" class="secondary-button">Limpar seleção</button>
-                <button id="clear-queue-button" type="button" class="secondary-button">Cancelar selecionados</button>
-                <button id="remove-completed-button" type="button" class="secondary-button">Ocultar encerrados</button>
-                <button id="reset-workspace-button" type="button" class="secondary-button">Limpar visualização</button>
-              </div>
-              <div id="results-summary" class="results-summary">Mostrando 0 de 0 arquivos.</div>
-              <div id="job-state" class="job-state hidden"></div>
-              <div id="cards-grid" class="cards-grid hidden"></div>
-              <div id="empty-state" class="empty-state">
-                <strong>Nenhum lote carregado ainda.</strong>
-                <p>Selecione um diretório ou vários arquivos para iniciar a fila de conversão.</p>
-              </div>
-            </section>
-          </section>
-        </section>
-      </section>
-      <aside id="detail-drawer" class="detail-drawer hidden">
-        <div class="detail-drawer__header">
-          <div>
-            <p class="section-kicker">Detalhes</p>
-            <h2 id="detail-title">Nenhum arquivo selecionado</h2>
+    <div id="staging" class="staging" hidden>
+      <div class="staging__head">
+        <h3 id="staging-title" class="staging__title">Arquivos a enviar</h3>
+        <button id="clear-staging-button" type="button" class="button button-quiet button-small">Remover todos</button>
+      </div>
+      <ul id="staging-list" class="staging__list" aria-labelledby="staging-title"></ul>
+    </div>
+    <div class="intake__submit">
+      <button id="queue-button" type="button" class="button button-primary" disabled>Enviar PDFs</button>
+      <button id="discard-pending-button" type="button" class="button button-quiet" hidden>Descartar envio pendente</button>
+      <p id="queue-hint" class="hint"></p>
+    </div>
+  </section>
+
+  <section class="panel history" aria-labelledby="history-title">
+    <div class="history__head">
+      <h2 id="history-title" class="panel__title" tabindex="-1">Histórico</h2>
+      <details id="view-menu" class="menu menu-end">
+        <summary class="button button-small">Visualização</summary>
+        <div class="menu__panel">
+          <p class="menu__note">Afeta apenas esta aba. Não cancela nem exclui nada no servidor.</p>
+          <button id="remove-completed-button" type="button" class="menu__item">Ocultar encerrados</button>
+          <button id="show-hidden-button" type="button" class="menu__item">Mostrar ocultos</button>
+          <button id="reset-workspace-button" type="button" class="menu__item">Limpar visualização</button>
+        </div>
+      </details>
+    </div>
+
+    <div class="toolbar">
+      <div class="filter-group" id="filter-group" role="group" aria-label="Filtrar por estado">
+        <button type="button" class="chip" data-filter="all" aria-pressed="true">Todos</button>
+        <button type="button" class="chip" data-filter="active" aria-pressed="false">Em andamento</button>
+        <button type="button" class="chip" data-filter="completed" aria-pressed="false">Concluídos</button>
+        <button type="button" class="chip" data-filter="failed" aria-pressed="false">Com falha</button>
+        <button type="button" class="chip" data-filter="canceled" aria-pressed="false">Cancelados</button>
+      </div>
+      <div class="toolbar__row">
+        <label class="field search-field">
+          <span class="visually-hidden">Buscar por nome ou caminho</span>
+          <input id="search-input" type="search" placeholder="Buscar por nome ou caminho" autocomplete="off" />
+        </label>
+        <details id="more-filters" class="disclosure disclosure-inline">
+          <summary><span id="more-filters-label" class="disclosure__label">Mais filtros</span></summary>
+          <div class="disclosure__body filters-grid">
+            <label class="field">Ordenar por
+              <select id="sort-select">
+                <option value="recent">Mais recentes</option>
+                <option value="oldest">Mais antigos</option>
+                <option value="name">Nome (A–Z)</option>
+                <option value="status">Estado (falhas primeiro)</option>
+                <option value="size_desc">Maior tamanho conhecido</option>
+                <option value="size_asc">Menor tamanho conhecido</option>
+              </select>
+              <span class="hint">Tamanhos são conhecidos para envios desta aba; desconhecidos ficam ao final.</span>
+            </label>
+            <label class="field">Criado a partir de <input id="created-from" type="date" /></label>
+            <label class="field">Criado até <input id="created-to" type="date" /></label>
+            <label class="field">Qualidade
+              <select id="quality-filter">
+                <option value="">Qualquer</option>
+                <option value="HIGH">Alta</option>
+                <option value="LOW">Baixa</option>
+              </select>
+            </label>
+            <label class="field">Lote
+              <select id="batch-filter"><option value="">Todos os lotes</option></select>
+            </label>
+            <p id="batch-summary" class="hint filters-grid__wide"></p>
+            <button id="clear-filters-button" type="button" class="button button-small">Limpar filtros</button>
           </div>
-          <button id="detail-close-button" type="button" class="secondary-button">Fechar</button>
-        </div>
-        <div id="detail-body" class="detail-body">
-          <p>Selecione um card para inspecionar estado, caminho, tamanho e identificador do job.</p>
-        </div>
-      </aside>
-      <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
-    </main>
-    <script src="/static/workspace.js?v={{ static_asset_version }}" defer></script>
-  </body>
-</html>
+        </details>
+      </div>
+    </div>
+
+    <div class="list-head">
+      <p id="results-summary" class="results-summary">Mostrando 0 de 0 documentos.</p>
+      <button id="select-visible-button" type="button" class="button button-quiet button-small">Selecionar visíveis</button>
+    </div>
+
+    <div id="selection-bar" class="selection-bar" hidden>
+      <p id="selection-count" class="selection-bar__count"></p>
+      <div class="selection-bar__actions">
+        <button id="download-all-button" type="button" class="button button-small">Baixar ZIP</button>
+        <button id="clear-queue-button" type="button" class="button button-small">Cancelar selecionados</button>
+        <button id="discard-export-button" type="button" class="button button-quiet button-small" hidden>Descartar ZIP pendente</button>
+        <button id="clear-selection-button" type="button" class="button button-quiet button-small">Limpar seleção</button>
+      </div>
+      <p id="selection-hint" class="hint selection-bar__hint"></p>
+    </div>
+
+    <div id="cards-grid" class="job-list" aria-labelledby="history-title"></div>
+    <div id="filter-empty" class="empty-state" hidden>
+      <p id="filter-empty-text">Nenhum documento corresponde aos filtros.</p>
+    </div>
+    <div id="empty-state" class="empty-state">
+      <p class="empty-state__title">Nenhum documento no histórico.</p>
+      <p>Envie PDFs para começar. O histórico fica salvo no servidor e reaparece quando você voltar.</p>
+    </div>
+    <button id="show-more-button" type="button" class="button show-more" hidden>Mostrar mais</button>
+  </section>
+</div>
+
+<aside id="detail-drawer" class="detail-drawer" aria-labelledby="detail-title" hidden>
+  <div class="detail-drawer__header">
+    <div class="detail-drawer__heading">
+      <p class="eyebrow">Detalhes do documento</p>
+      <h2 id="detail-title" tabindex="-1">Nenhum documento selecionado</h2>
+    </div>
+    <button id="detail-close-button" type="button" class="button button-small">Fechar</button>
+  </div>
+  <div id="detail-body" class="detail-body">
+    <div id="detail-status" class="detail-status"></div>
+    <p id="detail-notice" class="form-alert" role="alert" hidden></p>
+    <div id="detail-actions" class="detail-actions"></div>
+    <dl id="detail-list" class="detail-list"></dl>
+    <section id="detail-results" class="detail-section" aria-labelledby="results-title">
+      <h3 id="results-title" class="detail-section__title">Resultado</h3>
+      <p id="results-unavailable" class="hint" hidden></p>
+      <div id="results-switch" class="segmented" role="group" aria-label="Visualizar resultado">
+        <button id="text-button" type="button" class="segmented__item" data-action="text" aria-pressed="false">Texto por página</button>
+        <button id="report-button" type="button" class="segmented__item" data-action="report" aria-pressed="false">Relatório</button>
+      </div>
+      <div id="result-content" class="result-content" aria-live="polite"></div>
+    </section>
+    <section id="detail-danger" class="detail-section danger-zone" aria-labelledby="danger-title" hidden>
+      <h3 id="danger-title" class="detail-section__title">Excluir arquivos</h3>
+      <p class="hint">Remove o PDF original e o resultado. Depois disso não é possível baixar, consultar texto ou relatório nem reprocessar. O registro do job permanece.</p>
+      <div id="detail-danger-actions"></div>
+    </section>
+  </div>
+</aside>
+{% endblock %}
+{% block scripts %}
+<script src="/static/workspace.js?v={{ static_asset_version }}" defer></script>
+{% endblock %}

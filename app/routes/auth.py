@@ -307,6 +307,20 @@ async def users_page(request: Request, user: dict = Depends(require_admin)):
     )
 
 
+@auth_router.get("/admin/integrations")
+async def integrations_page(request: Request, user: dict = Depends(require_admin)):
+    """Render service identity administration; data uses the existing /api/v1/service-principals contract."""
+    return templates.TemplateResponse(
+        request=request,
+        name="integrations.html",
+        context={
+            "app_name": settings.app_name,
+            "static_asset_version": settings.static_asset_version,
+            "user": user,
+        },
+    )
+
+
 @auth_router.get("/api/users")
 async def list_users(user: dict = Depends(require_admin)):
     """Return JSON list of all users (admin JWT only)."""

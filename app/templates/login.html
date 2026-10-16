@@ -1,103 +1,26 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Login - {{ app_name }}</title>
-    <link rel="stylesheet" href="/static/style.css?v={{ static_asset_version }}" />
-  </head>
-  <body>
-    <main class="login-shell">
-      <div class="login-card">
-        <div class="login-header">
-          <p class="eyebrow">{{ app_name }}</p>
-          <h1>Entrar</h1>
-        </div>
-
-        <div id="login-error" class="login-error"></div>
-
-        <form id="login-form" class="login-form" autocomplete="on">
-          <div class="form-group">
-            <label for="email">E-mail</label>
-            <input
-              type="email"
-              id="email"
-              name="email"
-              required
-              autocomplete="email"
-              placeholder="seu@email.com"
-            />
-          </div>
-          <div class="form-group">
-            <label for="password">Senha</label>
-            <input
-              type="password"
-              id="password"
-              name="password"
-              required
-              autocomplete="current-password"
-              placeholder="Sua senha"
-            />
-          </div>
-          <button type="submit" id="login-btn" class="login-btn">Entrar</button>
-        </form>
-      </div>
-    </main>
-
-    <script>
-      (function () {
-        var form = document.getElementById("login-form");
-        var errorDiv = document.getElementById("login-error");
-        var btn = document.getElementById("login-btn");
-
-        function showError(msg) {
-          errorDiv.textContent = msg;
-          errorDiv.classList.add("visible");
-        }
-
-        function hideError() {
-          errorDiv.classList.remove("visible");
-        }
-
-        form.addEventListener("submit", function (e) {
-          e.preventDefault();
-          hideError();
-
-          var email = document.getElementById("email").value.trim();
-          var password = document.getElementById("password").value;
-
-          if (!email || !password) {
-            showError("Preencha todos os campos.");
-            return;
-          }
-
-          btn.disabled = true;
-          btn.textContent = "Entrando...";
-
-          fetch("/auth/login", {
-            method: "POST",
-            credentials: "same-origin",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: email, password: password }),
-          })
-            .then(function (res) {
-              if (!res.ok) {
-                return res.json().then(function (data) {
-                  throw new Error(data.detail || "Credenciais inválidas.");
-                });
-              }
-              return res.json();
-            })
-            .then(function () {
-              window.location.href = "/";
-            })
-            .catch(function (err) {
-              showError(err.message);
-              btn.disabled = false;
-              btn.textContent = "Entrar";
-            });
-        });
-      })();
-    </script>
-  </body>
-</html>
+{% extends "base.html" %}
+{% block title %}Entrar · {{ app_name }}{% endblock %}
+{% block body_class %}app app-login{% endblock %}
+{% block header %}{% endblock %}
+{% block main_class %}page-login{% endblock %}
+{% block content %}
+<section class="login-card" aria-labelledby="login-title">
+  <p class="brand brand-static">{{ app_name }}</p>
+  <h1 id="login-title">Entrar</h1>
+  <p class="hint">Use o e-mail e a senha cadastrados pelo administrador.</p>
+  <p id="login-error" class="form-alert" role="alert" hidden></p>
+  <form id="login-form" class="stack-form" autocomplete="on" novalidate>
+    <label class="field" for="email">E-mail
+      <input type="email" id="email" name="email" required autocomplete="username" inputmode="email" />
+    </label>
+    <label class="field" for="password">Senha
+      <input type="password" id="password" name="password" required autocomplete="current-password" />
+    </label>
+    <button type="submit" id="login-btn" class="button button-primary button-block">Entrar</button>
+  </form>
+</section>
+{% endblock %}
+{% block dialogs %}{% endblock %}
+{% block scripts %}
+<script src="/static/login.js?v={{ static_asset_version }}" defer></script>
+{% endblock %}
