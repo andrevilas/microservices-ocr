@@ -5,6 +5,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -26,13 +27,17 @@ TYPE = {"name": "Tipo", "specific_fields": []}
 
 # -- pure DTO module
 def test_catalog_models_imports_without_storage_or_runtime():
-    code = ("import sys, app.catalog_models\n"
+    root = str(Path(__file__).resolve().parents[1])
+    # -I ignores PYTHONPATH and cwd, so the candidate root is inserted explicitly before the import.
+    code = ("import sys\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import app.catalog_models\n"
             "bad = [m for m in ('app.application', 'app.services.storage_service', 'app.services.job_queue',\n"
             "                   'app.services.catalog_runtime', 'app.services.context_service', 'app.main')\n"
             "       if m in sys.modules]\n"
             "assert not bad, bad")
-    result = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True,
-                            cwd=str(__import__("pathlib").Path(__file__).resolve().parents[1]))
+    result = subprocess.run([sys.executable, "-I", "-c", code, root], capture_output=True, text=True,
+                            cwd=root, timeout=30)
     assert result.returncode == 0, result.stderr
 
 
@@ -120,11 +125,12 @@ def test_provider_same_store_same_pair_even_concurrently(tmp_path):
     barrier = threading.Barrier(8)
 
     def run():
-        barrier.wait()
+        barrier.wait(timeout=10)
         results.append(provider())
-    threads = [threading.Thread(target=run) for _ in range(8)]
+    threads = [threading.Thread(target=run, daemon=True) for _ in range(8)]
     [t.start() for t in threads]
-    [t.join() for t in threads]
+    [t.join(timeout=10) for t in threads]
+    assert not any(t.is_alive() for t in threads), "provider threads did not finish"
     assert len(results) == 8 and all(r is results[0] for r in results)
     assert isinstance(results[0], CatalogServices)
     assert results[0].contexts.jobs is holder["store"] and results[0].types.jobs is holder["store"]
