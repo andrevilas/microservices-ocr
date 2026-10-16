@@ -132,14 +132,14 @@ def test_scope_checks_precede_validation(services, scopes):
 
 def test_service_can_clone_but_cannot_publish(services):
     s = services
-    principal = Principal(subject="service:synthetic", kind="service",
+    principal = Principal(subject="service:synthetic", kind="service", user_id=None,
                           scopes=frozenset({"contexts:read", "contexts:write"}))
     template = s.templates.list(principal).items[0]
     receipt, replay = s.templates.clone(principal, template.template_id, clone_input(template), "shared-key")
     assert replay is False
     before = snapshot(s.store)
     assert_error(403, lambda: s.types.publish(principal, receipt.types[0].type_id,
-                 expected_revision=1, expected_context_revision=1, key="publish"))
+                 expected_revision=1, expected_context_revision=1, key="publish-key"))
     assert snapshot(s.store) == before
 
 
@@ -209,7 +209,7 @@ def test_historical_replay_survives_edits_lifecycle_and_reopen(services, tmp_pat
     s.contexts.update(s.owner, receipt.context_id, context_body, expected_revision=1)
     type_id = receipt.types[0].type_id
     s.types.update(s.owner, type_id, type_body, expected_revision=1)
-    s.types.publish(s.owner, type_id, expected_revision=2, expected_context_revision=2, key="publish")
+    s.types.publish(s.owner, type_id, expected_revision=2, expected_context_revision=2, key="publish-key")
     s.types.deprecate(s.owner, type_id, 1, expected_lifecycle_revision=1, key="deprecate")
     close_store(s.store)
     s.__dict__.update(open_services(tmp_path).__dict__)
