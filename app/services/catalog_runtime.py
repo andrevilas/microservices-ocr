@@ -1,4 +1,4 @@
-"""Lazy, cached pair of catalog services bound to the store of the current job application.
+"""Lazy, cached catalog services bound to the store of the current job application.
 
 No I/O at import or construction. The provider never closes a store and never creates one: it only follows
 whatever store the injected job-application provider returns."""
@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from fastapi import Request
 
 from app.services.context_service import ContextService
+from app.services.context_template_service import ContextTemplateService
 from app.services.type_service import TypeService
 
 
@@ -15,6 +16,7 @@ from app.services.type_service import TypeService
 class CatalogServices:
     contexts: ContextService
     types: TypeService
+    templates: ContextTemplateService
 
 
 class CatalogProvider:
@@ -30,7 +32,8 @@ class CatalogProvider:
             if self._services is None or self._store is not store:
                 contexts = ContextService(store)  # creates document_contexts before types depend on it
                 types = TypeService(store)
-                self._services = CatalogServices(contexts, types)  # published only after both succeeded
+                templates = ContextTemplateService(store)
+                self._services = CatalogServices(contexts, types, templates)  # published only after all succeeded
                 self._store = store
             return self._services
 

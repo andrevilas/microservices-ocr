@@ -24,6 +24,7 @@ from app.main import create_app
 from app.mcp_server import build_mcp_server
 from app.services.catalog_runtime import CatalogServices
 from app.services.context_service import ContextService
+from app.services.context_template_service import ContextTemplateService
 from app.services.storage_service import JobStore
 from app.services.type_service import TypeService
 from test_catalog_http import legacy_token
@@ -420,7 +421,7 @@ def test_build_mcp_server_catalog_provider_is_keyword_only_and_lazy(tmp_path):
 
     def provider():
         calls.append("called")
-        return CatalogServices(ContextService(store), TypeService(store))
+        return CatalogServices(ContextService(store), TypeService(store), ContextTemplateService(store))
 
     with pytest.raises(TypeError):
         build_mcp_server(None, None, None, None, None, None, provider)
