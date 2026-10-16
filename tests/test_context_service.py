@@ -1,13 +1,17 @@
 """Context CRUD service: synthetic data only, real JobStore on tmp_path, no network."""
+import logging
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
 import pytest
 
 from app.application import ApplicationError, Principal
-from app.document_models import ContextCreate
+from app.catalog_models import TypeInput
+from app.document_models import ContextCreate, TypeDraft
 from app.services.context_service import ContextService
 from app.services.storage_service import JobStore
+from app.services.type_service import TypeService
 
 BOTH = frozenset({"contexts:read", "contexts:write"})
 
@@ -193,3 +197,137 @@ def test_sql_failure_rolls_back(store, svc):
     trigger("DROP TRIGGER fail_insert")
     receipt, replayed = svc.create(p, body("secret-name"), "key-00000002")  # key was not consumed
     assert not replayed and rows(store) == 2 and receipt.revision == 1
+
+
+MARKER = "corrupt-secret-marker"
+
+
+def corrupt(store, column, value):
+    with store._lock, store._get_conn() as conn:
+        conn.execute(f"UPDATE document_contexts SET {column}=?", (value,))
+
+
+def snapshot_row(store):
+    with store._lock:
+        return store._get_conn().execute("SELECT payload, revision, created_at, updated_at FROM document_contexts").fetchall()
+
+
+def assert_sanitized(error, caplog):
+    assert (error.status, error.code) == (503, "storage_unavailable")
+    assert error.message == "Context storage is unavailable."
+    assert MARKER not in repr(error.args) + str(error) + str(error.__cause__) + caplog.text
+    assert error.__cause__ is None and error.__suppress_context__
+
+
+BAD_VALUES = [("payload", MARKER), ("payload", '{"name": 5, "x": "' + MARKER + '"}'),
+              ("created_at", MARKER), ("updated_at", MARKER), ("created_at", ""), ("updated_at", "2026-13-99T00:00:00"),
+              ("revision", MARKER)]
+
+
+@pytest.mark.parametrize("column,value", BAD_VALUES)
+def test_corrupt_persisted_rows_are_sanitized_503(store, svc, caplog, column, value):
+    p, other = who(), who("user:2")
+    cid = svc.create(p, body("Original"), "key-00000001")[0].context_id
+    corrupt(store, column, value)
+    caplog.set_level(logging.DEBUG)
+    with pytest.raises(ApplicationError) as error:
+        svc.get(p, cid)
+    assert_sanitized(error.value, caplog)
+    with pytest.raises(ApplicationError) as error:
+        svc.list(p)
+    assert_sanitized(error.value, caplog)
+    # A foreign owner neither sees the row nor learns that it is corrupt.
+    assert code(svc.get, other, cid) == (404, "context_not_found") and svc.list(other).items == []
+    assert code(svc.update, other, cid, body("X"), expected_revision=1) == (404, "context_not_found")
+
+
+@pytest.mark.parametrize("value", [MARKER, "", "2026-13-99T00:00:00"])
+def test_create_replay_with_corrupt_created_at_is_503(store, svc, caplog, value):
+    p = who()
+    svc.create(p, body("One"), "key-00000001")
+    corrupt(store, "created_at", value)
+    before = snapshot_row(store)
+    with pytest.raises(ApplicationError) as error:
+        svc.create(p, body("One"), "key-00000001")
+    assert_sanitized(error.value, caplog)
+    assert snapshot_row(store) == before and rows(store) == 1
+    assert code(svc.create, p, body("Different"), "key-00000001") == (409, "idempotency_conflict")  # conflict still wins
+
+
+@pytest.mark.parametrize("value", [MARKER, "", "2026-13-99T00:00:00"])
+def test_update_with_corrupt_created_at_changes_nothing(store, svc, caplog, value):
+    p = who()
+    cid = svc.create(p, body("Original"), "key-00000001")[0].context_id
+    corrupt(store, "created_at", value)
+    before = snapshot_row(store)
+    with pytest.raises(ApplicationError) as error:
+        svc.update(p, cid, body(MARKER), expected_revision=1)
+    assert_sanitized(error.value, caplog)
+    assert snapshot_row(store) == before  # payload, revision and updated_at untouched
+    assert code(svc.update, p, cid, body("X"), expected_revision=7) == (503, "storage_unavailable")  # validated before conflict checks
+
+
+def test_update_with_corrupt_revision_changes_nothing(store, svc):
+    p = who()
+    cid = svc.create(p, body("Original"), "key-00000001")[0].context_id
+    corrupt(store, "revision", MARKER)
+    before = snapshot_row(store)
+    assert code(svc.update, p, cid, body("X"), expected_revision=1) == (503, "storage_unavailable")
+    assert snapshot_row(store) == before
+
+
+class FailingCommit:
+    """Connection proxy whose commit fails once, before anything is persisted."""
+    def __init__(self, conn):
+        self._conn, self.armed = conn, True
+
+    def commit(self):
+        if self.armed:
+            self.armed = False
+            raise sqlite3.OperationalError("synthetic commit failure " + MARKER)
+        self._conn.commit()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+def test_commit_failure_rolls_back_and_same_key_can_retry(store, svc, monkeypatch, caplog):
+    p = who()
+    real = store._get_conn()
+    proxy = FailingCommit(real)
+    monkeypatch.setattr(store, "_get_conn", lambda: proxy)
+    with pytest.raises(ApplicationError) as error:
+        svc.create(p, body("Retry"), "key-00000001")
+    assert_sanitized(error.value, caplog)
+    assert rows(store) == 0  # no phantom record
+    receipt, replayed = svc.create(p, body("Retry"), "key-00000001")  # same key, same body
+    assert not replayed and rows(store) == 1 and svc.get(p, receipt.context_id).body.name == "Retry"
+
+    proxy.armed = True
+    with pytest.raises(ApplicationError) as error:
+        svc.update(p, receipt.context_id, body("Changed"), expected_revision=1)
+    assert_sanitized(error.value, caplog)
+    record = svc.get(p, receipt.context_id)
+    assert (record.revision, record.body.name) == (1, "Retry")
+    assert svc.update(p, receipt.context_id, body("Changed"), expected_revision=1).revision == 2
+
+
+def test_same_idempotency_key_is_namespaced_per_operation(store):
+    contexts, types = ContextService(store), TypeService(store)
+    p = Principal(subject="user:1", user_id=1, scopes=frozenset({"contexts:read", "contexts:write", "contexts:publish"}))
+    key = "shared-key-0001"
+    draft = TypeDraft.model_validate(TypeInput.model_config["json_schema_extra"]["examples"][0])
+    ctx, ctx_replayed = contexts.create(p, body("Shared", "campo"), key)
+    typ, type_replayed = types.create(p, ctx.context_id, draft, key)
+    assert not ctx_replayed and not type_replayed and typ.type_id != ctx.context_id
+    version, version_replayed = types.publish(p, typ.type_id, expected_revision=1, expected_context_revision=1, key=key)
+    assert not version_replayed and version.version == 1
+
+    # Edit both sources afterwards: every operation still replays its own original receipt.
+    contexts.update(p, ctx.context_id, body("Shared edited", "campo"), expected_revision=1)
+    types.update(p, typ.type_id, draft.model_copy(update={"name": "Edited type"}), expected_revision=1)
+    assert contexts.create(p, body("Shared", "campo"), key) == (ctx, True)
+    assert types.create(p, ctx.context_id, draft, key) == (typ, True)
+    assert types.publish(p, typ.type_id, expected_revision=1, expected_context_revision=1, key=key) == (version, True)
+    assert code(contexts.create, p, body("Other"), key) == (409, "idempotency_conflict")
+    assert rows(store) == 1

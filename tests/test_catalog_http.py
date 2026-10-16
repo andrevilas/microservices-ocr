@@ -196,22 +196,23 @@ def test_owner_isolation_and_scopes(api):
            json={"expected_revision": 1, "expected_context_revision": 1})
     update = {"body": CTX, "expected_revision": 1}
     publish = {"expected_revision": 1, "expected_context_revision": 1}
+    ctx_nf, typ_nf, ver_nf = "context_not_found", "type_not_found", "type_version_not_found"
     foreign_requests = [
-        ("get", "/contexts/{context_id}", f"/contexts/{cid}", None, None),
-        ("put", "/contexts/{context_id}", f"/contexts/{cid}", None, update),
-        ("get", "/contexts/{context_id}/types", f"/contexts/{cid}/types", None, None),
-        ("post", "/contexts/{context_id}/types", f"/contexts/{cid}/types", "foreign-type-01", TYP),
-        ("get", "/document-types/{type_id}", f"/document-types/{tid}", None, None),
-        ("put", "/document-types/{type_id}", f"/document-types/{tid}", None, {**update, "body": TYP}),
-        ("post", "/document-types/{type_id}/versions", f"/document-types/{tid}/versions", "foreign-publish1", publish),
-        ("get", "/document-types/{type_id}/versions", f"/document-types/{tid}/versions", None, None),
-        ("get", "/document-types/{type_id}/versions/{version}", f"/document-types/{tid}/versions/1", None, None),
+        ("get", "/contexts/{context_id}", f"/contexts/{cid}", None, None, ctx_nf),
+        ("put", "/contexts/{context_id}", f"/contexts/{cid}", None, update, ctx_nf),
+        ("get", "/contexts/{context_id}/types", f"/contexts/{cid}/types", None, None, ctx_nf),
+        ("post", "/contexts/{context_id}/types", f"/contexts/{cid}/types", "foreign-type-01", TYP, ctx_nf),
+        ("get", "/document-types/{type_id}", f"/document-types/{tid}", None, None, typ_nf),
+        ("put", "/document-types/{type_id}", f"/document-types/{tid}", None, {**update, "body": TYP}, typ_nf),
+        ("post", "/document-types/{type_id}/versions", f"/document-types/{tid}/versions", "foreign-publish1", publish, typ_nf),
+        ("get", "/document-types/{type_id}/versions", f"/document-types/{tid}/versions", None, None, typ_nf),
+        ("get", "/document-types/{type_id}/versions/{version}", f"/document-types/{tid}/versions/1", None, None, ver_nf),
     ]
     for who in (Principal("user:2", 2, FULL), Principal("user:3", 3, FULL, is_admin=True)):  # admin is not special
         h.who = who
-        for method, template, path, key, body in foreign_requests:
+        for method, template, path, key, body, expected_code in foreign_requests:
             _, error = h.call(method, template, path, 404, key=key, **({"json": body} if body is not None else {}))
-            assert error["error"]["code"] in ("context_not_found", "type_not_found")
+            assert error["error"]["code"] == expected_code
         assert h.call("get", "/contexts", "/contexts", 200)[1]["items"] == []
     h.who = OWNER
     assert len(h.call("get", "/contexts/{context_id}/types", f"/contexts/{cid}/types", 200)[1]["items"]) == 1

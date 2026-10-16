@@ -78,9 +78,31 @@ class ContextService:
                 raise
 
     @staticmethod
+    def _persisted(parse):
+        """Run a pure parser over stored data; bad persisted data is a storage fault, never echoed."""
+        try:
+            return parse()
+        except (ValueError, TypeError):  # pydantic.ValidationError is a ValueError
+            raise _unavailable() from None
+
+    @staticmethod
     def _record(row) -> ContextRecord:
-        return ContextRecord(context_id=row[0], revision=row[1], created_at=datetime.fromisoformat(row[2]),
-                             updated_at=datetime.fromisoformat(row[3]), body=ContextCreate.model_validate_json(row[4]))
+        """row = (context_id, revision, created_at, updated_at, payload)"""
+        return ContextService._persisted(lambda: ContextRecord(
+            context_id=row[0], revision=row[1], created_at=datetime.fromisoformat(row[2]),
+            updated_at=datetime.fromisoformat(row[3]), body=ContextCreate.model_validate_json(row[4])))
+
+    @staticmethod
+    def _summary(row) -> ContextSummary:
+        """row = (context_id, payload, revision, created_at, updated_at)"""
+        return ContextService._persisted(lambda: ContextSummary(
+            context_id=row[0], name=ContextCreate.model_validate_json(row[1]).name, revision=row[2],
+            created_at=datetime.fromisoformat(row[3]), updated_at=datetime.fromisoformat(row[4])))
+
+    @staticmethod
+    def _receipt(context_id, created_at) -> ContextReceipt:
+        return ContextService._persisted(lambda: ContextReceipt(
+            context_id=context_id, revision=1, created_at=datetime.fromisoformat(created_at)))
 
     def create(self, principal: Principal, body: ContextCreate, key: str) -> tuple[ContextReceipt, bool]:
         principal.require("contexts:read")
@@ -97,15 +119,14 @@ class ContextService:
             if row:
                 if row[2] != request_hash:
                     raise ApplicationError(409, "idempotency_conflict", "This key was used for a different context.")
-                return row[0], row[1], True
+                return self._receipt(row[0], row[1]), True
             if conn.execute("SELECT COUNT(*) FROM document_contexts WHERE owner=?", (owner,)).fetchone()[0] >= MAX_CONTEXTS_PER_OWNER:
                 raise ApplicationError(429, "context_quota_exceeded", "The context limit for this owner was reached.")
             conn.execute("INSERT INTO document_contexts VALUES (?,?,?,?,?,?,?,?)",
                          (context_id, owner, payload, 1, now, now, key_hash, request_hash))
-            return context_id, now, False
+            return self._receipt(context_id, now), False
 
-        found_id, created_at, replayed = self._write(work)
-        return ContextReceipt(context_id=found_id, revision=1, created_at=datetime.fromisoformat(created_at)), replayed
+        return self._write(work)
 
     def get(self, principal: Principal, context_id: str) -> ContextRecord:
         principal.require("contexts:read")
@@ -126,9 +147,7 @@ class ContextService:
             "SELECT context_id, payload, revision, created_at, updated_at FROM document_contexts "
             "WHERE owner=? AND context_id>? ORDER BY context_id ASC LIMIT ?",
             (principal.subject, after or "", limit + 1)).fetchall())
-        items = [ContextSummary(context_id=r[0], name=ContextCreate.model_validate_json(r[1]).name, revision=r[2],
-                                created_at=datetime.fromisoformat(r[3]), updated_at=datetime.fromisoformat(r[4]))
-                 for r in rows[:limit]]
+        items = [self._summary(r) for r in rows[:limit]]
         return ContextPage(items=items, next_cursor=items[-1].context_id if len(rows) > limit else None)
 
     def update(self, principal: Principal, context_id: str, body: ContextCreate, *, expected_revision: int) -> ContextRecord:
@@ -147,6 +166,10 @@ class ContextService:
                                (context_id, owner)).fetchone()
             if row is None:
                 raise _not_found()
+            if type(row[0]) is not int:
+                raise _unavailable()
+            # Everything the response needs is validated before any write, so a bad row is never half-updated.
+            created_at = self._persisted(lambda: datetime.fromisoformat(row[1]))
             if row[0] != expected_revision:
                 raise ApplicationError(409, "context_revision_conflict", "The context was changed; read it again.")
             if row[0] >= MAX_REVISION:
@@ -156,8 +179,8 @@ class ContextService:
                                    (payload, now, context_id, owner, expected_revision)).rowcount
             if changed != 1:
                 raise ApplicationError(409, "context_revision_conflict", "The context was changed; read it again.")
-            return row[1]
+            # Built before commit: a failure here rolls the UPDATE back.
+            return ContextRecord(context_id=context_id, revision=expected_revision + 1, created_at=created_at,
+                                 updated_at=datetime.fromisoformat(now), body=snapshot)
 
-        created_at = self._write(work)
-        return ContextRecord(context_id=context_id, revision=expected_revision + 1, created_at=datetime.fromisoformat(created_at),
-                             updated_at=datetime.fromisoformat(now), body=snapshot)
+        return self._write(work)
