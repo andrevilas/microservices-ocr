@@ -156,8 +156,9 @@ def test_expired_failed_job_removes_report_access(runtime, browser):
     page.locator("#report-button").click()
     expect(page.locator("#result-content")).to_contain_text("PDF/A-2b reprovado")
     state["retention"] = EXPIRED
-    page.locator("#refresh-workspace-button").click()  # the full sync runs every 60s with no active jobs
-    expect(page.locator("#results-switch")).to_be_hidden(timeout=15000)
+    # The open detail drawer covers the refresh button and must stay open, so wait for the real
+    # full sync (FULL_SYNC_MS=60000, no active jobs) instead of clicking; 75s leaves margin.
+    expect(page.locator("#results-switch")).to_be_hidden(timeout=75000)
     expect(page.locator("#result-content")).to_be_empty()
     expect(page.locator("#results-unavailable")).to_have_text("Os arquivos deste job não estão mais disponíveis.")
     expect(page.locator("#detail-danger")).to_be_hidden()
