@@ -58,6 +58,25 @@
       <p class="hint">Seu rascunho permanece no formulário. Consulte os dados antes de decidir qual versão usar.</p>
       <div id="context-current"></div>
     </section>
+    <section id="version-section" class="panel catalog-comparison" aria-labelledby="version-title" hidden>
+      <h3 id="version-title">Versões imutáveis</h3>
+      <p id="version-list-status" role="status" aria-live="polite"></p>
+      <ul id="version-list" class="entity-list"></ul>
+      <div class="catalog-actions">
+        <button id="version-refresh" type="button" disabled>Atualizar versões</button>
+        <button id="version-more" type="button" hidden disabled>Carregar mais versões</button>
+        <button id="version-close" type="button" disabled>Fechar versão</button>
+      </div>
+      <p id="version-detail-status" role="status" aria-live="polite"></p>
+      <section id="version-detail" aria-labelledby="version-detail-title" hidden>
+        <h3 id="version-detail-title">Versão selecionada</h3>
+        <p id="version-reference" class="mono"></p>
+        <p id="version-meta" class="hint"></p>
+        <p id="version-lifecycle" class="hint"></p>
+        <p id="version-count" class="hint"></p>
+        <div id="version-fields" class="catalog-fields"></div>
+      </section>
+    </section>
   </section>
 </div>
 <noscript><p class="callout">Ative o JavaScript para consultar e editar contextos.</p></noscript>
