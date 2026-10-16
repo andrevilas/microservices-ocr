@@ -215,14 +215,29 @@ def _check_sequence(fields) -> None:
         raise ValueError("Fields must be a sequence of FieldSpec.")
 
 
+def revalidate_field(field: FieldSpec) -> FieldSpec:
+    """Re-validate from a dump so model_construct bypasses and later mutation are caught.
+
+    Serializer warnings are promoted to errors and every failure is replaced by a fixed message,
+    so neither warnings nor exceptions can echo field content.
+    """
+    try:
+        return FieldSpec.model_validate(field.model_dump(mode="json", warnings="error"))
+    except Exception:
+        raise ValueError("Invalid field specification.") from None
+
+
 def _snapshot(fields: Sequence[FieldSpec]) -> list[dict]:
     _check_sequence(fields)
     out = []
     for f in fields:
         if not isinstance(f, FieldSpec):
             raise ValueError("Fields must be FieldSpec instances.")
-        # Re-validate from a dump so later mutation of the source or model_construct bypasses are caught.
-        dumped = FieldSpec.model_validate(f.model_dump(mode="json")).model_dump(mode="json", exclude_none=True)
+        checked = revalidate_field(f)
+        try:
+            dumped = checked.model_dump(mode="json", exclude_none=True, warnings="error")
+        except Exception:
+            raise ValueError("Invalid field specification.") from None
         dumped.setdefault("label", dumped["name"])
         out.append(dumped)
     return out

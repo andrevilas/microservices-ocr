@@ -388,6 +388,68 @@ def test_required_when_many_dependent_needs_non_empty_list():
     assert validate_values(fields, {"a": True, "b": ["v"]}, complete=True)["b"] == ["v"]
 
 
+COND_MANY = [
+    spec("string", "a"),
+    mspec(name="b", required_when={"field": "a", "equals": "x"}),
+]
+
+
+@pytest.mark.parametrize("blanks", [[" ", ""], ["ok", " "], [""], ["\t\n"], [" ", "ok"]])
+def test_complete_required_many_rejects_blank_items(blanks):
+    with pytest.raises(ValueError):
+        validate_values([mspec(required=True)], {"m": blanks}, complete=True)  # unconditional
+    with pytest.raises(ValueError):
+        validate_values(COND_MANY, {"a": "x", "b": blanks}, complete=True)  # conditional
+
+
+def test_complete_required_many_accepts_meaningful_items():
+    assert validate_values([mspec(required=True)], {"m": ["ok", "x y"]}, complete=True) == {"m": ["ok", "x y"]}
+    assert validate_values(COND_MANY, {"a": "x", "b": ["ok"]}, complete=True)["b"] == ["ok"]
+
+
+@pytest.mark.parametrize("type_,items", [("integer", [0, 1]), ("boolean", [False, True]), ("boolean", [False])])
+def test_complete_required_many_accepts_zero_and_false(type_, items):
+    m = mspec(type_, required=True)
+    assert validate_values([m], {"m": items}, complete=True) == {"m": items}
+
+
+def test_blank_many_items_remain_allowed_in_draft_and_when_optional_or_inactive():
+    required = mspec(required=True)
+    assert validate_values([required], {"m": [" ", ""]}) == {"m": [" ", ""]}
+    assert validate_values([mspec()], {"m": [" ", ""]}) == {"m": [" ", ""]}
+    assert validate_values([mspec()], {"m": [" "]}, complete=True) == {"m": [" "]}
+    assert validate_values(COND_MANY, {"a": "y", "b": [" "]}, complete=True)["b"] == [" "]
+
+
+def _warnings_for(call):
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(ValueError) as e:
+            call()
+    return caught, e.value
+
+
+def test_model_construct_serializer_warning_becomes_sanitized_error():
+    secret = "SYNTHETIC_PRIVATE"
+    bad = FieldSpec.model_construct(name="b", type="string", description="d",
+                                    required_when={"field": "b", "equals": secret})
+    caught, err = _warnings_for(lambda: validate_values([bad], {}))
+    assert not caught
+    assert str(err) == "Invalid field specification."
+    assert err.__cause__ is None and err.__suppress_context__
+    assert secret not in str(err)
+
+
+def test_surrogate_in_constructed_field_is_sanitized_error():
+    bad = FieldSpec.model_construct(name="a\ud800SEGREDO", type="string", description="d")
+    caught, err = _warnings_for(lambda: validate_values([bad], {}))
+    assert not caught
+    assert str(err) == "Invalid field specification."
+    assert "SEGREDO" not in str(err)
+
+
 def test_errors_do_not_echo_values():
     secret = "SEGREDO-123456"
     cases = [

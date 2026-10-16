@@ -5,7 +5,7 @@ import unicodedata
 from collections.abc import Sequence
 from datetime import date
 
-from app.document_models import MAX_FIELDS, MAX_PAYLOAD_BYTES, MAX_TEXT, FieldSpec
+from app.document_models import MAX_FIELDS, MAX_PAYLOAD_BYTES, MAX_TEXT, FieldSpec, revalidate_field
 
 MAX_INT = 2**53 - 1
 MAX_DECIMAL_CHARS = 128
@@ -79,11 +79,7 @@ def _date(field: FieldSpec, value) -> str:
 def _revalidated(field) -> FieldSpec:
     if not isinstance(field, FieldSpec):
         raise ValueError("Fields must be FieldSpec instances.")
-    try:
-        # Re-validate from a dump so model_construct bypasses and later mutation are caught.
-        return FieldSpec.model_validate(field.model_dump(mode="json"))
-    except Exception:
-        raise ValueError("Invalid field specification.") from None
+    return revalidate_field(field)
 
 
 def _normalize(field: FieldSpec, value):
@@ -149,15 +145,22 @@ def _conditions(specs: list[FieldSpec]) -> dict:
     return out
 
 
+def _blank(item) -> bool:
+    return item is None or (type(item) is str and not item.strip())  # 0 and False are meaningful
+
+
 def _missing(raw) -> bool:
-    return raw is None or (type(raw) is str and not raw.strip()) or (type(raw) is list and not raw)
+    if type(raw) is list:  # a required list needs at least one item and every item meaningful
+        return not raw or any(_blank(item) for item in raw)
+    return _blank(raw)
 
 
 def validate_values(fields: Sequence[FieldSpec], values: dict, *, complete: bool = False) -> dict:
     """Validate a mapping of values against a schema; return a new dict, never mutating the input.
 
     complete=True only checks that required fields (required, or required_when whose present target
-    equals the normalized literal, with exact type) are structurally present and non-blank.
+    equals the normalized literal, with exact type) are present and non-blank; a required many field
+    needs a non-empty list whose items are all meaningful. Drafts and optional lists may keep blanks.
     """
     if isinstance(fields, (str, bytes)) or not isinstance(fields, Sequence):
         raise ValueError("Fields must be a sequence of FieldSpec.")

@@ -337,3 +337,20 @@ def test_compose_rejects_non_fieldspec_and_unvalidated_mutation():
     bad = FieldSpec.model_construct(name="A!", type="string", description="d")
     with pytest.raises(ValueError):
         compose_schema([bad], [])
+
+
+def test_compose_constructed_serializer_warning_is_sanitized_error():
+    import warnings
+
+    secret = "SYNTHETIC_PRIVATE"
+    bad = FieldSpec.model_construct(name="b", type="string", description="d",
+                                    required_when={"field": "b", "equals": secret})
+    surrogate = FieldSpec.model_construct(name="a\ud800SEGREDO", type="string", description="d")
+    for field, leaked in ((bad, secret), (surrogate, "SEGREDO")):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(ValueError) as e:
+                compose_schema([field], [])
+        assert not caught
+        assert str(e.value) == "Invalid field specification."
+        assert leaked not in str(e.value) and e.value.__cause__ is None
