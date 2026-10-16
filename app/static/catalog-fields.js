@@ -54,7 +54,7 @@
       node.addEventListener(event, fn, {signal: controller.signal});
     }
     function editable(record) {
-      return !dead && !locked && (!record || records.includes(record));
+      return !dead && !locked && (!record || (!record.disposed && records.includes(record)));
     }
     function changed() {
       if (dead) return;
@@ -88,7 +88,20 @@
     function makeRecord(value) {
       const data = {...copy(DEFAULTS), ...copy(value)};
       const key = `${prefix}-field-${++sequence}`;
-      const record = {key, data, controls: {}, pending: false, request: 0};
+      const record = {key, data, controls: {}, pending: false, request: 0, disposed: false, rowEditors: []};
+      const cardController = new AbortController();
+      record.dispose = () => {
+        if (record.disposed) return;
+        record.disposed = true;
+        record.request++;
+        cardController.abort();
+        record.rowEditors.forEach(editor => editor.dispose());
+        record.rowEditors = [];
+      };
+      function listen(node, event, fn) {
+        node.addEventListener(event, fn, {signal: cardController.signal});
+      }
+      try {
       const title = el('h3', {id: `${key}-title`});
       const card = el('article', {className: 'catalog-fields__card', 'aria-labelledby': title.id});
       card.dataset.key = key;
@@ -363,30 +376,45 @@
         const button = el('button', {type: 'button', text: property === 'examples' ? 'Adicionar exemplo' : 'Adicionar opção'});
         section.append(rows, button);
         advanced.append(section);
+        let rowsController = null;
+        record.rowEditors.push({dispose() {
+          rowsController?.abort();
+          rowsController = null;
+        }});
         function render() {
+          const nextController = new AbortController();
+          const nextRows = [], nextControls = {};
+          try {
+            const values = Array.isArray(data[property]) ? data[property] : [];
+            values.forEach((value, index) => {
+              const id = `${key}-${property}-${index}`;
+              const control = el('textarea', {id, value: typeof value === 'string' ? value : String(value)});
+              const remove = el('button', {type: 'button', text: 'Remover', 'aria-label': `Remover ${property === 'examples' ? 'exemplo' : 'opção'} ${index + 1} do campo ${key}`});
+              const row = el('div', {className: 'catalog-fields__value'}, [el('label', {htmlFor: id, text: `${property === 'examples' ? 'Exemplo descritivo' : 'Opção'} ${index + 1}`}), control, remove]);
+              nextControls[`${property}.${index}`] = control;
+              control.addEventListener('input', () => {
+                if (!editable(record)) return;
+                data[property][index] = control.value;
+                changed();
+              }, {signal: nextController.signal});
+              remove.addEventListener('click', () => {
+                if (!editable(record)) return;
+                data[property].splice(index, 1);
+                render();
+                changed();
+                (rows.querySelector('textarea') || button).focus();
+              }, {signal: nextController.signal});
+              nextRows.push(row);
+            });
+          } catch (error) {
+            nextController.abort();
+            throw error;
+          }
+          rowsController?.abort();
+          rowsController = nextController;
           for (const name of Object.keys(record.controls)) if (name.startsWith(`${property}.`)) delete record.controls[name];
-          rows.replaceChildren();
-          const values = Array.isArray(data[property]) ? data[property] : [];
-          values.forEach((value, index) => {
-            const id = `${key}-${property}-${index}`;
-            const control = el('textarea', {id, value: typeof value === 'string' ? value : String(value)});
-            const remove = el('button', {type: 'button', text: 'Remover', 'aria-label': `Remover ${property === 'examples' ? 'exemplo' : 'opção'} ${index + 1} do campo ${key}`});
-            const row = el('div', {className: 'catalog-fields__value'}, [el('label', {htmlFor: id, text: `${property === 'examples' ? 'Exemplo descritivo' : 'Opção'} ${index + 1}`}), control, remove]);
-            record.controls[`${property}.${index}`] = control;
-            listen(control, 'input', () => {
-              if (!editable(record)) return;
-              data[property][index] = control.value;
-              changed();
-            });
-            listen(remove, 'click', () => {
-              if (!editable(record)) return;
-              data[property].splice(index, 1);
-              render();
-              changed();
-              (rows.querySelector('textarea') || button).focus();
-            });
-            rows.append(row);
-          });
+          Object.assign(record.controls, nextControls);
+          rows.replaceChildren(...nextRows);
         }
         listen(button, 'click', () => {
           if (!editable(record)) return;
@@ -462,7 +490,7 @@
         if (!editable(record)) return;
         const index = records.indexOf(record);
         records.splice(index, 1);
-        record.request++;
+        record.dispose();
         card.remove();
         changed();
         (records[Math.min(index, records.length - 1)]?.controls.name || add).focus();
@@ -470,6 +498,10 @@
       details.append(advanced);
       card.append(title, grid, details, error, actions);
       return record;
+      } catch (error) {
+        record.dispose();
+        throw error;
+      }
     }
 
     function validate() {
@@ -554,9 +586,16 @@
         if (dead) return;
         if (!Array.isArray(fields) || !Array.isArray(inheritedFields)) throw new Error('Campos locais e herdados devem ser listas.');
         if (fields.some(field => !field || typeof field !== 'object' || Array.isArray(field)) || inheritedFields.some(field => !field || typeof field !== 'object' || Array.isArray(field))) throw new Error('Cada campo deve ser um objeto.');
-        const next = fields.map(makeRecord);
         const nextInherited = copy(inheritedFields);
+        const next = [];
+        try {
+          for (const field of fields) next.push(makeRecord(field));
+        } catch (error) {
+          next.forEach(record => record.dispose());
+          throw error;
+        }
         generation++;
+        records.forEach(record => record.dispose());
         records = next;
         inherited = nextInherited;
         attempted = false;
@@ -564,6 +603,15 @@
         globalError.hidden = true;
         list.replaceChildren(...records.map(record => record.card));
         refresh();
+      },
+      setInherited(fields) {
+        if (dead) return;
+        if (!Array.isArray(fields)) throw new Error('Campos locais e herdados devem ser listas.');
+        if (fields.some(field => !field || typeof field !== 'object' || Array.isArray(field))) throw new Error('Cada campo deve ser um objeto.');
+        const nextInherited = copy(fields);
+        inherited = nextInherited;
+        refresh();
+        if (attempted) validate();
       },
       getValue() {
         if (dead) throw new Error('O editor de campos foi encerrado.');
@@ -597,6 +645,7 @@
         dead = true;
         generation++;
         controller.abort();
+        records.forEach(record => record.dispose());
         root.remove();
         records = [];
         inherited = [];

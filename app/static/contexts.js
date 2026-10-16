@@ -68,6 +68,7 @@
   let programmatic = false, confirming = false, logoutBypass = false;
   let approvedDeparture = false, pageInactive = false, templateWriteOwner = null;
   let activeKind = contextKind, parentContext = null;
+  let inheritedParent = null;
   let typeGeneration = 0, typeListing = false, typeSummaries = [], typeCursor = null;
   const typeSummaryOk = (parentId, value) => identityOk("type", parentId, value) && value.state === "draft" && typeof value.name === "string" && revisionOk(value.revision) && dateOk(value.created_at) && dateOk(value.updated_at);
   const typePageOk = (parentId, value) => object(value) && Array.isArray(value.items) && value.items.every((item) => typeSummaryOk(parentId, item)) && (value.next_cursor === null || typeof value.next_cursor === "string");
@@ -527,6 +528,7 @@
     document.getElementById("type-common-panel").hidden = true;
     document.getElementById("type-field-count").textContent = "";
     inheritedEditor.setValue([], {inherited: []});
+    inheritedParent = null;
   }
   function samePair(kind, parentSnapshot) {
     return activeKind === kind && (kind === contextKind || (kind === "type" && !!parentSnapshot &&
@@ -535,7 +537,12 @@
   function refreshTypeFields(fields) {
     if (activeKind !== "type" || !parentContext || !Array.isArray(fields)) return;
     const common = parentContext.body.common_fields;
-    inheritedEditor.setValue(clone(common), {inherited: clone(fields)});
+    if (inheritedParent !== parentContext) {
+      inheritedEditor.setValue(common, {inherited: fields});
+      inheritedParent = parentContext;
+    } else {
+      inheritedEditor.setInherited(fields);
+    }
     inheritedEditor.setReadonly(true);
     document.getElementById("type-field-count").textContent = `${common.length + fields.length} campo(s): ${common.length} comuns herdados do contexto e ${fields.length} específicos do tipo.`;
   }
