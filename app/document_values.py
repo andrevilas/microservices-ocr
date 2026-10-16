@@ -155,6 +155,27 @@ def _missing(raw) -> bool:
     return _blank(raw)
 
 
+def _required_missing(specs, conditions, values, result) -> tuple[str, ...]:
+    missing = []
+    for spec in specs:
+        needed = spec.required
+        cond = conditions.get(spec.name)
+        if not needed and cond is not None:
+            target, expected = cond
+            actual = result.get(target.name)
+            needed = actual is not None and type(actual) is type(expected) and actual == expected
+        if needed and _missing(values.get(spec.name)):
+            missing.append(spec.name)
+    return tuple(missing)
+
+
+def missing_required_fields(fields: Sequence[FieldSpec], values: dict) -> tuple[str, ...]:
+    """Validate a draft and return every missing required name in schema order."""
+    result = validate_values(fields, values, complete=False)
+    specs = [_revalidated(field) for field in fields]
+    return _required_missing(specs, _conditions(specs), values, result)
+
+
 def validate_values(fields: Sequence[FieldSpec], values: dict, *, complete: bool = False) -> dict:
     """Validate a mapping of values against a schema; return a new dict, never mutating the input.
 
@@ -184,15 +205,9 @@ def validate_values(fields: Sequence[FieldSpec], values: dict, *, complete: bool
         if spec.name in values:
             result[spec.name] = _normalize_field(spec, values[spec.name])
     if complete:
-        for spec in specs:
-            needed = spec.required
-            cond = conditions.get(spec.name)
-            if not needed and cond is not None:
-                target, expected = cond
-                actual = result.get(target.name)
-                needed = actual is not None and type(actual) is type(expected) and actual == expected
-            if needed and _missing(values.get(spec.name)):
-                _fail(spec, "required value is missing")
+        missing = _required_missing(specs, conditions, values, result)
+        if missing:
+            _fail(next(spec for spec in specs if spec.name == missing[0]), "required value is missing")
     try:
         size = len(json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8"))
     except (ValueError, UnicodeEncodeError):
