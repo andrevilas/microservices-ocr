@@ -6,8 +6,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 Language = Literal["eng", "por"]
 Mode = Literal["preserve_existing_text", "extract_text"]
 OutputFormat = Literal["pdf_searchable", "pdfa"]
-Compression = Literal["none", "balanced"]
+Compression = Literal["none", "economic", "balanced", "preservation"]
 Fallback = Literal["disabled", "if_low_quality"]
+# Bumped whenever the OCRmyPDF arguments behind a compression preset change.
+COMPRESSION_PRESET_VERSION = "2026-10-16.1"
 
 
 class ProcessingOptions(BaseModel):
@@ -51,6 +53,9 @@ class EffectiveOptions(ResolvedOptions):
     quality_min_text: int = Field(ge=0)
     quality_valid_ratio_threshold: float = Field(ge=0, le=1)
     fallback_character_tolerance: int = Field(ge=0)
+    # None for jobs created before presets were versioned.
+    compression_preset_version: str | None = None
+    pdfa_validation_timeout_seconds: int | None = Field(default=None, ge=1)
 
 
 class EngineCapability(BaseModel):
@@ -69,6 +74,9 @@ class Capabilities(BaseModel):
     fallback_policies: list[Fallback]
     fallback_language_sets: list[list[Language]]
     defaults: ResolvedOptions
+    compression_preset_version: str = COMPRESSION_PRESET_VERSION
+    experimental_compression_profiles: list[Compression] = Field(default_factory=lambda: ["economic"])
+    pdfa_profile: Literal["2b"] = "2b"
     limits: dict[str, int]
     probe_cache_seconds: int = 60
     warnings: list[str]

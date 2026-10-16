@@ -297,11 +297,18 @@
       },
       "Capabilities": {
         "properties": {
+          "compression_preset_version": {
+            "default": "2026-10-16.1",
+            "title": "Compression Preset Version",
+            "type": "string"
+          },
           "compression_profiles": {
             "items": {
               "enum": [
                 "none",
-                "balanced"
+                "economic",
+                "balanced",
+                "preservation"
               ],
               "type": "string"
             },
@@ -317,6 +324,19 @@
             },
             "title": "Engines",
             "type": "object"
+          },
+          "experimental_compression_profiles": {
+            "items": {
+              "enum": [
+                "none",
+                "economic",
+                "balanced",
+                "preservation"
+              ],
+              "type": "string"
+            },
+            "title": "Experimental Compression Profiles",
+            "type": "array"
           },
           "fallback_language_sets": {
             "items": {
@@ -371,6 +391,12 @@
             },
             "title": "Output Formats",
             "type": "array"
+          },
+          "pdfa_profile": {
+            "const": "2b",
+            "default": "2b",
+            "title": "Pdfa Profile",
+            "type": "string"
           },
           "probe_cache_seconds": {
             "default": 60,
@@ -557,10 +583,23 @@
       "EffectiveOptions": {
         "additionalProperties": false,
         "properties": {
+          "compression_preset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compression Preset Version"
+          },
           "compression_profile": {
             "enum": [
               "none",
-              "balanced"
+              "economic",
+              "balanced",
+              "preservation"
             ],
             "title": "Compression Profile",
             "type": "string"
@@ -602,6 +641,18 @@
             ],
             "title": "Output Format",
             "type": "string"
+          },
+          "pdfa_validation_timeout_seconds": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdfa Validation Timeout Seconds"
           },
           "processing_mode": {
             "enum": [
@@ -1315,6 +1366,35 @@
       },
       "OutputValidation": {
         "properties": {
+          "compression_arguments": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Compression Arguments",
+            "type": "array"
+          },
+          "compression_fallback": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compression Fallback"
+          },
+          "compression_preset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compression Preset Version"
+          },
           "page_count_matches": {
             "title": "Page Count Matches",
             "type": "boolean"
@@ -1324,10 +1404,73 @@
             "type": "boolean"
           },
           "pdfa_conformance": {
-            "const": "not_validated",
             "default": "not_validated",
+            "enum": [
+              "not_validated",
+              "passed",
+              "failed",
+              "indeterminate"
+            ],
             "title": "Pdfa Conformance",
             "type": "string"
+          },
+          "pdfa_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdfa Profile"
+          },
+          "pdfa_reason_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pdfa Reason Codes",
+            "type": "array"
+          },
+          "pdfa_stats": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Pdfa Stats",
+            "type": "object"
+          },
+          "pdfa_validated_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdfa Validated Sha256"
+          },
+          "pdfa_validator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdfa Validator"
+          },
+          "pdfa_validator_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdfa Validator Version"
           },
           "requested_format": {
             "title": "Requested Format",
@@ -1385,7 +1528,9 @@
               {
                 "enum": [
                   "none",
-                  "balanced"
+                  "economic",
+                  "balanced",
+                  "preservation"
                 ],
                 "type": "string"
               },
@@ -1515,7 +1660,9 @@
           "compression_profile": {
             "enum": [
               "none",
-              "balanced"
+              "economic",
+              "balanced",
+              "preservation"
             ],
             "title": "Compression Profile",
             "type": "string"
@@ -2484,7 +2631,9 @@
                                 {
                                   "enum": [
                                     "none",
-                                    "balanced"
+                                    "economic",
+                                    "balanced",
+                                    "preservation"
                                   ],
                                   "type": "string"
                                 },
@@ -5785,7 +5934,9 @@
                           {
                             "enum": [
                               "none",
-                              "balanced"
+                              "economic",
+                              "balanced",
+                              "preservation"
                             ],
                             "type": "string"
                           },
@@ -9463,7 +9614,9 @@
                               {
                                 "enum": [
                                   "none",
-                                  "balanced"
+                                  "economic",
+                                  "balanced",
+                                  "preservation"
                                 ],
                                 "type": "string"
                               },

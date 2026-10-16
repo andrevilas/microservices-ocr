@@ -9,9 +9,13 @@ import hashlib
 import sys
 from pathlib import Path
 
+import subprocess
+from xml.sax.saxutils import escape
+
 import pytest
 
-from app.services.pdfa_validator import PdfaValidationResult, VeraPdfValidator
+from app.services import pdfa_validator
+from app.services.pdfa_validator import PdfaValidationResult, VeraPdfValidator, _ProcessOutput
 
 PDF_BYTES = b"%PDF-1.7\n% fake content for wrapper tests\n%%EOF\n"
 
@@ -62,8 +66,28 @@ def report(*, compliant: str = "true", profile: str = "PDF/A-2B validation profi
     )
 
 
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="veraPDF execution is POSIX-only")
+
+
+class ScriptedValidator(VeraPdfValidator):
+    """Pure parser tests: the report is produced in-process, so they run on every platform."""
+
+    def __init__(self, xml: str, exit_code: int, mutate: bool, **kwargs) -> None:
+        super().__init__(["verapdf-not-executed"], **kwargs)
+        self._xml, self._exit_code, self._mutate = xml, exit_code, mutate
+
+    def _run(self, argv: list[str]) -> _ProcessOutput:
+        assert argv[1:5] == ["--format", "xml", "--flavour", "2b"] and len(argv) == 6
+        if self._mutate:
+            with open(argv[5], "ab") as handle:
+                handle.write(b"tampered")
+        return _ProcessOutput(self._exit_code, self._xml.replace("@NAME@", escape(argv[5])).encode("utf-8"))
+
+
 def make_validator(tmp_path: Path, xml: str, *, exit_code: int = 0, mutate: bool = False, sleep: float = 0,
-                   flood: int = 0, **kwargs) -> VeraPdfValidator:
+                   flood: int = 0, process: bool = False, **kwargs) -> VeraPdfValidator:
+    if not process:
+        return ScriptedValidator(xml, exit_code, mutate, **kwargs)
     script = tmp_path / "fake_verapdf.py"
     script.write_text(FAKE_TEMPLATE.format(xml=xml, exit_code=exit_code, mutate=mutate, sleep=sleep, flood=flood),
                       encoding="utf-8")
@@ -113,6 +137,7 @@ def test_explicit_failure(tmp_path: Path, pdf: Path) -> None:
     assert result.sha256 == expected_sha()
 
 
+@posix_only
 def test_missing_executable(tmp_path: Path, pdf: Path) -> None:
     validator = VeraPdfValidator([str(tmp_path / "does-not-exist" / "verapdf")])
     result = validator.validate(pdf)
@@ -120,9 +145,28 @@ def test_missing_executable(tmp_path: Path, pdf: Path) -> None:
     assert result.sha256 == expected_sha()
 
 
+@posix_only
+def test_real_process_passes_and_fails(tmp_path: Path, pdf: Path) -> None:
+    assert make_validator(tmp_path, report(), process=True).validate(pdf).status == "passed"
+    failed = make_validator(tmp_path, report(compliant="false", failed=1), exit_code=1, process=True).validate(pdf)
+    assert failed.status == "failed"
+
+
+@posix_only
 def test_timeout(tmp_path: Path, pdf: Path) -> None:
-    result = make_validator(tmp_path, report(), sleep=10, timeout_seconds=0.5).validate(pdf)
+    result = make_validator(tmp_path, report(), sleep=10, timeout_seconds=0.5, process=True).validate(pdf)
     assert_indeterminate(result, "validator_timeout")
+
+
+def test_windows_is_unsupported_and_never_starts_a_process(monkeypatch, tmp_path: Path, pdf: Path) -> None:
+    def forbidden(*args, **kwargs):
+        raise AssertionError("no process may be started on Windows")
+    monkeypatch.setattr(pdfa_validator, "_PLATFORM", "win32")
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    result = VeraPdfValidator([sys.executable]).validate(pdf)
+    assert_indeterminate(result, "unsupported_platform")
+    assert result.sha256 == expected_sha()
+    assert not pdfa_validator.platform_supported()
 
 
 def test_invalid_xml(tmp_path: Path, pdf: Path) -> None:
@@ -176,8 +220,9 @@ def test_pdf_altered_during_validation(tmp_path: Path, pdf: Path) -> None:
     assert result.sha256 == expected_sha(PDF_BYTES + b"tampered")
 
 
+@posix_only
 def test_report_size_limit(tmp_path: Path, pdf: Path) -> None:
-    result = make_validator(tmp_path, report(), flood=64, max_report_bytes=64 * 1024).validate(pdf)
+    result = make_validator(tmp_path, report(), flood=64, max_report_bytes=64 * 1024, process=True).validate(pdf)
     assert_indeterminate(result, "report_too_large")
 
 
@@ -232,6 +277,7 @@ def _alive(pid: int) -> bool:
         return handle.read().split(b") ", 1)[1][:1] != b"Z"
 
 
+@posix_only
 def test_timeout_kills_descendant_holding_stdout(tmp_path: Path, pdf: Path) -> None:
     import time
     script = tmp_path / "spawner.py"

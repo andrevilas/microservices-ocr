@@ -17,12 +17,15 @@ from app.results import (JobReport, OutputValidation, QualityReport, StageReport
 from app.services.easyocr_service import FallbackOcrService
 from app.services.ocrmypdf_service import OcrmypdfService
 from app.services.pdf_builder import PdfBuilder
+from app.services.pdfa_validator import (PROFILE_2B, REASON_NOT_CONFIGURED, VeraPdfValidator, build_validator,
+                                         unavailable_result)
 from app.services.storage_service import JobRecord, JobStore
 from app.services.tesseract_service import PrimaryOcrService
 from app.services.cancellation import cancellation_scope, checkpoint, JobCancelled, ProcessTerminationError
 from app.utils.quality_evaluator import QualityEvaluation, evaluate_quality
 
 logger = logging.getLogger(__name__)
+_FROM_SETTINGS = object()
 
 
 class OcrOrchestrator:
@@ -33,8 +36,10 @@ class OcrOrchestrator:
         fallback_ocr: FallbackOcrService | None = None,
         pdf_builder: PdfBuilder | None = None,
         ocrmypdf_service: OcrmypdfService | None = None,
+        pdfa_validator: VeraPdfValidator | None | object = _FROM_SETTINGS,
     ) -> None:
         self.job_store = job_store
+        self.pdfa_validator = pdfa_validator
         self.ocrmypdf_service = ocrmypdf_service or OcrmypdfService()
         self.primary_ocr = primary_ocr or PrimaryOcrService(ocrmypdf_service=self.ocrmypdf_service)
         self.fallback_ocr = fallback_ocr or FallbackOcrService()
@@ -75,7 +80,7 @@ class OcrOrchestrator:
             fallback_enabled = options.fallback_policy == "if_low_quality" if options else True
             checkpoint()
             stages = []
-            warnings = ["quality_is_heuristic_not_accuracy", "pdfa_conformance_not_validated"]
+            warnings = ["quality_is_heuristic_not_accuracy"]
             primary_available = options.processing_mode != "extract_text" if options else self.ocrmypdf_service.is_available()
             source = "ocrmypdf" if primary_available else "pdf_text"
             engines = {"pypdf": package_version("pypdf")}
@@ -165,12 +170,33 @@ class OcrOrchestrator:
             stages.append(StageReport(name="build", duration_ms=int((time.monotonic() - stage_start) * 1000)))
             self.job_store.worker_update(job_id, progress_percent=88)
             stage_start = time.monotonic()
-            self._finalize_output(draft_output, final_output, options=options)
+            compression = self._finalize_output(draft_output, final_output, options=options) or {}
             stages.append(StageReport(name="finalize", duration_ms=int((time.monotonic() - stage_start) * 1000)))
             input_count = len(PdfReader(str(job.input_pdf_path)).pages)
             output_count = len(PdfReader(str(final_output)).pages)
             if output_count != input_count or input_count != len(pages):
                 raise ValueError("Output page count mismatch.")
+            validation = OutputValidation(
+                requested_format=options.output_format if options else settings.final_output_type,
+                pdf_readable=True, page_count_matches=True,
+                compression_preset_version=options.compression_preset_version if options else None,
+                compression_arguments=compression.get("arguments") or [],
+                compression_fallback=compression.get("fallback"))
+            if compression.get("fallback"):
+                warnings.append(compression["fallback"])
+            pdfa = None
+            if options is not None and options.output_format == "pdfa":
+                checkpoint()
+                stage_start = time.monotonic()
+                pdfa = self._validate_pdfa(final_output, options)
+                stages.append(StageReport(name="pdfa_validation",
+                                          duration_ms=int((time.monotonic() - stage_start) * 1000)))
+                validation = validation.model_copy(update={
+                    "pdfa_conformance": pdfa.status, "pdfa_profile": pdfa.profile, "pdfa_validator": pdfa.validator,
+                    "pdfa_validator_version": pdfa.validator_version, "pdfa_validated_sha256": pdfa.sha256,
+                    "pdfa_reason_codes": list(pdfa.reason_codes), "pdfa_stats": dict(pdfa.stats)})
+            else:
+                warnings.append("pdfa_conformance_not_validated")
             report = JobReport(
                 job_id=job_id, generated_at=datetime.now(timezone.utc),
                 duration_ms=int((time.monotonic() - _start_ms) * 1000),
@@ -182,11 +208,19 @@ class OcrOrchestrator:
                 stages=stages, engines=engines, fallback_attempted=fallback_attempted,
                 used_fallback=used_fallback, warnings=warnings,
                 options_requested=job.options_requested, options_effective=options,
-                output_validation=OutputValidation(requested_format=options.output_format if options else settings.final_output_type,
-                                                   pdf_readable=True, page_count_matches=True),
+                output_validation=validation,
             )
             checkpoint()
             persist_report(job.working_dir, report)
+            if pdfa is not None and pdfa.status != "passed":
+                # Fail closed: the report above explains why; no PDF/A is delivered as completed.
+                code = "pdfa_validation_failed" if pdfa.status == "failed" else "pdfa_validation_indeterminate"
+                logger.warning("Job %s: PDF/A-%s validation %s (%s)", job_id, pdfa.profile, pdfa.status,
+                               ",".join(pdfa.reason_codes))
+                self.job_store.worker_update(job_id, status="failed", progress_percent=100,
+                                             error=f"PDF/A validation {pdfa.status}: {', '.join(pdfa.reason_codes)}",
+                                             error_code=code)
+                return None
             self.job_store.worker_update(job_id, progress_percent=96)
             _elapsed_ms = int((time.monotonic() - _start_ms) * 1000)
             logger.info(
@@ -217,13 +251,24 @@ class OcrOrchestrator:
             self.job_store.worker_update(job_id, status="failed", progress_percent=100, error=str(exc), error_code=code)
             return None
 
-    def _finalize_output(self, draft_output: Path, final_output: Path, options=None) -> None:
+    def _validate_pdfa(self, final_output: Path, options):
+        validator = self.pdfa_validator
+        if validator is _FROM_SETTINGS:
+            validator = build_validator(str(settings.verapdf_executable) if settings.verapdf_executable else None,
+                                        options.pdfa_validation_timeout_seconds or settings.verapdf_timeout_seconds)
+        if validator is None:
+            return unavailable_result(REASON_NOT_CONFIGURED, digest_file(final_output).sha256)
+        return validator.validate(final_output, PROFILE_2B)
+
+    def _finalize_output(self, draft_output: Path, final_output: Path, options=None) -> dict | None:
         if options is not None:
+            if options.output_format == "pdfa" and options.processing_mode == "extract_text":
+                # A copied text-layer PDF must never be labelled PDF/A.
+                raise ApplicationError(422, "unsupported_option_combination", "Text extraction cannot produce PDF/A.")
             if options.processing_mode == "extract_text" or (options.output_format == "pdf_searchable" and options.compression_profile == "none"):
                 shutil.copyfile(draft_output, final_output)
-            else:
-                self.ocrmypdf_service.optimize_pdfa(draft_output, final_output, options=options)
-            return
+                return None
+            return self.ocrmypdf_service.optimize_pdfa(draft_output, final_output, options=options)
         if self.ocrmypdf_service.is_available():
             self.ocrmypdf_service.optimize_pdfa(draft_output, final_output)
             return

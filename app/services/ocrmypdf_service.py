@@ -10,6 +10,21 @@ from app.options import EffectiveOptions
 from app.services.cancellation import active, run_process
 
 
+def preset_arguments(profile: str, output_format: str) -> list[str]:
+    """Fixed OCRmyPDF 16.x arguments per preset. No JBIG2 lossy, no rasterization, no resampling."""
+    pdfa = output_format == "pdfa"
+    args = ["--output-type", "pdfa-2" if pdfa else "pdf"]
+    if profile == "economic":  # experimental until benchmarked: lossy JPEG/PNG re-encoding
+        args += ["--optimize", "2", "--jpeg-quality", "75"]
+    elif profile == "balanced":  # lossless optimizer; Ghostscript PDF/A conversion may still re-encode JPEG
+        args += ["--optimize", "1"]
+    else:  # none / preservation
+        args += ["--optimize", "0"]
+    if pdfa and profile == "preservation":
+        args += ["--pdfa-image-compression", "lossless"]
+    return args
+
+
 class OcrmypdfService:
     @staticmethod
     def is_available() -> bool:
@@ -33,13 +48,25 @@ class OcrmypdfService:
             ]
         )
 
-    def optimize_pdfa(self, input_pdf_path: Path, output_pdf_path: Path, options: EffectiveOptions | None = None) -> None:
+    def optimize_pdfa(self, input_pdf_path: Path, output_pdf_path: Path,
+                      options: EffectiveOptions | None = None) -> dict | None:
+        """Final conversion/compression. With options, returns the effective preset arguments."""
         if options is not None:
-            self._run(["--skip-text", "--output-type", "pdfa" if options.output_format == "pdfa" else "pdf",
-                       "--optimize", "1" if options.compression_profile == "balanced" else "0",
-                       "--language", "+".join(options.languages), "--jobs", str(options.engine_jobs),
-                       str(input_pdf_path), str(output_pdf_path)], timeout=options.subprocess_timeout_seconds)
-            return
+            preset = preset_arguments(options.compression_profile, options.output_format)
+            common = ["--skip-text", "--language", "+".join(options.languages), "--jobs", str(options.engine_jobs)]
+            fallback = None
+            try:
+                self._run([*common, *preset, str(input_pdf_path), str(output_pdf_path)],
+                          timeout=options.subprocess_timeout_seconds)
+            except RuntimeError as exc:
+                # optimize 2 needs pngquant; degrade to the lossless optimizer and record it.
+                if options.compression_profile != "economic" or "pngquant" not in str(exc).lower():
+                    raise
+                preset = preset_arguments("balanced", options.output_format)
+                fallback = "pngquant_unavailable_used_optimize_1"
+                self._run([*common, *preset, str(input_pdf_path), str(output_pdf_path)],
+                          timeout=options.subprocess_timeout_seconds)
+            return {"arguments": preset, "fallback": fallback}
         try:
             self._run(self._optimize_args(input_pdf_path, output_pdf_path, settings.final_pdf_optimize_level))
         except RuntimeError as exc:

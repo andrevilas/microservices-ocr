@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     final_pdf_optimize_level: int = 3
     final_pdfa_image_compression: str = "jpeg"
     final_pdf_jpeg_quality: int = 75
+    # Server-only absolute path of the veraPDF executable; never taken from requests.
+    verapdf_executable: Path | None = None
+    verapdf_timeout_seconds: int = Field(default=120, ge=1, le=3600)
     job_retention_seconds: int = Field(default=86400, ge=1)
     retention_interval_seconds: int = Field(default=60, ge=1, le=3600)
     worker_shutdown_timeout_seconds: int = 30

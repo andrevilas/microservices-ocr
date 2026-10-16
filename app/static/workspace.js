@@ -14,11 +14,13 @@
     failed: (j) => j.status === "failed", canceled: (j) => j.status === "canceled"};
   const OPTION_LABELS = {extract_text: "Extrair texto existente", preserve_existing_text: "OCR preservando texto existente",
     eng: "Inglês", por: "Português", "eng+por": "Português e inglês", pdf_searchable: "PDF pesquisável",
-    pdfa: "PDF/A (conformidade não validada)", none: "Sem compactação", balanced: "Compactação equilibrada",
+    pdfa: "PDF/A-2b (validado com veraPDF)", none: "Sem compactação", balanced: "Compactação equilibrada",
+    economic: "Compactação econômica (experimental)", preservation: "Preservação (imagens sem perdas)",
     disabled: "Desativado", if_low_quality: "Usar se a qualidade for baixa"};
   const WARNINGS = {
     quality_is_heuristic_not_accuracy: "A qualidade é uma heurística; não mede precisão.",
-    pdfa_conformance_not_validated: "A conformidade PDF/A não é validada.",
+    pdfa_conformance_not_validated: "Saída não declarada como PDF/A; conformidade não validada.",
+    pngquant_unavailable_used_optimize_1: "Compactação econômica indisponível; usada a otimização equilibrada.",
     primary_ocr_unavailable: "OCR principal indisponível; foi usado apenas o texto existente.",
     fallback_ocr_unavailable: "OCR alternativo indisponível.",
     fallback_disabled: "OCR alternativo desativado nas opções.",
@@ -519,7 +521,7 @@
     }
     if (q.label) pairs.push(["Qualidade", `${qualityText(q.label)} · ${Math.round((q.valid_ratio || 0) * 100)}% de termos plausíveis · ${q.character_count ?? 0} caracteres (heurística, não mede precisão)`]);
     if (r.fallback_attempted != null) pairs.push(["OCR alternativo", r.used_fallback ? "usado" : r.fallback_attempted ? "tentado, não usado" : "não tentado"]);
-    if (v.requested_format) pairs.push(["Saída", `${optionText(v.requested_format)} · ${v.pdf_readable ? "PDF legível" : "PDF não legível"} · ${v.page_count_matches ? "páginas conferem" : "páginas divergem"} · PDF/A não validado`]);
+    if (v.requested_format) pairs.push(["Saída", `${optionText(v.requested_format)} · ${v.pdf_readable ? "PDF legível" : "PDF não legível"} · ${v.page_count_matches ? "páginas conferem" : "páginas divergem"} · ${pdfaText(v)}`]);
     if (r.input?.size_bytes != null) pairs.push(["Original", `${ui.bytes(r.input.size_bytes)} · SHA-256 ${r.input.sha256}`, "mono"]);
     if (r.output?.size_bytes != null) pairs.push(["Resultado", `${ui.bytes(r.output.size_bytes)} · SHA-256 ${r.output.sha256}`, "mono"]);
     if (r.engines && Object.keys(r.engines).length) pairs.push(["Motores", Object.entries(r.engines).map(([n, ver]) => `${n} ${ver || "(versão não registrada)"}`).join("; ")]);
@@ -617,6 +619,13 @@
   }
 
   // ---------------------------------------------------------------- capabilities and options
+  function pdfaText(v) {
+    const status = {passed: "PDF/A-2b aprovado", failed: "PDF/A-2b reprovado", indeterminate: "PDF/A-2b indeterminado"}[v.pdfa_conformance];
+    if (!status) return "PDF/A não validado";
+    const version = v.pdfa_validator_version ? ` (veraPDF ${v.pdfa_validator_version})` : "";
+    const reasons = v.pdfa_conformance === "passed" ? "" : ` · ${(v.pdfa_reason_codes || []).join(", ")}`;
+    return status + version + reasons;
+  }
   function options() {
     const extract = $("processing-mode").value === "extract_text";
     return {processing_mode: extract ? "extract_text" : "preserve_existing_text",
@@ -639,13 +648,20 @@
     fill("output-format", capabilities.output_formats); fill("compression-profile", capabilities.compression_profiles);
     fill("fallback-policy", capabilities.fallback_policies);
     $("processing-mode").value = capabilities.processing_modes.includes("preserve_existing_text") ? "preserve_existing_text" : "extract_text";
-    for (const [id, value] of [["ocr-language", "por"], ["output-format", "pdf_searchable"], ["compression-profile", "none"], ["fallback-policy", "disabled"]]) {
+    // Same defaults as the API (pdfa/balanced); only values actually offered by the server are selected.
+    const d = capabilities.defaults || {};
+    for (const [id, value] of [["ocr-language", "por"], ["output-format", d.output_format || "pdfa"],
+      ["compression-profile", d.compression_profile || "balanced"], ["fallback-policy", d.fallback_policy || "disabled"]]) {
       if ([...$(id).options].some((o) => o.value === value)) $(id).value = value;
     }
     modeChanged();
     const ocr = capabilities.processing_modes.includes("preserve_existing_text");
+    const vera = capabilities.engines?.verapdf;
+    const veraNote = vera && !vera.available
+      ? ` Validador PDF/A indisponível (${(vera.reasons || []).join(", ")}): trabalhos PDF/A falharão até ele estar disponível.`
+      : "";
     $("capability-note").textContent = ocr
-      ? "Extrair texto usa apenas a camada de texto do PDF. OCR preserva o texto existente e reconhece imagens. A qualidade informada é heurística."
+      ? "Extrair texto usa apenas a camada de texto do PDF. OCR preserva o texto existente e reconhece imagens. A qualidade informada é heurística." + veraNote
       : "O motor de OCR não está disponível neste servidor: só é possível extrair o texto que já existe no PDF. Páginas digitalizadas não são reconhecidas.";
     $("engine-list").replaceChildren(...Object.entries(capabilities.engines || {}).map(([name, e]) =>
       el("li", {text: `${name}: ${e.available ? "disponível" : "indisponível"}${e.version ? ` (versão ${e.version})` : ""}${(e.reasons || []).length ? ` — ${e.reasons.map((r) => REASONS[r] || r).join("; ")}` : ""}`})));

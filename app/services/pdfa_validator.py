@@ -1,7 +1,7 @@
 """Isolated PDF/A validation through an external veraPDF executable.
 
-Candidate OCR-EV-01B (validator hardening): not wired to the orchestrator, API or settings yet.
-The command is fixed by the server; requests may only choose the file.
+The command is fixed by the server; requests may only choose the file. Execution is POSIX-only:
+on Windows the result is ``indeterminate`` (``unsupported_platform``) and no process is started.
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import shutil
 import signal
 import tempfile
 import subprocess
+import sys
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -59,6 +60,10 @@ REASON_REPORT_COUNT = "validation_report_count_mismatch"
 REASON_PROFILE_MISMATCH = "profile_mismatch"
 REASON_INVALID_VERDICT = "invalid_compliance_verdict"
 REASON_INVALID_DETAILS = "invalid_report_details"
+REASON_UNSUPPORTED_PLATFORM = "unsupported_platform"
+REASON_NOT_CONFIGURED = "validator_not_configured"
+
+_PLATFORM = sys.platform
 
 
 @dataclass(frozen=True)
@@ -171,13 +176,13 @@ class VeraPdfValidator:
         return PdfaValidationResult("indeterminate", profile, digest, reason_codes=(reason,))
 
     def _run(self, argv: list[str]) -> _ProcessOutput:
-        # Own process group/session so descendants holding the pipe are reachable.
-        if os.name == "nt":
-            flags = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
-        else:
-            flags = {"start_new_session": True}
+        # Process-tree containment is only guaranteed on POSIX (production is Linux/Docker):
+        # refuse before any process is started instead of risking an orphaned descendant.
+        if not platform_supported():
+            raise _ReportError(REASON_UNSUPPORTED_PLATFORM)
+        # Own session so descendants holding the pipe are reachable through killpg.
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, shell=False, **flags)
+                                stderr=subprocess.DEVNULL, shell=False, start_new_session=True)
         deadline = time.monotonic() + self._timeout
         chunks: list[bytes] = []
         state = {"size": 0, "overflow": False}
@@ -231,21 +236,24 @@ class VeraPdfValidator:
         return _ProcessOutput(proc.returncode, b"".join(chunks))
 
 
+def platform_supported() -> bool:
+    return _PLATFORM != "win32"
+
+
+def build_validator(command: str | None, timeout_seconds: float) -> VeraPdfValidator | None:
+    """Server-configured validator (single executable path, no shell parsing); ``None`` if unset."""
+    return VeraPdfValidator([command], timeout_seconds=timeout_seconds) if command else None
+
+
+def unavailable_result(reason: str, digest: str | None = None) -> PdfaValidationResult:
+    return PdfaValidationResult("indeterminate", PROFILE_2B, digest, reason_codes=(reason,))
+
+
 def _kill_tree(proc: subprocess.Popen) -> None:
-    """Best-effort, time-bounded termination of the process and its group/descendants."""
+    """Best-effort, time-bounded termination of the process and its session (POSIX only)."""
     try:
-        if os.name == "nt":
-            if proc.poll() is None:
-                subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL, timeout=_CLEANUP_GRACE,
-                               creationflags=subprocess.CREATE_NO_WINDOW)
-        else:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-    except (OSError, subprocess.SubprocessError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
         pass
     if proc.poll() is None:
         try:

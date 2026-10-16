@@ -1,3 +1,6 @@
+# veraPDF 1.30.2 (official image, pinned by digest). Only its files are copied; it never runs as a service.
+FROM verapdf/cli@sha256:d5ee329657cf9bc4b2400392dd54c7d0a0ce9980ff6fa2da5590eebeec007cdb AS verapdf
+
 FROM python:3.11-slim AS builder
 
 ARG ENABLE_FALLBACK_OCR=false
@@ -33,7 +36,10 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     OCR_TMP_DIR=/tmp/ocr-recognizer \
     MAX_UPLOAD_SIZE_MB=80 \
-    ENABLE_FALLBACK_OCR=$ENABLE_FALLBACK_OCR
+    ENABLE_FALLBACK_OCR=$ENABLE_FALLBACK_OCR \
+    JAVA_HOME=/opt/java/openjdk \
+    VERAPDF_EXECUTABLE=/opt/verapdf/verapdf \
+    VERAPDF_TIMEOUT_SECONDS=120
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
@@ -51,6 +57,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
+# Compatibility of this JRE/veraPDF copy with the slim base must be verified at build time.
+COPY --from=verapdf /opt/java/openjdk /opt/java/openjdk
+COPY --from=verapdf /opt/verapdf /opt/verapdf
 COPY app /app/app
 
 EXPOSE 8000

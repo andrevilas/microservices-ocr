@@ -18,6 +18,7 @@ from app.services import capability_service as module
 from app.services.capability_service import CapabilityService
 from app.services.ocr_orchestrator import OcrOrchestrator
 from app.services.ocrmypdf_service import OcrmypdfService
+from app.services.pdfa_validator import PdfaValidationResult
 from app.services.storage_service import JobStore
 from app.services.upload_service import UploadService
 from test_upload_admission import system, upload, bearer
@@ -223,7 +224,8 @@ def test_concurrent_commands_use_immutable_options_without_global_mutation(probe
     assert {key: getattr(settings, key) for key in watched} == before
     for command, kwargs in calls:
         lang = command[command.index("--language") + 1]
-        assert command[command.index("--output-type") + 1] == ("pdf" if lang == "eng" else "pdfa")
+        # PDF/A-2 is now explicit (E1); the generic "pdfa" alias is no longer emitted.
+        assert command[command.index("--output-type") + 1] == ("pdf" if lang == "eng" else "pdfa-2")
         assert command[command.index("--optimize") + 1] == ("0" if lang == "eng" else "1")
         assert "--skip-text" in command and "--force-ocr" not in command
         assert command[command.index("--jobs") + 1] == "1"
@@ -279,8 +281,14 @@ def test_orchestrator_passes_options_and_honors_fallback(system, probes, policy)
     engine.optimize_pdfa.side_effect = copy
     fallback.is_available.return_value = True
     fallback.process_pages.return_value = ["the original document has a name and a date for the page"]
-    assert OcrOrchestrator(system.jobs, ocrmypdf_service=engine, fallback_ocr=fallback).process_job(job_id)
+    # Default output is PDF/A (fail-closed): a passing validator stub is required for completion.
+    validator = Mock()
+    validator.validate.return_value = PdfaValidationResult("passed", "2b", "0" * 64, validator_version="1.30.2",
+                                                           reason_codes=("compliant",))
+    assert OcrOrchestrator(system.jobs, ocrmypdf_service=engine, fallback_ocr=fallback,
+                           pdfa_validator=validator).process_job(job_id)
     assert calls == [effective, effective]
+    assert validator.validate.call_count == 1
     assert fallback.process_pages.call_count == (1 if policy == "if_low_quality" else 0)
     report = JobApplication(system.jobs).report(Principal("user:1", 1, frozenset({"jobs:read", "artifacts:read"})), job_id)
     assert report.options_effective == effective
