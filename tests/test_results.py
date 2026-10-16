@@ -218,9 +218,18 @@ def test_failure_does_not_publish_partial_results(results, monkeypatch, failure)
         fallback.process_pages.side_effect = RuntimeError("synthetic extraction failure")
     assert orchestrator(store, fallback).process_job(job.job_id) is None
     assert store.get_snapshot(job.job_id).status == "failed"
+    # Failed jobs may expose a retained diagnostic report; none was recorded here.
     with pytest.raises(ApplicationError) as error:
         service.report(OWNER, job.job_id)
-    assert error.value.code == "result_not_ready"
+    assert (error.value.status, error.value.code) == (409, "result_unavailable")
+    # Text and artifact are never published for a failed job.
+    with pytest.raises(ApplicationError) as error:
+        service.text(OWNER, job.job_id)
+    assert (error.value.status, error.value.code) == (409, "result_not_ready")
+    assert service.artifact(OWNER, job.job_id).available is False
+    with pytest.raises(ApplicationError) as error:
+        service.artifact_file(OWNER, job.job_id)
+    assert error.value.code == "artifact_unavailable"
 
 
 def test_filters_ties_cursor_insert_and_filter_binding(results):

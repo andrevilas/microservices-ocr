@@ -14,7 +14,7 @@
     failed: (j) => j.status === "failed", canceled: (j) => j.status === "canceled"};
   const OPTION_LABELS = {extract_text: "Extrair texto existente", preserve_existing_text: "OCR preservando texto existente",
     eng: "Inglês", por: "Português", "eng+por": "Português e inglês", pdf_searchable: "PDF pesquisável",
-    pdfa: "PDF/A-2b (validado com veraPDF)", none: "Sem compactação", balanced: "Compactação equilibrada",
+    pdfa: "PDF/A-2b (validação obrigatória)", none: "Sem compactação", balanced: "Compactação equilibrada",
     economic: "Compactação econômica (experimental)", preservation: "Preservação (imagens sem perdas)",
     disabled: "Desativado", if_low_quality: "Usar se a qualidade for baixa"};
   const WARNINGS = {
@@ -33,6 +33,7 @@
     probe_is_not_ocr_homologation: "A verificação dos motores não é uma homologação do OCR.",
     defaults_may_be_unavailable: "Os padrões do servidor podem não estar disponíveis.",
     extract_text_does_not_recognize_scans: "Extrair texto não reconhece páginas digitalizadas.",
+    pdfa_validator_unavailable_pdfa_not_offered: "Validador PDF/A indisponível; a saída PDF/A não é oferecida.",
   };
   const REASONS = {missing_or_failed_probe: "não encontrado ou falhou na verificação", unsupported_engine_version: "versão não suportada",
     ocrmypdf_16_4_to_16_x_required: "requer OCRmyPDF 16.4 a 16.x", tesseract_unavailable: "Tesseract indisponível",
@@ -420,12 +421,16 @@
       actionsBox.replaceChildren(...items);
       $("detail-danger").hidden = !terminalKept;
       $("detail-danger-actions").replaceChildren(...(terminalKept ? [actionButton("delete", id, "Excluir arquivos…", {className: "button button-danger"})] : []));
-      const results = available(j);
-      $("results-switch").hidden = !results;
+      // A retained failed job may expose its diagnostic report; text and PDF stay unpublished (backend ACL decides).
+      const results = available(j), failedKept = j.status === "failed" && !gone(j);
+      $("results-switch").hidden = !results && !failedKept;
+      $("text-button").hidden = !results; $("text-button").disabled = !results;
       $("text-button").dataset.id = id; $("report-button").dataset.id = id;
       $("results-unavailable").hidden = results;
-      $("results-unavailable").textContent = gone(j) ? "Os arquivos deste job não estão mais disponíveis." : "Texto e relatório ficam disponíveis quando o job é concluído e enquanto os arquivos estão retidos.";
-      if (!results && resultView) { resultView = null; drawResult(); }
+      $("results-unavailable").textContent = gone(j) ? "Os arquivos deste job não estão mais disponíveis."
+        : failedKept ? "O job falhou: texto e PDF não são publicados. O relatório de diagnóstico pode ser consultado se tiver sido registrado."
+        : "Texto e relatório ficam disponíveis quando o job é concluído e enquanto os arquivos estão retidos.";
+      if (resultView && !(results || (failedKept && resultView.action === "report"))) { resultView = null; drawResult(); }
     }
   }
   const mobileDetail = window.matchMedia("(max-width: 719px)");
@@ -648,17 +653,22 @@
     fill("output-format", capabilities.output_formats); fill("compression-profile", capabilities.compression_profiles);
     fill("fallback-policy", capabilities.fallback_policies);
     $("processing-mode").value = capabilities.processing_modes.includes("preserve_existing_text") ? "preserve_existing_text" : "extract_text";
-    // Same defaults as the API (pdfa/balanced); only values actually offered by the server are selected.
+    // Same defaults as the API (capabilities.defaults); only values actually offered by the server are selected.
     const d = capabilities.defaults || {};
-    for (const [id, value] of [["ocr-language", "por"], ["output-format", d.output_format || "pdfa"],
+    const offered = (id, value) => [...$(id).options].some((o) => o.value === value);
+    const defaultLanguages = Array.isArray(d.languages) && d.languages.length ? [...d.languages].sort().join("+") : "eng";
+    for (const [id, value] of [["ocr-language", defaultLanguages], ["output-format", d.output_format || "pdfa"],
       ["compression-profile", d.compression_profile || "balanced"], ["fallback-policy", d.fallback_policy || "disabled"]]) {
-      if ([...$(id).options].some((o) => o.value === value)) $(id).value = value;
+      if (offered(id, value)) $(id).value = value;
     }
+    // PDF/A is only offered with a validator; otherwise searchable PDF is chosen explicitly.
+    const pdfaOffered = capabilities.output_formats.includes("pdfa");
+    if (!pdfaOffered && offered("output-format", "pdf_searchable")) $("output-format").value = "pdf_searchable";
     modeChanged();
     const ocr = capabilities.processing_modes.includes("preserve_existing_text");
     const vera = capabilities.engines?.verapdf;
-    const veraNote = vera && !vera.available
-      ? ` Validador PDF/A indisponível (${(vera.reasons || []).join(", ")}): trabalhos PDF/A falharão até ele estar disponível.`
+    const veraNote = !pdfaOffered
+      ? ` Saída PDF/A indisponível neste servidor${vera && !vera.available ? ` (validador veraPDF indisponível: ${(vera.reasons || []).map((r) => REASONS[r] || r).join("; ")})` : ""}: a opção não é oferecida e a saída usada é PDF pesquisável.`
       : "";
     $("capability-note").textContent = ocr
       ? "Extrair texto usa apenas a camada de texto do PDF. OCR preserva o texto existente e reconhece imagens. A qualidade informada é heurística." + veraNote
@@ -846,9 +856,15 @@
       render(); notify(`“${j.filename}” foi ocultado desta aba. Nada mudou no servidor.`, "info"); return;
     }
     if (action === "download") { await download(`/api/v1/jobs/${encodeURIComponent(id)}/artifact/content`, `${j.filename.replace(/\.pdf$/i, "")}-searchable.pdf`); return; }
-    if (action === "text") { await loadText(id, 1, 0); return; }
+    if (action === "text") { if (available(j)) await loadText(id, 1, 0); return; }
     if (action === "report") {
-      const result = await json(`/api/v1/jobs/${encodeURIComponent(id)}/report`);
+      let result;
+      try { result = await json(`/api/v1/jobs/${encodeURIComponent(id)}/report`); }
+      catch (e) {
+        // Never keep a stale report on screen (e.g. result_unavailable after expiry or a failure without report).
+        if (detailId === id && resultView?.id === id) { resultView = null; drawResult(); }
+        throw e;
+      }
       if (detailId === id) { resultView = {action: "report", id, result}; drawResult(); }
       return;
     }
