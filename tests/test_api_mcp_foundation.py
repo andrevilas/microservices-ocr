@@ -132,7 +132,7 @@ def test_openapi_declares_identity_and_unique_operations():
         for operation in methods.values():
             assert operation["security"] == [{"PrincipalBearer": []}]
             ids.append(operation["operationId"])
-    assert len(ids) == len(set(ids)) == 41
+    assert len(ids) == len(set(ids)) == 42
 
 
 def test_read_snapshot_and_sanitized_error(fixture):

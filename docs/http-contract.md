@@ -1,7 +1,7 @@
 # Contrato HTTP v1
 
 Entrega OCR-AM-04, atividade LPM `hkKLY54xl4fHElZsRNdK`. O contrato atual tem
-30 operações sob `/api/v1`, versão de contrato `1.6.0`, após a AM-05 de
+42 operações sob `/api/v1`, incluindo 12 do catálogo local, versão de contrato `1.6.0`, após a AM-05 de
 [uploads persistentes e admissão idempotente](uploads.md) e a AM-06 de
 [texto por página e relatórios](results.md) e AM-07 de
 [opções e capacidades](capabilities.md) e AM-09 de [lotes/exportação](batches-exports.md). A AM-10 acrescenta [cancelamento e reprocessamento](job-control.md), e a AM-11 [retenção e exclusão](retention.md). Administração ampla continua no backlog.
@@ -84,6 +84,45 @@ desconhecidas também recebem o envelope. MCP mantém os erros de protocolo e
 resultados de ferramenta; não recebe envelope HTTP v1 dentro do JSON-RPC.
 As rotas legadas mantêm seu próprio formato.
 
+## Catálogo e ciclo de vida de versões
+
+`POST /api/v1/document-types/{type_id}/versions/{version}/deprecate`
+(`ocr_deprecate_document_type_version`) exige `contexts:read` e
+`contexts:publish`. O corpo fechado contém apenas
+`expected_lifecycle_revision`, inteiro estrito entre 1 e `2**31 - 1`.
+A versão no caminho deve ser um inteiro entre 1 e `2**63 - 1`; não há `latest`.
+`Idempotency-Key` é obrigatório, com as mesmas regras das demais escritas
+idempotentes do catálogo. Os escopos são verificados antes da leitura do corpo,
+limitado a 2 MiB.
+
+A ação usa compare-and-swap do ciclo de vida e retorna **200** tanto na primeira
+execução (`Idempotency-Replayed: false`) quanto na repetição persistida
+(`true`). O recibo contém somente `type_id`, `version`, `schema_sha256` e
+`lifecycle`, com estado `deprecated`, revisão 2 e `changed_at` em UTC.
+A mesma identidade/chave e requisição reproduzem exatamente o recibo original,
+inclusive após reinício ou edições posteriores, antes de verificar novamente
+CAS. Reutilizar a chave com outra requisição retorna 409 `idempotency_conflict`.
+Uma chave nova com revisão obsoleta retorna 409
+`type_lifecycle_revision_conflict`; com revisão atual de uma versão já
+depreciada, 409 `type_version_already_deprecated`.
+Versões inexistentes ou de outro proprietário retornam o mesmo 404
+`type_version_not_found`, inclusive para administrador. Corrupção do snapshot
+ou falha operacional de armazenamento retorna 503 `storage_unavailable`, sem
+expor conteúdo interno.
+
+O recibo de publicação (`TypeVersionSummary`) permanece histórico e estável,
+sem `lifecycle`, inclusive em replay após depreciação. GET e listagem de versões
+mostram o ciclo de vida atual junto do envelope imutável. Versões depreciadas
+continuam legíveis e listadas; bytes canônicos, schema e hash não mudam.
+Depreciar não libera quota, exclui versões ou permite reativação. Uma nova
+publicação nasce com ciclo de vida `published`, revisão 1.
+
+Esta entrega L2a expõe a ação no HTTP local. A ferramenta MCP e a rota no
+gateway OAuth ficam para os próximos incrementos; não há anúncio de suporte
+remoto, em clientes ou em produção. A vinculação efetiva no DocumentService
+ainda não foi integrada, portanto esta entrega não garante o bloqueio de novas
+associações de documentos de ponta a ponta.
+
 ## Validação
 
 `tests/test_http_contract.py` valida respostas reais e exemplos contra schemas
@@ -92,6 +131,10 @@ e as cinco operações de upload/admissão em `tests/test_upload_admission.py`.
 Cobre 401/403/404/405/409/422/500, PDF inteiro,
 Range 206/400/416, ausência de valores privados, request_id, cache e export sem
 runtime. A suíte de identidades mantém a autorização real HTTP/MCP.
+`tests/test_catalog_http.py` acrescenta o inventário exato das 12 operações de
+catálogo e casos de depreciação sobre ASGI e SQLite reais: recibos, ciclo de
+vida, CAS, replay persistido, integridade, limites e isolamento. O inventário
+MCP permanece independente, com 11 ferramentas de catálogo (31 no total).
 
 Referências consultadas em 15/10/2026:
 [respostas adicionais do FastAPI](https://fastapi.tiangolo.com/advanced/additional-responses/)

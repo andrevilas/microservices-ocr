@@ -21,7 +21,7 @@ from app.mcp_stdio import ApiClient, MAX_RESPONSE_BYTES
 from app.mcp_tools import OcrMCPServer
 from app.security import require_principal
 from app.services.storage_service import JobStore
-from test_catalog_http import CTX, CTX2, OPERATIONS, OWNER, TYP, TYP2
+from test_catalog_http import CTX, CTX2, OWNER, TYP, TYP2
 from test_mcp_vertical import ROOT
 
 READ_ONLY = {"ocr_list_contexts", "ocr_get_context", "ocr_list_document_types", "ocr_get_document_type",
@@ -71,7 +71,7 @@ def test_registry_lists_exactly_eleven_tools_with_schemas_and_annotations():
         async with Client(isolated_server(lambda *a: None)) as client:
             return (await client.list_tools()).tools
     tools = {tool.name: tool for tool in run(scenario())}
-    assert set(tools) == set(OPERATIONS) and len(tools) == 11
+    assert set(tools) == set(INVOKE_ARGS) == set(ARGUMENTS) and len(tools) == 11
     assert len(CATALOG_OPERATIONS) == 11 and {a[0] for a in INVOKE_ARGS.values()} == CATALOG_OPERATIONS
     for name, tool in tools.items():
         hints = tool.annotations
@@ -115,7 +115,7 @@ def test_tools_pass_typed_arguments_to_invoke_in_matrix_order():
             seen.append((operation, *args))
             raise ToolError("stop: recorded")
         async with Client(isolated_server(invoke)) as client:
-            for name in OPERATIONS:
+            for name in INVOKE_ARGS:
                 result = await client.call_tool(name, ARGUMENTS[name])
                 assert result.is_error
         return seen

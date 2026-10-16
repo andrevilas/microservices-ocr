@@ -11,6 +11,7 @@ from starlette.concurrency import run_in_threadpool
 from app.application import Principal
 from app.catalog_models import (
     ContextInput, ContextPage, ContextReceipt, ContextRecord, ContextSummary, ContextUpdateInput,
+    TypeDeprecateInput, TypeDeprecationReceipt,
     TypeInput, TypePage, TypePublishInput, TypeReceipt, TypeRecord, TypeSummary, TypeUpdateInput,
     TypeVersionPage, TypeVersionRecord, TypeVersionSummary, TypeVersionViewSummary,
 )
@@ -45,6 +46,9 @@ _EXAMPLES = {
     TypeSummary: TypeSummary(type_id=_TYPE_ID, context_id=_CONTEXT_ID, name=_TYPE.name, revision=1, created_at=_NOW, updated_at=_NOW),
     TypeRecord: TypeRecord(type_id=_TYPE_ID, context_id=_CONTEXT_ID, revision=2, created_at=_NOW, updated_at=_NOW, body=_TYPE),
     TypeVersionSummary: _VERSION,
+    TypeDeprecationReceipt: TypeDeprecationReceipt(
+        type_id=_TYPE_ID, version=1, schema_sha256=_COMPOSED.sha256,
+        lifecycle={"state": "deprecated", "revision": 2, "changed_at": _NOW}),
     TypeVersionRecord: TypeVersionRecord(**_VERSION.model_dump(), lifecycle=_VERSION_VIEW.lifecycle,
                                          schema=json.loads(_COMPOSED.canonical)),
 }
@@ -180,7 +184,7 @@ async def update_document_type(type_id: str, request: Request, principal: Princi
 async def publish_document_type(type_id: str, request: Request, response: Response, idempotency_key: str = _key(),
                                 principal: Principal = Depends(require_principal),
                                 services: CatalogServices = Depends(get_catalog_services)):
-    """Publish an immutable version from the current type and context revisions. 201 on creation; 200 replays the original summary even after later edits. Reference it by type_id + version + schema_sha256."""
+    """Publish an immutable version from the current type and context revisions. 201 on creation; 200 replays the stable historical summary even after later edits or deprecation. This receipt has no current lifecycle. Reference it by type_id + version + schema_sha256."""
     principal.require("contexts:read")
     principal.require("contexts:publish")
     body = await json_input(request, TypePublishInput, max_bytes=MAX_BODY_BYTES)
@@ -199,7 +203,7 @@ def list_document_type_versions(type_id: str, limit: int = _limit(),
                                 after: int | None = Query(None, ge=1, le=MAX_SQLITE_INT, description="Last version of the previous page."),
                                 principal: Principal = Depends(require_principal),
                                 services: CatalogServices = Depends(get_catalog_services)):
-    """List published version summaries (no schema) in ascending order."""
+    """List immutable version summaries with their current lifecycle (no schema) in ascending order. Deprecated versions remain listed."""
     return services.types.list_versions(principal, type_id, limit=limit, after=after)
 
 
@@ -209,5 +213,30 @@ def list_document_type_versions(type_id: str, limit: int = _limit(),
 def get_document_type_version(type_id: str, version: int = Path(..., ge=1, le=MAX_SQLITE_INT),
                               principal: Principal = Depends(require_principal),
                               services: CatalogServices = Depends(get_catalog_services)):
-    """Get one immutable version with its stored canonical schema under the wire name "schema". The hash covers exactly those canonical bytes."""
+    """Get one immutable version envelope and its current lifecycle, including deprecated versions. The stored canonical schema uses the wire name "schema"; its hash covers exactly those unchanged canonical bytes."""
     return services.types.get_version(principal, type_id, version)
+
+
+@router.post("/document-types/{type_id}/versions/{version}/deprecate",
+             response_model=TypeDeprecationReceipt, status_code=200,
+             operation_id="ocr_deprecate_document_type_version",
+             openapi_extra=_contract(TypeDeprecateInput, "contexts:read", "contexts:publish"),
+             responses={200: {
+                 **_reply(TypeDeprecationReceipt, 200, idempotent=True)[200],
+                 "description": "Version deprecated, or original persisted deprecation receipt replayed.",
+             }})
+async def deprecate_document_type_version(
+        type_id: str, request: Request, response: Response,
+        version: int = Path(..., ge=1, le=MAX_SQLITE_INT), idempotency_key: str = _key(),
+        principal: Principal = Depends(require_principal),
+        services: CatalogServices = Depends(get_catalog_services)):
+    """Deprecate a version with lifecycle compare-and-swap. Both the first action and a replay return 200. The stable receipt contains only the version reference and deprecated lifecycle revision 2. Canonical schema bytes remain unchanged and readable. This action does not release quota, delete a version or reactivate it."""
+    principal.require("contexts:read")
+    principal.require("contexts:publish")
+    body = await json_input(request, TypeDeprecateInput, max_bytes=MAX_BODY_BYTES)
+    receipt, replayed = await run_in_threadpool(
+        services.types.deprecate, principal, type_id, version,
+        expected_lifecycle_revision=body.expected_lifecycle_revision, key=idempotency_key)
+    response.status_code = 200
+    response.headers["Idempotency-Replayed"] = "true" if replayed else "false"
+    return receipt

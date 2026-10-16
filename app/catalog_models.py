@@ -112,7 +112,7 @@ class VersionLifecycle(BaseModel):
 
 
 class TypeDeprecateInput(BaseModel):
-    model_config = _INPUT
+    model_config = ConfigDict(**_INPUT, json_schema_extra={"examples": [{"expected_lifecycle_revision": 1}]})
     expected_lifecycle_revision: Revision
 
 

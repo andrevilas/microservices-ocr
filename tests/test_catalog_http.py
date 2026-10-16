@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
@@ -43,7 +44,9 @@ OPERATIONS = {
     "ocr_publish_document_type": ("post", "/api/v1/document-types/{type_id}/versions", ["contexts:read", "contexts:publish"]),
     "ocr_list_document_type_versions": ("get", "/api/v1/document-types/{type_id}/versions", ["contexts:read"]),
     "ocr_get_document_type_version": ("get", "/api/v1/document-types/{type_id}/versions/{version}", ["contexts:read"]),
+    "ocr_deprecate_document_type_version": ("post", "/api/v1/document-types/{type_id}/versions/{version}/deprecate", ["contexts:read", "contexts:publish"]),
 }
+DEPRECATE = "/document-types/{type_id}/versions/{version}/deprecate"
 
 
 class Harness:
@@ -176,6 +179,191 @@ def test_full_lifecycle_replays_snapshots_and_persistence(api):
     assert context["revision"] == 2 and context["body"]["name"] == CTX2["name"]
 
 
+def _sqlite_snapshot(h):
+    """Capture logical rows in the real stores, including persisted idempotency records."""
+    snapshot = {}
+    for path in sorted(h.root.rglob("*")):
+        if not path.is_file():
+            continue
+        with path.open("rb") as stream:
+            if stream.read(16) != b"SQLite format 3\x00":
+                continue
+        connection = sqlite3.connect(path)
+        try:
+            for (table,) in connection.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
+                quoted = '"' + table.replace('"', '""') + '"'
+                cursor = connection.execute(f"SELECT * FROM {quoted}")
+                snapshot[(str(path.relative_to(h.root)), table)] = (
+                    tuple(column[0] for column in cursor.description),
+                    tuple(sorted(cursor.fetchall(), key=repr)))
+        finally:
+            connection.close()
+    assert snapshot
+    return snapshot
+
+
+def _immutable_rows(snapshot, canonical):
+    rows = {(table, row) for table, (_, records) in snapshot.items() for row in records
+            if canonical in row or canonical.decode("utf-8") in row}
+    assert rows, "The stored canonical envelope must be present in the real SQLite snapshot."
+    return rows
+
+
+def _published_catalog(h):
+    cid, tid = make_catalog(h)
+    _, summary = h.call("post", "/document-types/{type_id}/versions", f"/document-types/{tid}/versions", 201,
+                        key="deprecate-publish-1", json={"expected_revision": 1, "expected_context_revision": 1})
+    _, record = h.call("get", "/document-types/{type_id}/versions/{version}", f"/document-types/{tid}/versions/1", 200)
+    assert record["lifecycle"] == {"state": "published", "revision": 1, "changed_at": summary["created_at"]}
+    return cid, tid, summary, record
+
+
+def test_deprecation_receipt_lifecycle_cas_and_persistence(api):
+    h = api()
+    cid, tid, published, original = _published_catalog(h)
+    base = f"/document-types/{tid}/versions"
+    path = base + "/1/deprecate"
+    body = {"expected_lifecycle_revision": 1}
+    canonical = json.dumps(original["schema"], sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    assert hashlib.sha256(canonical).hexdigest() == published["schema_sha256"]
+    immutable = _immutable_rows(_sqlite_snapshot(h), canonical)
+
+    response, receipt = h.call("post", DEPRECATE, path, 200, key="deprecate-key-001", json=body)
+    assert response.headers["idempotency-replayed"] == "false"
+    assert set(receipt) == {"type_id", "version", "schema_sha256", "lifecycle"}
+    assert (receipt["type_id"], receipt["version"], receipt["schema_sha256"]) == (tid, 1, published["schema_sha256"])
+    assert receipt["lifecycle"]["state"] == "deprecated" and receipt["lifecycle"]["revision"] == 2
+    assert receipt["lifecycle"]["changed_at"].endswith(("Z", "+00:00"))
+    _, current = h.call("get", "/document-types/{type_id}/versions/{version}", base + "/1", 200)
+    assert current == {**original, "lifecycle": receipt["lifecycle"]}
+    _, page = h.call("get", "/document-types/{type_id}/versions", base, 200)
+    assert page == {"items": [{**published, "lifecycle": receipt["lifecycle"]}], "next_cursor": None}
+    assert _immutable_rows(_sqlite_snapshot(h), canonical) == immutable
+
+    persisted = _sqlite_snapshot(h)
+    for key, revision, code in (
+        ("deprecate-key-002", 1, "type_lifecycle_revision_conflict"),
+        ("deprecate-key-003", 2, "type_version_already_deprecated"),
+        ("deprecate-key-001", 2, "idempotency_conflict"),
+    ):
+        _, error = h.call("post", DEPRECATE, path, 409, key=key,
+                          json={"expected_lifecycle_revision": revision})
+        assert error["error"]["code"] == code
+        assert _sqlite_snapshot(h) == persisted
+
+    h.close()
+    h.open()
+    h.call("put", "/contexts/{context_id}", f"/contexts/{cid}", 200,
+           json={"body": CTX2, "expected_revision": 1})
+    h.call("put", "/document-types/{type_id}", f"/document-types/{tid}", 200,
+           json={"body": TYP2, "expected_revision": 1})
+    persisted = _sqlite_snapshot(h)
+    response, replay = h.call("post", DEPRECATE, path, 200, key="deprecate-key-001", json=body)
+    assert replay == receipt and response.headers["idempotency-replayed"] == "true"
+    response, historical = h.call("post", "/document-types/{type_id}/versions", base, 200,
+                                  key="deprecate-publish-1", json={"expected_revision": 1, "expected_context_revision": 1})
+    assert historical == published and "lifecycle" not in historical
+    assert response.headers["idempotency-replayed"] == "true"
+    assert _sqlite_snapshot(h) == persisted
+    assert _immutable_rows(persisted, canonical) == immutable
+    _, reloaded = h.call("get", "/document-types/{type_id}/versions/{version}", base + "/1", 200)
+    assert reloaded == current
+    _, second = h.call("post", "/document-types/{type_id}/versions", base, 201,
+                       key="deprecate-publish-2", json={"expected_revision": 2, "expected_context_revision": 2})
+    assert second["version"] == 2
+    _, second_view = h.call("get", "/document-types/{type_id}/versions/{version}", base + "/2", 200)
+    assert second_view["lifecycle"] == {"state": "published", "revision": 1, "changed_at": second["created_at"]}
+
+
+def test_deprecation_denied_scopes_precede_body_parsing(api):
+    h = api()
+    _, tid, _, _ = _published_catalog(h)
+    persisted = _sqlite_snapshot(h)
+    for who in (
+        Principal("user:1", 1, frozenset({"contexts:read", "contexts:write"})),
+        Principal("user:1", 1, frozenset({"contexts:publish"})),
+        Principal("service:limited", None, frozenset({"jobs:read"})),
+    ):
+        h.who = who
+        for payload in (b'{"PRIVATE-SENTINEL":', b" " * (2 * 1024 * 1024 + 1)):
+            response = h.client.post(f"/api/v1/document-types/{tid}/versions/1/deprecate", content=payload,
+                                     headers={"Content-Type": "application/json", "Idempotency-Key": "denied-deprecate-1"})
+            assert h.check(response, DEPRECATE, "post", 403)["error"]["code"] == "insufficient_scope"
+            assert "PRIVATE" not in response.text
+    assert _sqlite_snapshot(h) == persisted
+
+
+def test_deprecation_input_and_version_boundaries(api):
+    h = api()
+    _, tid, _, _ = _published_catalog(h)
+    path = f"/document-types/{tid}/versions/1/deprecate"
+    body = {"expected_lifecycle_revision": 1}
+    persisted = _sqlite_snapshot(h)
+    invalid = [{"expected_lifecycle_revision": value} for value in (True, "1", 0, -1, 2**31, None)]
+    invalid += [{**body, name: "PRIVATE-SENTINEL"} for name in ("owner", "state", "reason")]
+    invalid.append({})
+    for payload in invalid:
+        response, _ = h.call("post", DEPRECATE, path, 422, key="invalid-deprecate-1", json=payload)
+        assert "PRIVATE" not in response.text
+    for headers in ({}, {"Idempotency-Key": "short"}):
+        h.check(h.client.post("/api/v1" + path, json=body, headers=headers), DEPRECATE, "post", 422)
+    for content, media, status in ((b'{"PRIVATE-SENTINEL":', "application/json", 422),
+                                   (b"PRIVATE-SENTINEL", "text/plain", 415)):
+        response = h.client.post("/api/v1" + path, content=content,
+                                 headers={"Content-Type": media, "Idempotency-Key": "invalid-deprecate-1"})
+        h.check(response, DEPRECATE, "post", status)
+        assert "PRIVATE" not in response.text
+
+    def oversized():
+        yield b"PRIVATE-SENTINEL"
+        for _ in range(2):
+            yield b" " * (1024 * 1024)
+    response = h.client.post("/api/v1" + path, content=oversized(),
+                             headers={"Content-Type": "application/json", "Idempotency-Key": "invalid-deprecate-1"})
+    assert h.check(response, DEPRECATE, "post", 413)["error"]["code"] == "request_too_large"
+    assert "PRIVATE" not in response.text
+    for version in ("latest", "0", "-1", str(2**63)):
+        h.call("post", DEPRECATE, f"/document-types/{tid}/versions/{version}/deprecate", 422,
+               key="invalid-deprecate-1", json=body)
+    for missing_type, version in ((tid, 2), ("0" * 32, 1)):
+        _, error = h.call("post", DEPRECATE, f"/document-types/{missing_type}/versions/{version}/deprecate", 404,
+                          key="missing-deprecate-1", json=body)
+        assert error["error"]["code"] == "type_version_not_found"
+    assert _sqlite_snapshot(h) == persisted
+
+
+def test_deprecation_corrupt_snapshot_is_sanitized_and_does_not_write(api, caplog):
+    h = api()
+    _, tid, _, record = _published_catalog(h)
+    canonical = json.dumps(record["schema"], sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    clean = _sqlite_snapshot(h)
+    locations = [(database, table, columns[index], value)
+                 for (database, table), (columns, rows) in clean.items() for row in rows
+                 for index, value in enumerate(row) if value == canonical or value == canonical.decode("utf-8")]
+    assert len(locations) == 1
+    database, table, column, original = locations[0]
+    quote = lambda name: '"' + name.replace('"', '""') + '"'
+    statement = f"UPDATE {quote(table)} SET {quote(column)}=? WHERE {quote(column)}=?"
+    sentinel = b"PRIVATE-SENTINEL" if isinstance(original, bytes) else "PRIVATE-SENTINEL"
+    connection = sqlite3.connect(h.root / database)
+    try:
+        assert connection.execute(statement, (sentinel, original)).rowcount == 1
+        connection.commit()
+        corrupted = _sqlite_snapshot(h)
+        try:
+            response, error = h.call("post", DEPRECATE, f"/document-types/{tid}/versions/1/deprecate", 503,
+                                     key="corrupt-deprecate-1", json={"expected_lifecycle_revision": 1})
+            assert error["error"]["code"] == "storage_unavailable"
+            assert "PRIVATE" not in response.text + caplog.text
+            assert _sqlite_snapshot(h) == corrupted
+        finally:
+            connection.execute(statement, (original, sentinel))
+            connection.commit()
+    finally:
+        connection.close()
+    assert _sqlite_snapshot(h) == clean
+
+
 def test_context_pagination(api):
     h = api()
     ids = {h.call("post", "/contexts", "/contexts", 201, key=f"create-context-{n}", json=CTX)[1]["context_id"] for n in range(3)}
@@ -207,13 +395,17 @@ def test_owner_isolation_and_scopes(api):
         ("post", "/document-types/{type_id}/versions", f"/document-types/{tid}/versions", "foreign-publish1", publish, typ_nf),
         ("get", "/document-types/{type_id}/versions", f"/document-types/{tid}/versions", None, None, typ_nf),
         ("get", "/document-types/{type_id}/versions/{version}", f"/document-types/{tid}/versions/1", None, None, ver_nf),
+        ("post", DEPRECATE, f"/document-types/{tid}/versions/1/deprecate", "foreign-deprecate1",
+         {"expected_lifecycle_revision": 1}, ver_nf),
     ]
+    foreign_snapshot = _sqlite_snapshot(h)
     for who in (Principal("user:2", 2, FULL), Principal("user:3", 3, FULL, is_admin=True)):  # admin is not special
         h.who = who
         for method, template, path, key, body, expected_code in foreign_requests:
             _, error = h.call(method, template, path, 404, key=key, **({"json": body} if body is not None else {}))
             assert error["error"]["code"] == expected_code
         assert h.call("get", "/contexts", "/contexts", 200)[1]["items"] == []
+    assert _sqlite_snapshot(h) == foreign_snapshot
     h.who = OWNER
     assert len(h.call("get", "/contexts/{context_id}/types", f"/contexts/{cid}/types", 200)[1]["items"]) == 1
 
@@ -298,7 +490,8 @@ def test_routing_boundary(api):
     for method, path, allow in (("delete", "/contexts", "GET, POST"), ("put", "/contexts", "GET, POST"),
                                 ("delete", "/contexts/" + "0" * 32, "GET, PUT"), ("patch", "/document-types/" + "0" * 32, "GET, PUT"),
                                 ("put", "/document-types/" + "0" * 32 + "/versions", "GET, POST"),
-                                ("post", "/document-types/" + "0" * 32 + "/versions/1", "GET")):
+                                ("post", "/document-types/" + "0" * 32 + "/versions/1", "GET"),
+                                ("get", "/document-types/" + "0" * 32 + "/versions/1/deprecate", "POST")):
         response = h.client.request(method, "/api/v1" + path)
         assert h.check(response, "/contexts", "get", 405)["error"]["code"] == "method_not_allowed"
         assert response.headers["allow"] == allow
@@ -327,6 +520,22 @@ def test_openapi_contract_and_wire_name(api):
         responses = found[operation_id][2]["responses"]
         assert "200" in responses and "201" in responses
         assert "Idempotency-Replayed" in responses["200"]["headers"] and "Idempotency-Replayed" in responses["201"]["headers"]
+    deprecation = found["ocr_deprecate_document_type_version"][2]
+    assert "200" in deprecation["responses"] and "201" not in deprecation["responses"]
+    success = deprecation["responses"]["200"]
+    assert "Idempotency-Replayed" in success["headers"]
+    assert "deprecated" in success["description"].lower() and "replayed" in success["description"].lower()
+    assert "409" in deprecation["responses"] and "503" in deprecation["responses"]
+    key = next(parameter for parameter in deprecation["parameters"] if parameter["name"] == "Idempotency-Key")
+    assert key["required"] and key["in"] == "header"
+    schemas = h.schema["components"]["schemas"]
+    assert schemas["TypeDeprecateInput"]["additionalProperties"] is False
+    assert schemas["TypeDeprecateInput"]["examples"] == [{"expected_lifecycle_revision": 1}]
+    example = success["content"]["application/json"]["example"]
+    assert set(example) == {"type_id", "version", "schema_sha256", "lifecycle"}
+    assert example["lifecycle"] == {"state": "deprecated", "revision": 2, "changed_at": "2026-10-16T12:00:00Z"}
+    Draft202012Validator({"components": h.schema["components"],
+                           **success["content"]["application/json"]["schema"]}).validate(example)
     properties = h.schema["components"]["schemas"]["TypeVersionRecord"]["properties"]
     assert "schema" in properties and "schema_document" not in properties
     code = "import app.catalog_models, app.routes.catalog"
@@ -363,7 +572,7 @@ def legacy_token(user_id, secret):
     return signing + "." + base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
 
 
-def test_legacy_jwt_without_new_claims_is_denied(tmp_path):
+def test_legacy_jwt_without_new_claims_is_denied(tmp_path, api):
     user = get_user_store().create_user("Legacy", f"{uuid4().hex}@test.invalid", "synthetic-test-password")
     store = JobStore(root_dir=tmp_path)
     app = create_app(lambda: JobApplication(store))  # real authentication, no override
@@ -375,6 +584,12 @@ def test_legacy_jwt_without_new_claims_is_denied(tmp_path):
         assert client.post("/api/v1/contexts", json=CTX, headers={**legacy, "Idempotency-Key": "legacy-key-0001"}).status_code == 403
         assert client.get("/api/v1/contexts").status_code == 401
         assert client.get("/api/v1/contexts", headers=current).status_code == 200
+        h = api("legacy-deprecation")
+        h.app.dependency_overrides.pop(require_principal)
+        response = h.client.post("/api/v1/document-types/" + "0" * 32 + "/versions/1/deprecate",
+                                 json={"expected_lifecycle_revision": 1},
+                                 headers={**legacy, "Idempotency-Key": "legacy-deprecate-1"})
+        assert h.check(response, DEPRECATE, "post", 403)["error"]["code"] == "insufficient_scope"
     finally:
         client.close()
         store._conn.close()
