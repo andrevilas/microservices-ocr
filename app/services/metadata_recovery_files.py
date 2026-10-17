@@ -1,22 +1,43 @@
-"""Linux physical recovery under a caller-held recovery authority and artifact lease.
+"""Linux physical namespace recovery and pinned confirmed-content verification.
 
-The caller must prove healthy SQL diagnosis, no active/committed references, and
-startup RuntimeLease or periodic cleanup claim plus maintenance artifact lease.
-Names and file contents never establish that authority. No WriteAttempt adoption,
-SQL, accounting, inventory, or directory creation is performed here.
+The caller must prove healthy SQL diagnosis, no active/committed references before
+removal, and startup RuntimeLease or periodic cleanup claim plus maintenance
+artifact lease. Names, inventory and contents never establish that authority.
+No WriteAttempt adoption, SQL, accounting, or directory creation is performed here.
+Verification results remain provisional until the physical context exits normally.
 """
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 import os
+from typing import Literal
 
-from app.metadata_models import MAX_SNAPSHOT_BYTES
+from app.metadata_models import MAX_SNAPSHOT_BYTES, ProvenanceRecord
 from app.services.metadata_files import (
     MetadataFiles, _Directories, _NOFOLLOW, _fingerprint, _guard, _hex,
-    _optional_stat, _reject, _sync,
+    _optional_stat, _reject, _snapshot, _sync,
 )
 
 
 MAX_INVENTORY_ENTRIES = 128
+
+
+@dataclass(frozen=True, slots=True)
+class ConfirmedExpectation:
+    revision_id: str
+    parent_revision_id: str | None
+    sha256: str
+    size_bytes: int
+    state: str
+    created_at: datetime
+    actor_subject: str
+    auth_source: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConfirmedCheck:
+    revision_id: str
+    status: Literal['valid', 'missing', 'content_invalid']
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +130,7 @@ class MetadataRecoveryFiles:
 class _RecoveryDirectory:
     def __init__(self):
         self._directories = _Directories()
+        self._target = None
         self._chain = None
         self._closed = False
         self._inventory_started = False
@@ -123,6 +145,7 @@ class _RecoveryDirectory:
         try:
             # This validates paths/identifiers only; it asserts no snapshot identity.
             target = files._target(job, '0' * 32, '0' * 64, 1)
+            self._target = target
             self._directories.open(target, allow_missing=True)
             self._chain = tuple(zip(self._directories.names,
                                     self._directories.identities))
@@ -243,6 +266,112 @@ class _RecoveryDirectory:
             except BaseException:
                 pass
             raise
+
+    @_guard
+    def verify_confirmed(
+        self, inventory, expectations: tuple[ConfirmedExpectation, ...]
+    ) -> tuple[ConfirmedCheck, ...]:
+        """Check caller-supplied draft expectations using original inventory pins.
+
+        No SQL authority is inferred and no snapshot is consumed. Results are
+        provisional until the enclosing context exits normally, including closes.
+        Approved snapshots require a future contract.
+        """
+        if (self._closed or self._orphan_attempted or self._inventory is None
+                or inventory is not self._inventory):
+            _reject()
+        if type(expectations) is not tuple or len(expectations) > 32:
+            _reject()
+        revisions = set()
+        # Validate every argument before reading any file, without coercion.
+        for expected in expectations:
+            if type(expected) is not ConfirmedExpectation:
+                _reject()
+            revision = _hex(expected.revision_id, 32)
+            if revision in revisions:
+                _reject()
+            revisions.add(revision)
+            if expected.parent_revision_id is not None:
+                if _hex(expected.parent_revision_id, 32) == revision:
+                    _reject()
+            _hex(expected.sha256, 64)
+            if (type(expected.size_bytes) is not int
+                    or not 1 <= expected.size_bytes <= MAX_SNAPSHOT_BYTES
+                    or type(expected.state) is not str or expected.state != 'draft'
+                    or type(expected.created_at) is not datetime
+                    or expected.created_at.tzinfo is None
+                    or expected.created_at.utcoffset() != timedelta(0)
+                    or type(expected.actor_subject) is not str
+                    or type(expected.auth_source) is not str):
+                _reject()
+            ProvenanceRecord.model_validate({
+                'actor_subject': expected.actor_subject,
+                'auth_source': expected.auth_source,
+                'recorded_at': expected.created_at,
+                'execution_id': None,
+            }, strict=True)
+
+        entries = self._inventory_entries
+        pins = self._inventory_pins
+        self._validate_inventory(entries, pins)
+        confirmed_names = {revision + '.json' for revision in revisions}
+        groups = {}
+        for name, value in entries.items():
+            groups.setdefault(value[0][0], []).append(name)
+        # Check the entire captured namespace, including unselected files.
+        for group in groups.values():
+            count = len(group)
+            if (count not in (1, 2)
+                    or any(entries[name][1] != count for name in group)
+                    or (count == 2
+                        and (sum(name.startswith('.') for name in group) != 1
+                             or any(name in confirmed_names for name in group)))):
+                _reject()
+
+        results = []
+        for expected in expectations:
+            self._validate_inventory(entries, pins)
+            name = expected.revision_id + '.json'
+            status = 'missing'
+            if name in entries:
+                target = replace(
+                    self._target, revision_id=expected.revision_id,
+                    sha256=expected.sha256, size_bytes=expected.size_bytes,
+                )
+                fd = pins[name][0]
+                data = bytearray()
+                limit = MAX_SNAPSHOT_BYTES + 1
+                while len(data) < limit:
+                    chunk = os.pread(fd, min(65536, limit - len(data)), len(data))
+                    if not chunk:
+                        break
+                    data.extend(chunk)
+                self._validate_inventory(entries, pins)
+                # Only pure content validation can produce content_invalid.
+                # Read/stat/ancestry failures never enter this handler.
+                try:
+                    snapshot = _snapshot(bytes(data), target)
+                    if (snapshot.parent_revision_id != expected.parent_revision_id
+                            or snapshot.state != expected.state
+                            or snapshot.created_at != expected.created_at
+                            or snapshot.author.actor_subject != expected.actor_subject
+                            or snapshot.author.auth_source != expected.auth_source
+                            or snapshot.author.recorded_at != expected.created_at
+                            or snapshot.author.execution_id is not None
+                            or snapshot.approval is not None):
+                        _reject()
+                except ValueError:
+                    status = 'content_invalid'
+                else:
+                    status = 'valid'
+                    del snapshot
+                finally:
+                    del data
+            self._validate_inventory(entries, pins)
+            results.append(ConfirmedCheck(expected.revision_id, status))
+        # Also required for an empty expectation tuple.
+        self._validate_inventory(entries, pins)
+        return tuple(results)
 
     @_guard
     def remove_orphans(self, inventory, names, *, protected_names) -> None:
