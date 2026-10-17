@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 
 from app.services.metadata_recovery_files import MetadataRecoveryFiles
 from app.services.metadata_store import (
@@ -70,6 +71,9 @@ class MetadataRecovery:
         self.physical = physical
         self.jobs = store.jobs
         self.root = _absolute_path(self.jobs.root_dir)
+        self._periodic_lock = Lock()
+        self._periodic_after = ''
+        self._periodic_ceiling = None
         # _target is the existing pure path/binding validator. A real JobRecord
         # probe also checks the physical root binding when the job cache is empty;
         # no directory is opened, created, scanned, or resolved here.
@@ -112,7 +116,8 @@ class MetadataRecovery:
     def collect_cleanup(self, limit=128) -> RecoveryCounters:
         """Recover at most limit cleanup rows; active rows never age into eligibility."""
         _input(type(limit) is int and 1 <= limit <= 1024)
-        return self._collect(limit=limit, runtime_lease=None)
+        with self._periodic_lock:
+            return self._collect(limit=limit, runtime_lease=None)
 
     @_guard
     def recover_pending_startup(self, runtime_lease: RuntimeLease) -> RecoveryCounters:
@@ -158,24 +163,47 @@ class MetadataRecovery:
         return tuple(row[0] for row in rows)
 
     def _collect(self, *, limit, runtime_lease):
-        ceiling = self._ceiling(runtime_lease)
+        periodic = runtime_lease is None
+        if periodic:
+            # collect_cleanup owns the dedicated lock throughout this call.
+            # Freeze the ceiling across calls so arrivals cannot delay wrap.
+            if self._periodic_ceiling is None:
+                self._periodic_ceiling = self._ceiling(None)
+            ceiling = self._periodic_ceiling
+            after = self._periodic_after
+        else:
+            ceiling = self._ceiling(runtime_lease)
+            after = ''
         scanned = recovered = skipped = failed = 0
-        after = ''
         while ceiling is not None and (limit is None or scanned < limit):
             size = 32 if limit is None else min(32, limit - scanned)
             ids = self._page(after, ceiling, size, runtime_lease)
             if not ids:
+                if periodic:
+                    self._periodic_after = ''
+                    self._periodic_ceiling = None
                 break
             for pending_id in ids:
                 scanned += 1
                 outcome = self._recover_one(pending_id, runtime_lease)
+                # Publish only completed attempts, including failures and skips.
+                # A later page failure preserves all progress already made;
+                # an interrupted item remains eligible for the next attempt.
+                after = pending_id
+                if periodic:
+                    self._periodic_after = after
                 if outcome == 'recovered':
                     recovered += 1
                 elif outcome == 'skipped':
                     skipped += 1
                 else:
                     failed += 1
-            after = ids[-1]
+            if periodic and after == ceiling:
+                # Start a fresh cycle on the NEXT call; never revisit an ID
+                # within this call, even when its budget has room remaining.
+                self._periodic_after = ''
+                self._periodic_ceiling = None
+                break
         return RecoveryCounters(scanned, recovered, skipped, failed)
 
     def _job_locked(self, conn, pending):
