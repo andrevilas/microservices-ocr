@@ -1,25 +1,36 @@
-"""Internal C4b binding preparation, not a document metadata save API.
+"""Manual document metadata saves through an internal Python interface.
 
-The future DocumentMetadataService must authenticate, hold an artifact lease,
-preflight replay, and read the exact HEAD through its index and verified files
-before calling prepare. This module does not implement those prerequisites,
-normalization, replay, persistence, or public save/get/list operations.
+DocumentMetadataService is not exposed through HTTP or MCP. Binding preparation
+also remains available to trusted callers holding their own admission and lease.
 
 Pass plan.check_locked as MetadataStorage.write_reserved's trusted callback.
 The caller must own the shared JobStore lock and write transaction. Lock.locked
 can detect an absent lock, but cannot establish which thread owns it.
 """
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import hashlib
 from typing import Callable
 from uuid import uuid4
 
 from app.application import ApplicationError, Principal
+from app.document_models import FieldSpec
+from app.metadata_evidence import assess_snapshot
 from app.metadata_models import (
-    MetadataSnapshot, PersistentID, SHA256, SchemaSnapshot, SegmentInput,
+    MetadataSnapshot, PersistentID, ProvenanceRecord, SaveMetadataReceipt,
+    SHA256, SchemaSnapshot, SegmentInput, SegmentRecord,
     snapshot_bytes, validate_manual_input,
 )
-from app.services.metadata_store import _guard, _hex, _integer
+from app.metadata_validation import MetadataValidationError, normalize_manual_values
+from app.services.batch_service import request_identity
+from app.services.canonical_text_service import CanonicalTextService
+from app.services.metadata_canonical import MetadataCanonicalSource
+from app.services.metadata_files import MetadataFiles, _absolute
+from app.services.metadata_runtime import MetadataServices
+from app.services.metadata_storage import MetadataStorage
+from app.services.metadata_store import (
+    MetadataStore, _guard, _hex, _integer, _receipt, _require,
+)
 from app.services.storage_service import JobStore
 from app.services.type_service import TypeService
 
@@ -212,3 +223,186 @@ class MetadataBindingPreparer:
                   for schema in schemas.values()),
             check_locked,
         )
+
+
+class DocumentMetadataService:
+    """Save manual drafts using an existing, initialized shared runtime only."""
+
+    @_guard
+    def __init__(self, bundle: MetadataServices, types: TypeService):
+        _require(isinstance(bundle, MetadataServices)
+                 and isinstance(types, TypeService))
+        _require(isinstance(bundle.index, MetadataStore)
+                 and isinstance(bundle.files, MetadataFiles)
+                 and isinstance(bundle.storage, MetadataStorage)
+                 and isinstance(bundle.jobs, JobStore))
+        self.bundle = bundle
+        self.types = types
+        self.canonical = CanonicalTextService(bundle.jobs)
+        self._shared = (bundle, bundle.index, bundle.files, bundle.storage,
+                        bundle.jobs, types, self.canonical)
+        self._check_shared()
+
+    def _check_shared(self):
+        bundle, index, files, storage, jobs, types, canonical = self._shared
+        _require(self.bundle is bundle and self.types is types
+                 and self.canonical is canonical
+                 and bundle.index is index and bundle.files is files
+                 and bundle.storage is storage and bundle.jobs is jobs
+                 and index.jobs is jobs and types.jobs is jobs
+                 and storage.store is index and storage.files is files
+                 and canonical.store is jobs)
+        _require(files._root == _absolute(jobs.root_dir))
+
+    @staticmethod
+    def _validation_error(error):
+        return (_unavailable() if error.code == "canonical_source_invalid"
+                else _invalid())
+
+    @_guard
+    def save(self, principal, job_id, body, *, key) -> tuple[SaveMetadataReceipt, bool]:
+        """Return a detached receipt and whether this request was replayed."""
+        self._check_shared()
+        bundle = self.bundle
+        bundle.ensure_healthy()
+        index, files, storage, jobs = (
+            bundle.index, bundle.files, bundle.storage, bundle.jobs)
+        try:
+            request = validate_manual_input(body)
+        except ValueError:
+            raise _invalid() from None
+        key_hash, request_hash = request_identity(key, {
+            "operation": "document-metadata-save/1",
+            "job_id": job_id,
+            "input": request.model_dump(mode="json", by_alias=True, warnings="error"),
+        })
+        admission = index.preflight(
+            principal, job_id, key_hash=key_hash, request_hash=request_hash)
+        if admission.receipt is not None:
+            return _receipt(admission.receipt), True
+        index._cas(admission.head, request.expected_head, request.expected_sha256)
+
+        # This is the sole lease; it remains open through publication and cleanup.
+        with self.canonical.open(principal, job_id) as prepared:
+            manifest = prepared.manifest
+            with index._transaction() as conn:
+                owner, auth_source = index._admit(principal, job_id, write=True)
+                current = index._head(conn, owner, job_id)
+                index._cas(current, request.expected_head, request.expected_sha256)
+                job = jobs.jobs.get(job_id)
+                _require(job is not None and job.job_id == job_id
+                         and job.effective_owner == owner)
+                revision = None
+                if current is not None:
+                    revision = index._revision(conn, current.revision_id)
+                    _require(revision is not None
+                             and revision.owner == owner and revision.job_id == job_id
+                             and revision.revision_id == current.revision_id
+                             and revision.sha256 == current.sha256
+                             and revision.state in ("draft", "approved"))
+
+            # Filesystem reads and serialization always run outside the SQL lock.
+            head = None
+            if revision is not None:
+                head = files.read(
+                    job, revision_id=revision.revision_id,
+                    sha256=revision.sha256, size_bytes=revision.size_bytes)
+                try:
+                    encoded_head = snapshot_bytes(head)
+                    head = MetadataSnapshot.model_validate_json(encoded_head, strict=True)
+                except Exception:
+                    raise _unavailable() from None
+                _require(hashlib.sha256(encoded_head).hexdigest() == revision.sha256
+                         and len(encoded_head) == revision.size_bytes
+                         and head.revision_id == revision.revision_id
+                         and head.parent_revision_id == revision.parent_revision_id
+                         and head.created_at == revision.created_at
+                         and head.state == revision.state)
+                _require(
+                    head.job_id == manifest["job_id"] == job_id
+                    and head.document_id == manifest["document_id"] == job_id
+                    and head.artifact_version == manifest["artifact_version"]
+                    and head.text_version == manifest["text_version"]
+                    and head.canonical_sha256 == manifest["sha256"]
+                    and head.input_pdf_sha256 == manifest["input_pdf_sha256"]
+                    and head.output_pdf_sha256 == manifest["output_pdf_sha256"]
+                    and head.page_count == manifest["page_count"]
+                    and head.parent_job_id == manifest.get("parent_job_id"))
+
+            plan = MetadataBindingPreparer(jobs, self.types).prepare(
+                principal, job_id, manifest["page_count"], request, head)
+            source = MetadataCanonicalSource(prepared)
+            source_errors = []
+
+            def page_source(number):
+                # assess_snapshot sanitizes arbitrary callback failures. Preserve
+                # framework storage/integrity errors for the outer guard instead.
+                try:
+                    return source(number)
+                except ApplicationError as error:
+                    source_errors.append(error)
+                    raise
+
+            created_at = datetime.now(timezone.utc)
+            revision_id = uuid4().hex
+            try:
+                # _admit supplies the principal's actual admitted auth source,
+                # including the existing restrictions on service principals.
+                provenance = ProvenanceRecord(
+                    actor_subject=principal.subject, auth_source=auth_source,
+                    recorded_at=created_at, execution_id=None)
+                schemas = list(plan.schemas)
+                fields_by_hash = {
+                    schema.schema_sha256: [
+                        FieldSpec.model_validate(value, strict=True)
+                        for value in schema.schema_document["fields"]
+                    ] for schema in schemas
+                }
+                segments = []
+                for segment in plan.segments:
+                    records = normalize_manual_values(
+                        fields_by_hash[segment.schema_sha256], segment.fields, provenance)
+                    segments.append(SegmentRecord(
+                        segment_id=segment.segment_id,
+                        page_start=segment.page_start, page_end=segment.page_end,
+                        context_id=segment.context_id, type_id=segment.type_id,
+                        type_version=segment.type_version,
+                        schema_sha256=segment.schema_sha256, fields=records))
+                snapshot = MetadataSnapshot(
+                    revision_id=revision_id,
+                    parent_revision_id=request.expected_head,
+                    job_id=manifest["job_id"], document_id=manifest["document_id"],
+                    artifact_version=manifest["artifact_version"],
+                    text_version=manifest["text_version"],
+                    canonical_sha256=manifest["sha256"],
+                    input_pdf_sha256=manifest["input_pdf_sha256"],
+                    output_pdf_sha256=manifest["output_pdf_sha256"],
+                    page_count=manifest["page_count"],
+                    parent_job_id=manifest.get("parent_job_id"),
+                    created_at=created_at, author=provenance,
+                    schemas=schemas, segments=segments, state="draft", approval=None)
+                # Readiness blockers are allowed for drafts; invalid quotes are not.
+                assess_snapshot(snapshot, page_source)
+                canonical_bytes = snapshot_bytes(snapshot)
+                sha256 = hashlib.sha256(canonical_bytes).hexdigest()
+                receipt = SaveMetadataReceipt(
+                    revision_id=revision_id, sha256=sha256, segment_ids=plan.segment_ids)
+            except MetadataValidationError as error:
+                if source_errors:
+                    raise source_errors[0] from None
+                raise self._validation_error(error) from None
+            except ValueError:
+                raise _invalid() from None
+
+            check_bindings_locked = plan.check_locked
+            reserved = index.reserve(
+                principal, job_id, key_hash=key_hash, request_hash=request_hash,
+                expected_head=request.expected_head,
+                expected_sha256=request.expected_sha256,
+                revision_id=revision_id, sha256=sha256,
+                size_bytes=len(canonical_bytes), created_at=created_at)
+            if reserved.receipt is not None:
+                return _receipt(reserved.receipt), True
+            return storage.write_reserved(
+                principal, job, reserved.pending, receipt, canonical_bytes,
+                check_bindings_locked=check_bindings_locked), False
