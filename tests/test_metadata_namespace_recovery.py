@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 
+import app.services.metadata_store as metadata_store
 from app.metadata_models import MAX_SNAPSHOT_BYTES
 from app.services.metadata_namespace_recovery import (
     MetadataNamespaceRecovery, NamespaceOccurrence, NamespaceRecoveryCounters,
@@ -228,7 +229,7 @@ def test_purged_owned_ledger_and_unowned_empty_skip_physical(coordination, monke
     unowned_markers = markers(c, unowned.job_id)
     input_path = unowned.working_dir / 'original.pdf'
     retained_input = input_path.read_bytes()
-    baseline = memory(c)
+    before, baseline, accounting = sql_state(c), memory(c), charges(c)
     recovery = collector(c)
     reconciled, opened_ids = [], []
     original_reconcile, original_open = c.store.reconcile_purged_job, recovery.physical.open
@@ -250,36 +251,58 @@ def test_purged_owned_ledger_and_unowned_empty_skip_physical(coordination, monke
     assert reconciled == [w.job.job_id] and opened_ids == [c.job.job_id]
     assert result.counters == NamespaceRecoveryCounters(jobs_scanned=3, jobs_verified=1, purged_jobs=2)
     assert result.pending == RecoveryCounters() and result.occurrences == ()
-    assert all(not rows for rows in sql_state(c).values())
-    assert charges(c) == (0, 0, 0, 0, 0, 0) and memory(c) == baseline
+    after = sql_state(c)
+    assert before['metadata_operations'] and before['metadata_audit']
+    assert after['metadata_operations'] == before['metadata_operations']
+    assert after['metadata_audit'] == before['metadata_audit']
+    # Recent purge retains the complete committed ledger for thirty days.
+    assert after['metadata_revisions'] == before['metadata_revisions']
+    assert after['metadata_heads'] == before['metadata_heads']
+    assert after['metadata_pending'] == ()
+    assert charges(c) == accounting == (1, len(w.data), 1, MAX_SNAPSHOT_BYTES, 0, 0)
+    # Retained historical rows consume no capacity after durable physical purge.
+    with c.jobs._lock:
+        charged = c.jobs._get_conn().execute(
+            'SELECT COALESCE(SUM(m.slots),0), COALESCE(SUM(m.bytes),0) FROM ('
+            'SELECT job_id,1 AS slots,size_bytes AS bytes FROM metadata_revisions '
+            'UNION ALL SELECT job_id,approval_slots,approval_bytes FROM metadata_heads '
+            'UNION ALL SELECT job_id,charged_slots,charged_bytes FROM metadata_pending'
+            ') m JOIN jobs j ON j.job_id=m.job_id '
+            'WHERE j.artifacts_purged_at IS NULL'
+        ).fetchone()
+    assert tuple(charged) == (0, 0) and memory(c) == baseline
     assert markers(c, w.job.job_id) == owned_markers
     assert markers(c, unowned.job_id) == unowned_markers
     assert c.jobs.jobs[unowned.job_id].effective_owner is None
     assert input_path.read_bytes() == retained_input
 
 
-def test_real_129_missing_confirmed_jobs_bound_occurrences_and_freeze_results(coordination):
+def test_real_129_missing_confirmed_jobs_bound_occurrences_and_freeze_results(coordination, monkeypatch):
     c = coordination
-    attempts = [committed(c) for _ in range(129)]
-    for w in attempts:
-        w.final.unlink()
-    before, baseline, accounting = sql_state(c), memory(c), charges(c)
-    with runtime(c.jobs.root_dir) as held:
-        result = collector(c).recover_startup(held)
-    assert result.counters == NamespaceRecoveryCounters(
-        jobs_scanned=130, jobs_verified=130, confirmed_missing=129)
-    ordered = sorted(attempts, key=lambda w: w.job.job_id)
-    assert type(result.occurrences) is tuple
-    assert result.occurrences == tuple(NamespaceOccurrence(
-        w.job.job_id, w.pending.revision_id, 'missing') for w in ordered[:128])
-    assert result.truncated_occurrences == 1 and result.pending == RecoveryCounters()
-    for obj, field in ((result, 'truncated_occurrences'), (result.counters, 'jobs_scanned'),
-                       (result.pending, 'scanned'), (result.occurrences[0], 'code')):
-        with pytest.raises(FrozenInstanceError):
-            setattr(obj, field, None)
-    assert sql_state(c) == before and charges(c) == accounting
-    assert accounting[:3] == (129, sum(len(w.data) for w in attempts), 129)
-    assert memory(c) == baseline
+    original_owner_limit = metadata_store.MAX_OWNER_BYTES
+    with monkeypatch.context() as patch:
+        patch.setattr(metadata_store, 'MAX_OWNER_BYTES', 129 * 2 * MAX_SNAPSHOT_BYTES)
+        attempts = [committed(c) for _ in range(129)]
+        for w in attempts:
+            w.final.unlink()
+        before, baseline, accounting = sql_state(c), memory(c), charges(c)
+        with runtime(c.jobs.root_dir) as held:
+            result = collector(c).recover_startup(held)
+        assert result.counters == NamespaceRecoveryCounters(
+            jobs_scanned=130, jobs_verified=130, confirmed_missing=129)
+        ordered = sorted(attempts, key=lambda w: w.job.job_id)
+        assert type(result.occurrences) is tuple
+        assert result.occurrences == tuple(NamespaceOccurrence(
+            w.job.job_id, w.pending.revision_id, 'missing') for w in ordered[:128])
+        assert result.truncated_occurrences == 1 and result.pending == RecoveryCounters()
+        for obj, field in ((result, 'truncated_occurrences'), (result.counters, 'jobs_scanned'),
+                           (result.pending, 'scanned'), (result.occurrences[0], 'code')):
+            with pytest.raises(FrozenInstanceError):
+                setattr(obj, field, None)
+        assert sql_state(c) == before and charges(c) == accounting
+        assert accounting[:3] == (129, sum(len(w.data) for w in attempts), 129)
+        assert memory(c) == baseline
+    assert metadata_store.MAX_OWNER_BYTES == original_owner_limit
 
 
 def test_invalid_runtime_authority_rejects_before_sql_or_namespace_io(coordination, monkeypatch, tmp_path):
