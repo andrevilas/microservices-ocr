@@ -149,6 +149,7 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
             processor.start()
             metadata.ensure_healthy()
             export_processor.start()
+            metadata.ensure_healthy()
             async with mcp_server.session_manager.run():
                 yield
         finally:
