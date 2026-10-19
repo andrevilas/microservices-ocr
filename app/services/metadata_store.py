@@ -1187,6 +1187,7 @@ class MetadataStore:
         deleted = conn.execute("DELETE FROM metadata_pending WHERE pending_id=?", (pending_id,))
         _require(deleted.rowcount == 1)
         self._quota(conn, owner, pending.job_id)
+        self._validate_purged_ledger_locked(conn, owner, pending.job_id, _check_active=False)
         return receipt
 
     @_guard

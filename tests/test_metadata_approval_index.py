@@ -312,15 +312,26 @@ def test_sql_failure_after_each_mutation_restores_ledger_and_charges(h, principa
     assert totals(h) == (before[1][0], before[1][1] - MIB + 456)
 
 
-def test_post_mutation_quota_validation_rolls_back_trigger_corruption(h, principal, approver):
+@pytest.mark.parametrize('damage', ['head', 'audit_auth', 'receipt_json'])
+def test_post_mutation_quota_validation_rolls_back_trigger_corruption(h, principal, approver, damage):
     save(h, principal, args())
     _, pending = reserve_approval(h, approver)
-    sql(h, '''CREATE TRIGGER corrupt_after_delete AFTER DELETE ON metadata_pending
-        BEGIN UPDATE metadata_heads SET approval_slots=1,approval_bytes=1048576; END''')
+    mutations = {
+        'head': 'UPDATE metadata_heads SET approval_slots=1,approval_bytes=1048576;',
+        'audit_auth': "UPDATE metadata_audit SET auth_source='service' WHERE action='approve';",
+        'receipt_json': "UPDATE metadata_operations SET receipt_json='{}' WHERE operation='approve-v1';",
+    }
+    sql(h, 'CREATE TRIGGER corrupt_after_delete AFTER DELETE ON metadata_pending BEGIN ' +
+        mutations[damage] + ' END')
     before = state(h), totals(h)
     with error(503, 'metadata_unavailable'):
         commit_approval(h, approver, pending)
     assert (state(h), totals(h)) == before
+    sql(h, 'DROP TRIGGER corrupt_after_delete')
+    receipt = approval_receipt(pending)
+    assert commit_approval(h, approver, pending, receipt) == receipt
+    assert totals(h) == (before[1][0], before[1][1] - MIB + pending.size_bytes)
+    assert outcome(h, pending, receipt) == 'confirmed'
 
 
 @pytest.mark.parametrize('signal', [None, KeyboardInterrupt('SENSITIVE_MARKER'), SystemExit('SENSITIVE_MARKER')])
