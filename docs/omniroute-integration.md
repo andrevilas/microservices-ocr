@@ -7,9 +7,9 @@ Atividade LPM `J7DhQOqJ58XE4xR2hcWp`. Revisão proposta 1, 19/10/2026. Primeiro 
 | Alvo | Evidência recebida | O que falta |
 |---|---|---|
 | Launcher Windows `omni-work.exe`, release `2026.10.14.1`, com SSH ao i9 | Listagem confirmou `local_only=true` e `paid_routes_enabled=false`; reunião literal sintética concluída | Contrato de adaptação ao OCR, autenticação/isolamento e testes de falha; capacidades não ensaiadas precisam de prova própria |
-| OmniRoute Web/API na VM114, versão histórica `3.8.51` | Planilha histórica de 14/10, lida em 19/10: `https://omniroute-pilot.tail80929c.ts.net/`, HTTP 200 | Contrato autenticado atual, protocolo, endpoints, modelos, limites, custos e autorização funcional |
+| OmniRoute Web/API na VM114, versão histórica `3.8.51` | Planilha histórica de 14/10, lida em 19/10: `https://omniroute-pilot.tail80929c.ts.net/`, HTTP 200; verificação raiz informada de 19/10 observou redirecionamentos HTTPS e login com HTTP 200 | Contrato autenticado atual, protocolo, endpoints, modelos, limites, custos e autorização funcional |
 
-HTTP 200 histórico prova somente a resposta observada, não autenticação funcional. Um 401 histórico não demonstra indisponibilidade. Não transferir capacidades, versão ou garantias do launcher para a VM114. Não há contrato autenticado atual confirmado da VM114 nem rotas de provedor habilitadas nesta evidência.
+HTTP 200 histórico e a chegada ao login por redirecionamentos HTTPS em 19/10 comprovam somente as respostas Web observadas, sem demonstrar API autenticada ou operação funcional. Um 401 histórico não demonstra indisponibilidade. Não transferir capacidades, versão ou garantias do launcher para a VM114. `paid_routes_enabled=false` é evidência exclusiva do launcher local; os provedores existentes da VM114 permanecem inalterados. Não há contrato autenticado atual confirmado da VM114 nem evidência de desabilitação global de provedores.
 
 ## Capacidades locais informadas
 
@@ -18,7 +18,7 @@ HTTP 200 histórico prova somente a resposta observada, não autenticação func
 - `consulta`: pesquisa no Kiwix local com consulta de 1–200 caracteres.
 - `recuperar`: recuperação pelo ID de execução concluída.
 
-Esses nomes descrevem o launcher local; não são ferramentas MCP do OCR nem endpoints da VM114. Confirmar a sintaxe no contrato da release antes de automatizar; este runbook não inventa flags ou caminhos locais.
+Esses nomes descrevem o launcher local; não são ferramentas MCP do OCR nem endpoints da VM114. Confirmar a sintaxe no contrato da release antes de automatizar; este runbook não inventa flags ou caminhos locais. Nenhum comando do launcher admite retry automático, inclusive `recuperar`. Para uma execução confirmadamente concluída, recuperar pelo mesmo ID; não gerar um novo ID para contornar falha, incerteza ou bloqueio. Reconciliar resultados incertos pelo contrato ou por revisão manual antes de qualquer nova execução autorizada.
 
 ### Evidência sintética disponível
 
@@ -26,13 +26,14 @@ Esses nomes descrevem o launcher local; não são ferramentas MCP do OCR nem end
 |---|---|
 | Execução | `OCR-INT-01-20261019` |
 | Operação / projeto | `reunir` / `OCR` |
-| Conteúdo preservado | `014/2026` e `R$123,45` |
-| Saída | 168 bytes; exit code 0 |
-| SHA-256 | `c8cb1bfb72efc3574c4c5d9b0c71aa754d71fd25cd2aac9294bde0cbcd845722` |
+| Conteúdo literal preservado | `014/2026` e `R$ 123,45` |
+| Entrada sintética | 168 bytes |
+| SHA-256 da entrada | `c8cb1bfb72efc3574c4c5d9b0c71aa754d71fd25cd2aac9294bde0cbcd845722` |
+| Resultado da execução | exit code 0; tamanho e hash da saída não estabelecidos por esses valores de entrada |
 | Geração | `model_generation_enabled=false` |
-| Revisão | Executor indicava revisão pendente; verificação raiz confirmou os campos literais e o hash |
+| Revisão | Executor indicava revisão pendente; verificação raiz confirmou os campos literais e o hash da entrada |
 
-O ensaio comprova reunião literal naquele fluxo. Não comprova OCR de imagem, RAG, inferência, integração com a aplicação OCR ou autenticação da VM114. Não estender esse resultado a `documentos`, `consulta` ou `recuperar` sem ensaios próprios.
+O ensaio comprova reunião literal naquele fluxo. Os 168 bytes e o SHA-256 registrados identificam a entrada, não a saída. Não comprova OCR de imagem, RAG, inferência, integração com a aplicação OCR ou autenticação da VM114. Não estender esse resultado a `documentos`, `consulta` ou `recuperar` sem ensaios próprios.
 
 ## Descoberta controlada da VM114
 
@@ -75,17 +76,17 @@ Configuração proposta: backend, origem/launcher permitido, versão/hash do con
 
 O adaptador recebe somente o mínimo autorizado; respostas passam por validação de schema e evidências. Registrar evento de rastreio e identidade de modelo quando efetivamente usados. Para `reunir`, registrar operação literal e geração desabilitada; não fabricar tokens ou modelo. Modelo/uso desconhecidos bloqueiam operações que dependam de controle de custo.
 
-Proibir chamada de retorno ao OCR pelo backend de enriquecimento; validar origem e contador de saltos no despacho, sem confiar em instruções retornadas. Circuit breaker, fila limitada e concorrência finita impedem tempestades de chamadas. Não habilitar nuvem como fallback de falha local.
+Proibir chamada de retorno ao OCR pelo backend de enriquecimento; validar origem e contador de saltos no despacho, sem confiar em instruções retornadas. Circuit breaker, fila limitada e concorrência finita impedem tempestades de chamadas. Não habilitar nuvem como fallback de falha local nem repetir inferência paga automaticamente. O bloqueio de rotas pagas observado no launcher não altera a configuração dos provedores existentes da VM114.
 
 ## Runbook do fluxo OCR existente
 
 1. Provisionar serviço individual pelo administrador humano, sem imprimir segredo. Para submissão e leitura: `jobs:submit`, `jobs:read`, `artifacts:read`; conceder cancelamento/exclusão só se necessários. Serviços distintos não compartilham documentos implicitamente.
 2. Consultar `ocr_whoami` e `ocr_get_capabilities`. Escolher opções aceitas; `extract_text` só extrai texto existente. Capacidade anunciada não substitui ensaio de OCR real.
 3. Reservar com `ocr_prepare_upload`; persistir o recibo antes de continuar. Enviar PDF por `PUT` HTTP na `content_url` relativa à origem da API, autenticado e por streaming. Confirmar `ready` com `ocr_get_upload`.
-4. Submeter por `ocr_submit_job`, persistindo `upload_id`, chave e opções. Após timeout, repetir a mesma chave e opções; o recibo é histórico. Consultar estado com `ocr_get_job`, respeitando `poll_after_seconds`, sem manter uma chamada aberta por todo o processamento.
+4. Submeter por `ocr_submit_job`, persistindo `upload_id`, chave e opções. Após timeout, reconciliar a admissão conforme o contrato idempotente; eventual repetição preserva a mesma chave e opções e fica fora da política automática de três tentativas para leituras HTTP. O recibo é histórico. Consultar estado com `ocr_get_job`, respeitando `poll_after_seconds`, sem manter uma chamada aberta por todo o processamento.
 5. Em conclusão, percorrer `ocr_get_text` por página/offset, consultar `ocr_get_report` e baixar `ocr_get_artifact` por HTTP na origem autorizada. Conferir SHA-256 do PDF com `report.output.sha256`; falha de integridade impede entrega.
-6. Somente após os gates do adaptador, preparar snapshot mínimo e manifesto proposto. Respeitar limite específico do backend: a reunião local de 12.000 bytes não comporta automaticamente um documento inteiro; qualquer seleção deve ser explícita e rastreável, sem truncamento oculto.
-7. Validar resposta como rascunho E3, com citações verificadas contra página/hash/offset. Aprovação humana, XMP, indexação e recibo durável dependem das entregas governadas E2–E6; não simular essas funções com um arquivo avulso.
+6. Somente após os gates do adaptador, preparar snapshot mínimo e manifesto proposto, versionado, com múltiplos vínculos de contexto/tipo/segmento e evidências identificadas por segmento e campo, conforme o [plano do portfólio](portfolio-integration.md). Respeitar limite específico do backend: a reunião local de 12.000 bytes não comporta automaticamente um documento inteiro; qualquer seleção deve ser explícita e rastreável, sem truncamento oculto.
+7. Validar resposta como rascunho E3, com citações verificadas contra segmento/campo e página/hash/offset. A preparação de vínculos por `MetadataBindingPreparer` e as operações internas de gravação manual de rascunho, leitura por ID/hash e listagem por `DocumentMetadataService` já foram aceitas. Continuam pendentes o serviço e a persistência de aprovação, seu índice/recibo, quota e recuperação, além de API/MCP/UI de metadados. A política pura de aprovação exige o mesmo proprietário humano exato, autoria do HEAD desse proprietário, identidade `user` via `local_jwt` ou `oauth` e todos os escopos, sem exceção administrativa. Registra `authorized_principal_review`, sem comprovar presença humana ou MFA; revisão humana de documentos pertencentes a serviço segue sem solução contratual. O runtime já implementa PDF/A fail-closed com veraPDF e presets balanceados; inserir XMP e revalidar antes do hash final é trabalho futuro E4. Aprovação durável, XMP, indexação para recuperação e recibo de entrega dependem das entregas governadas E2–E6; não simular essas funções com um arquivo avulso.
 8. Quando E5 existir, conferir ACK com hashes e persistir recibo antes da limpeza coordenada. Hoje, o TTL do OCR segue independente; obter resultados antes do vencimento. Exclusão explícita aceita apenas job terminal e exige `artifacts:delete`; acompanhar `purge_pending`.
 
 ## Falhas e recuperação
@@ -93,15 +94,17 @@ Proibir chamada de retorno ao OCR pelo backend de enriquecimento; validar origem
 | Situação | Conduta |
 |---|---|
 | Reserva de upload com resposta perdida | Reconciliar execução; reserva não é idempotente e repeti-la consome quota |
-| Admissão com resposta perdida | Repetir mesma chave/corpo; consultar job atual separadamente do recibo |
+| Admissão com resposta perdida | Reconciliar conforme o contrato idempotente, preservando chave/corpo em eventual repetição; consultar job atual separadamente do recibo; sem incluir a mutação nos retries automáticos de leitura |
+| Comando do launcher com falha ou resposta perdida | Nenhum retry automático; reconciliar pelo contrato ou revisão manual. Se a execução estiver concluída, recuperar pelo mesmo ID, sem retry automático da recuperação nem novo ID para contornar o problema |
+| Inferência paga | Sem retry automático; reconciliar execução, uso e custo antes de nova decisão autorizada |
 | Backend sem idempotência comprovada | Não repetir mutação incerta; reconciliar pelo mecanismo documentado ou revisão manual |
 | 401/403 | Corrigir identidade/concessão; não alternar para segredo compartilhado ou administrador |
 | 409 | Distinguir conflito, resultado ainda não pronto e estado inválido; não trocar chave para ocultar conflito |
 | 410 | Encerrar acesso ao artefato; reconciliar retenção/recibo; nova admissão só por decisão autorizada |
-| 429, timeout ou falha transitória | Até três tentativas totais, com backoff limitado, somente se repetição for segura; respeitar indicação de espera |
+| 429, timeout ou falha transitória em leitura HTTP segura | Até três tentativas totais, com backoff limitado e respeito à indicação de espera; política exclusiva de leituras HTTP seguras, sem comandos do launcher, mutações ou inferência paga |
 | Schema/hash divergente ou evidência insuficiente | Quarentenar rascunho, interromper entrega/indexação e registrar erro sanitizado |
 | Teto, fila cheia ou circuito aberto | Recusar/adiar novo despacho com estado visível; não ativar fallback pago |
-| Tentativas esgotadas | Fila de falhas persistente proposta; replay manual autorizado preserva correlação e chaves aplicáveis |
+| Tentativas de leitura esgotadas ou operação pendente de reconciliação | Fila de falhas persistente proposta; replay manual autorizado preserva correlação e chaves aplicáveis, sem novo ID para contornar falha do launcher |
 
 Polling continua suportado. Fila de falhas, reconciliação do adaptador, outbox e webhooks assinados exigem implementação; não são garantias do runtime atual. Não guardar conteúdo sensível em mensagens de erro ou logs de rastreio.
 
