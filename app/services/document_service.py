@@ -165,7 +165,7 @@ class MetadataBindingPreparer:
                 if version.type_id != segment.type_id or version.version != segment.type_version:
                     raise _unavailable()
                 schema = SchemaSnapshot.model_validate(
-                    {"schema_sha256": version.schema_sha256, "schema": version.schema},
+                    {"schema_sha256": version.schema_sha256, "schema": version.schema_document},
                     strict=True,
                 )
                 if version.lifecycle.state != "published":
@@ -195,10 +195,10 @@ class MetadataBindingPreparer:
         def check_locked(conn):
             if (types.jobs is not jobs or conn is None
                     or conn is not jobs._conn
-                    or getattr(jobs, "_quarantined", False) is not False
                     or not jobs._lock.locked()
                     or conn.in_transaction is not True):
                 raise _unavailable()
+            jobs._check_available()
             for type_id, version, schema_sha256, context_id in decisions:
                 current = types._binding_version(conn, actor, type_id, version, schema_sha256)
                 if (current.type_id != type_id or current.version != version

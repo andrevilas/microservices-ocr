@@ -180,6 +180,9 @@ def test_generated_ids_mapping_deduplication_and_manual_entries(env):
     assert plan.segments[0].fields[0].raw == "Synthetic"
     assert len(plan.schemas) == 1
     assert plan.schemas[0].schema_sha256 == e.first.schema_sha256
+    catalog = e.types.get_version(e.owner, e.first.type_id, e.first.version)
+    assert type(catalog.schema_document) is dict
+    assert plan.schemas[0].schema_document == catalog.schema_document
     assert set(prepare(e, body).segment_ids.values()).isdisjoint(plan.segment_ids.values())
     check(e, plan)
 
@@ -351,6 +354,8 @@ def test_wrong_connection_and_missing_transaction_fail_without_sql_changes(env):
     try:
         with e.store._transaction() as conn:
             before = conn.total_changes
+            failure(lambda: plan.check_locked(None), "metadata_unavailable", 503)
+            assert conn.total_changes == before and conn.in_transaction
             foreign.execute("BEGIN IMMEDIATE")
             foreign_before = foreign.total_changes
             failure(lambda: plan.check_locked(foreign), "metadata_unavailable", 503)
@@ -390,8 +395,18 @@ def test_quarantined_connection_is_rejected(env):
     with e.jobs._lock:
         conn = e.jobs._conn
         conn.execute("BEGIN IMMEDIATE")
+        before = conn.total_changes
         e.jobs._quarantine_locked()
-        failure(lambda: plan.check_locked(conn), "metadata_unavailable", 503)
+        assert e.jobs._sqlite_quarantined is True
+        statements = []
+        conn.set_trace_callback(statements.append)
+        try:
+            failure(lambda: plan.check_locked(conn), "metadata_unavailable", 503)
+        finally:
+            conn.set_trace_callback(None)
+        assert statements == []
+        assert conn.total_changes == before and conn.in_transaction
+        assert e.jobs._conn is conn
 
 
 def test_shared_jobstore_is_required(env, tmp_path):
