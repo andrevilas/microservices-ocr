@@ -5,7 +5,7 @@ from queue import Empty, Queue
 from threading import Event, Lock, Thread
 
 from app.config import settings
-from app.services.metadata_runtime import assert_metadata_health
+from app.services.metadata_runtime import _observe_health_on_control, assert_metadata_health
 from app.services.ocr_orchestrator import OcrOrchestrator
 from app.services.storage_service import JobStore, get_job_store
 
@@ -38,6 +38,9 @@ class JobQueueProcessor:
                 cleaned = self.job_store.cleanup_expired()
                 if cleaned:
                     logger.info("Startup cleanup: removed files for %d expired jobs", len(cleaned))
+            except (KeyboardInterrupt, SystemExit):
+                _observe_health_on_control(self.job_store)
+                raise
             except Exception:
                 assert_metadata_health(self.job_store)
                 logger.warning("Startup cleanup deferred")

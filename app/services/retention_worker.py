@@ -8,6 +8,7 @@ from app.services.artifact_retention import safe_rmtree
 from app.services.metadata_runtime import (
     MetadataServices,
     _assert_metadata_health_locked,
+    _observe_health_on_control,
     assert_metadata_health,
 )
 
@@ -36,6 +37,9 @@ class RetentionWorker:
                     _assert_metadata_health_locked(self.jobs)
                     try:
                         safe_rmtree(self.jobs.root_dir, path, path.name)
+                    except (KeyboardInterrupt, SystemExit):
+                        _observe_health_on_control(self.jobs, locked=True)
+                        raise
                     except OSError:
                         _assert_metadata_health_locked(self.jobs)
                         logger.warning("Legacy staging cleanup deferred")
@@ -53,6 +57,9 @@ class RetentionWorker:
             assert_metadata_health(self.jobs)
             try:
                 action()
+            except (KeyboardInterrupt, SystemExit):
+                _observe_health_on_control(self.jobs)
+                raise
             except Exception:
                 assert_metadata_health(self.jobs)
                 logger.warning("Retention collection deferred")
@@ -77,6 +84,9 @@ class RetentionWorker:
             _assert_metadata_health_locked(self.jobs)
             try:
                 self.exports._expire()
+            except (KeyboardInterrupt, SystemExit):
+                _observe_health_on_control(self.jobs, locked=True)
+                raise
             except Exception:
                 _assert_metadata_health_locked(self.jobs)
                 raise

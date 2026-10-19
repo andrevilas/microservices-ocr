@@ -414,6 +414,129 @@ def test_background_retention_stops_with_fixed_diagnostic(make_store, monkeypatc
     assert_observation_only(probe, connects)
 
 
+@pytest.mark.parametrize("kind", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("entry", ["jobs", "exports", "queue", "legacy"])
+def test_dirty_cleanup_control_quarantines_without_finalization(
+        make_store, monkeypatch, kind, entry):
+    jobs = make_store()
+    record = jobs.create("source.pdf", b"%PDF-1.4\n", owner_user_id=1)
+    jobs._conn.execute("CREATE TEMP TABLE control_probe (value TEXT)")
+    uploads, exports, events, paths = collaborators(monkeypatch, jobs)
+    legacy = jobs.root_dir / "legacy-batch-ab12_cd3"
+    legacy.mkdir()
+    sentinel = legacy / "source.pdf"
+    sentinel.write_bytes(b"keep")
+    worker = retention_worker.RetentionWorker(uploads, exports)
+    queue = processor(monkeypatch, jobs) if entry == "queue" else None
+    threads = thread_spy(monkeypatch, job_queue if queue else retention_worker)
+    probe, raw, connects = watch_connection(monkeypatch, jobs)
+    original = kind(SECRET)
+
+    def interrupt(*args):
+        events.append(entry)
+        probe.execute("BEGIN IMMEDIATE")
+        probe.execute("INSERT INTO control_probe VALUES (?)", (SECRET,))
+        raise original
+
+    if entry in ("jobs", "queue"):
+        monkeypatch.setattr(jobs, "cleanup_expired", interrupt)
+    elif entry == "exports":
+        exports._expire = interrupt
+    else:
+        monkeypatch.setattr(retention_worker, "safe_rmtree", interrupt)
+    if queue:
+        for name in ("snapshot", "get_processing_jobs", "get_queued_jobs", "update"):
+            monkeypatch.setattr(jobs, name,
+                                lambda *args, name=name, **kwargs: events.append(name) or [])
+    invoke = (queue.start if queue else worker._exports if entry == "exports"
+              else worker.reconcile_startup if entry == "legacy" else worker.collect)
+    with pytest.raises(kind) as failure:
+        invoke()
+    assert failure.value is original
+    assert jobs._sqlite_quarantined
+    assert raw.in_transaction is True
+    assert raw.execute("SELECT value FROM control_probe").fetchall() == [(SECRET,)]
+    assert threads == []
+    assert worker._thread is None
+    if queue:
+        assert not queue._started
+        assert queue._threads == []
+        assert queue._queue.empty()
+        assert queue._queued_ids == set()
+    for operation in (jobs._get_conn, lambda: jobs._persist(record),
+                      queue.start if queue else worker.collect):
+        with pytest.raises(ApplicationError) as rejected:
+            operation()
+        unavailable(rejected.value)
+    assert events == [entry]
+    assert all(path.exists() for path in paths.values())
+    assert sentinel.read_bytes() == b"keep"
+    assert probe.calls["health"] > 0
+    assert {k: v for k, v in probe.calls.items() if k != "health"} == {"execute": 2}
+    assert connects == []
+
+
+@pytest.mark.parametrize("kind", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("entry", ["exports", "legacy"])
+def test_locked_cleanup_healthy_control_preserves_availability(
+        make_store, monkeypatch, kind, entry):
+    jobs = make_store()
+    uploads, exports, events, paths = collaborators(monkeypatch, jobs)
+    worker = retention_worker.RetentionWorker(uploads, exports)
+    original = kind(SECRET)
+    if entry == "legacy":
+        (jobs.root_dir / "legacy-batch-ab12_cd3").mkdir()
+    probe, raw, connects = watch_connection(monkeypatch, jobs)
+
+    def interrupt(*args):
+        events.append(entry)
+        raise original
+
+    if entry == "exports":
+        exports._expire = interrupt
+    else:
+        monkeypatch.setattr(retention_worker, "safe_rmtree", interrupt)
+    with pytest.raises(kind) as failure:
+        (worker._exports if entry == "exports" else worker.reconcile_startup)()
+    assert failure.value is original
+    assert events == [entry]
+    assert all(path.exists() for path in paths.values())
+    assert not jobs._sqlite_quarantined
+    assert raw.in_transaction is False
+    assert probe.calls["health"] >= 2
+    assert_observation_only(probe, connects)
+
+
+@pytest.mark.parametrize("secondary_kind", [RuntimeError, SystemExit])
+@pytest.mark.parametrize("entry", ["jobs", "exports"])
+def test_secondary_health_failure_preserves_cleanup_control(
+        make_store, monkeypatch, secondary_kind, entry):
+    jobs = make_store()
+    uploads, exports, events, paths = collaborators(monkeypatch, jobs)
+    worker = retention_worker.RetentionWorker(uploads, exports)
+    probe, raw, connects = watch_connection(monkeypatch, jobs)
+    original = KeyboardInterrupt(SECRET)
+
+    def interrupt():
+        events.append(entry)
+        probe.observation = secondary_kind(SECRET)
+        raise original
+
+    if entry == "jobs":
+        monkeypatch.setattr(jobs, "cleanup_expired", interrupt)
+    else:
+        exports._expire = interrupt
+    with pytest.raises(KeyboardInterrupt) as failure:
+        (worker.collect if entry == "jobs" else worker._exports)()
+    assert failure.value is original
+    assert events == [entry]
+    assert jobs._sqlite_quarantined
+    assert raw.in_transaction is False
+    assert all(path.exists() for path in paths.values())
+    assert probe.calls["health"] >= 2
+    assert_observation_only(probe, connects)
+
+
 def processor(monkeypatch, jobs):
     monkeypatch.setattr(job_queue, "OcrOrchestrator",
                         lambda job_store: SimpleNamespace())

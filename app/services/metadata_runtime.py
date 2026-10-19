@@ -54,6 +54,21 @@ def assert_metadata_health(jobs: JobStore) -> None:
         _assert_metadata_health_locked(jobs)
 
 
+def _observe_health_on_control(jobs: JobStore, *, locked: bool = False) -> None:
+    """Observe during control unwinding; preserve the caller's original control.
+
+    Health checks quarantine unsafe or uncertain connections before raising.
+    Secondary observation failures must not replace the original control.
+    """
+    try:
+        if locked:
+            _assert_metadata_health_locked(jobs)
+        else:
+            assert_metadata_health(jobs)
+    except BaseException:
+        pass
+
+
 @dataclass(frozen=True)
 class MetadataServices:
     index: MetadataStore
