@@ -1,8 +1,9 @@
-"""Pending-only metadata recovery; this is not a namespace readiness gate.
+"""Pending recovery and an explicit startup namespace coordinator entry point.
 
-The caller must run startup recovery before starting writers while holding the
-runtime lease. Periodic recovery considers cleanup rows only. Neither entry
-point inventories storage or proves that all storage has been accounted for.
+The caller must hold the runtime lease and run startup recovery before writers.
+Periodic and recover_pending_startup recovery consider pending rows only; neither
+inventories storage. recover_startup explicitly invokes namespace coordination
+and returns bounded diagnostics, not a namespace readiness flag.
 """
 from __future__ import annotations
 
@@ -118,6 +119,13 @@ class MetadataRecovery:
         _input(type(limit) is int and 1 <= limit <= 1024)
         with self._periodic_lock:
             return self._collect(limit=limit, runtime_lease=None)
+
+    @_guard
+    def recover_startup(self, runtime_lease: RuntimeLease):
+        """Coordinate bounded namespace recovery before writers under RuntimeLease."""
+        from app.services.metadata_namespace_recovery import MetadataNamespaceRecovery
+
+        return MetadataNamespaceRecovery(self).recover_startup(runtime_lease)
 
     @_guard
     def recover_pending_startup(self, runtime_lease: RuntimeLease) -> RecoveryCounters:
