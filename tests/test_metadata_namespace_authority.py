@@ -170,6 +170,90 @@ def test_confirmed_audit_expectations_pending_and_unobserved_protection(h, princ
     assert authority.recovery._periodic_ceiling is None
 
 
+_ENTRYPOINTS = ('validate_global_locked', 'load_locked', 'plan_locked')
+
+
+def _diagnose(h, authority, entrypoint):
+    with h.svc._transaction() as conn:
+        if entrypoint == 'validate_global_locked':
+            return authority.validate_global_locked(conn)
+        if entrypoint == 'load_locked':
+            return authority.load_locked(conn, h.job.job_id)
+        return authority.plan_locked(conn, h.job.job_id, ())
+
+
+@pytest.mark.parametrize('pending_only', [False, True])
+def test_complete_chain_and_pending_only_pass_all_entrypoints(
+        h, principal, authority, pending_only):
+    if pending_only:
+        pending = reserve(h, principal, args()).pending
+        expected_ids = set()
+    else:
+        first = save(h, principal, args())
+        head = h.svc.get_head(principal, h.job.job_id)
+        second = save(h, principal, args(head))
+        pending = None
+        expected_ids = {first.revision_id, second.revision_id}
+    before = _snapshot(h)
+    for entrypoint in _ENTRYPOINTS:
+        result = _diagnose(h, authority, entrypoint)
+        if entrypoint == 'validate_global_locked':
+            assert result is None
+        else:
+            loaded = result.state if entrypoint == 'plan_locked' else result
+            assert loaded.has_ledger and loaded.pending == pending
+            assert {value.revision_id for value in loaded.confirmed} == expected_ids
+            if pending_only:
+                assert loaded.confirmed == ()
+            else:
+                parents = {value.revision_id: value.parent_revision_id
+                           for value in loaded.confirmed}
+                assert parents == {first.revision_id: None,
+                                   second.revision_id: first.revision_id}
+        assert _snapshot(h) == before
+
+
+@pytest.mark.parametrize('fault', ['rolled_back_head', 'cycle', 'disconnected_root'])
+def test_incomplete_or_cyclic_chain_rejected_by_all_entrypoints(
+        h, principal, authority, fault):
+    first = save(h, principal, args())
+    head = h.svc.get_head(principal, h.job.job_id)
+    second = save(h, principal, args(head))
+    assert sql(h, 'SELECT pending_id FROM metadata_pending') == []
+    baseline = _snapshot(h)
+    for entrypoint in _ENTRYPOINTS:
+        _diagnose(h, authority, entrypoint)
+        assert _snapshot(h) == baseline
+    assert {value.revision_id: value.parent_revision_id
+            for value in _load(h, authority).confirmed} == {
+                first.revision_id: None, second.revision_id: first.revision_id}
+
+    expected_head = (second.revision_id, second.sha256)
+    if fault == 'rolled_back_head':
+        # Matching head fields preserve individual reference/hash validation.
+        expected_head = (first.revision_id, first.sha256)
+        sql(h, 'UPDATE metadata_heads SET revision_id=?,sha256=? WHERE job_id=?',
+            (*expected_head, h.job.job_id))
+    else:
+        # Keep the audit parent equal to the revision parent; both references
+        # remain local and valid, so complete-chain validation must reject them.
+        revision_id, parent = ((first.revision_id, second.revision_id)
+                               if fault == 'cycle' else (second.revision_id, None))
+        for table in ('metadata_revisions', 'metadata_audit'):
+            sql(h, 'UPDATE ' + table + ' SET parent_revision_id=? WHERE revision_id=?',
+                (parent, revision_id))
+            assert sql(h, 'SELECT parent_revision_id FROM ' + table +
+                       ' WHERE revision_id=?', (revision_id,)) == [(parent,)]
+    assert sql(h, 'SELECT revision_id,sha256 FROM metadata_heads WHERE job_id=?',
+               (h.job.job_id,)) == [expected_head]
+    assert sql(h, 'SELECT pending_id FROM metadata_pending') == []
+    corrupted = _snapshot(h)
+    for entrypoint in _ENTRYPOINTS:
+        with _unavailable():
+            _diagnose(h, authority, entrypoint)
+        assert _snapshot(h) == corrupted
+
+
 def test_inventory_bounds_and_sorted_orphans(h, authority):
     names = tuple(f'{i:032x}.json' for i in range(128))
     before = _snapshot(h)

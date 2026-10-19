@@ -196,6 +196,18 @@ class MetadataNamespaceAuthority:
                         revision.created_at, actor, auth))
             finally:
                 cursor.close()
+            head = self.store._head(conn, owner, job_id)
+            if confirmed:
+                revisions = {value.revision_id: value for value in confirmed}
+                _require(head is not None and head.revision_id in revisions)
+                visited = set()
+                current = head.revision_id
+                while current is not None:
+                    _require(len(visited) < MAX_REVISIONS_PER_JOB
+                             and current in revisions and current not in visited)
+                    visited.add(current)
+                    current = revisions[current].parent_revision_id
+                _require(visited == set(revisions))
             row = conn.execute('SELECT pending_id FROM metadata_pending WHERE job_id=?',
                                (job_id,)).fetchone()
             if row is not None:
