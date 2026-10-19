@@ -29,8 +29,7 @@ from app.services.type_service import TypeService
 
 
 CATALOG = {"contexts:read", "contexts:write", "contexts:publish"}
-METADATA = {"metadata:read", "metadata:write", "documents:read", "documents:write",
-            "jobs:read", "jobs:write"}
+METADATA = {"metadata:read", "metadata:write", "artifacts:read", "jobs:read"}
 PRIVATE = "PRIVATE-SYNTHETIC-MARKER"
 
 
@@ -38,6 +37,7 @@ def who(subject="user:1", scopes=None, admin=False):
     return Principal(subject=subject,
                      user_id=int(subject[5:]) if subject.startswith("user:") else None,
                      scopes=frozenset(CATALOG | METADATA if scopes is None else scopes),
+                     auth_source="service" if subject.startswith("service:") else "local_jwt",
                      is_admin=admin)
 
 
@@ -118,10 +118,11 @@ def prepare(e, body, head=None, principal=None, pages=3):
                               e.job.job_id, pages, body, head)
 
 
-def snapshot(e, plan, parent=None, now=None):
+def snapshot(e, plan, parent=None, now=None, principal=None):
     now = datetime.now(timezone.utc) if now is None else now
-    author = ProvenanceRecord(actor_subject=e.owner.subject,
-                              auth_source="local_jwt", recorded_at=now)
+    principal = e.owner if principal is None else principal
+    author = ProvenanceRecord(actor_subject=principal.subject,
+                              auth_source=principal.auth_source, recorded_at=now)
     records = []
     for item in plan.segments:
         fields = [FieldValueRecord(
@@ -422,7 +423,7 @@ def test_shared_jobstore_is_required(env, tmp_path):
 def reserved_write(e, plan, label, parent=None, principal=None):
     """Trusted test harness only; no public save/replay implementation."""
     principal = e.owner if principal is None else principal
-    model = snapshot(e, plan, parent)
+    model = snapshot(e, plan, parent, principal=principal)
     data = snapshot_bytes(model)
     receipt = SaveMetadataReceipt(revision_id=model.revision_id, sha256=digest(data),
                                   segment_ids=plan.segment_ids)
