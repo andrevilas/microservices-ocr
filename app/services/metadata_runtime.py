@@ -67,6 +67,9 @@ class MetadataProvider:
         self._lock = Lock()
         self._store: JobStore | None = None
         self._services: MetadataServices | None = None
+        # Bundles retain their JobStore, so identity keys cannot be reused during
+        # this provider's lifetime. Returning to a store preserves active claims.
+        self._services_by_store: dict[int, MetadataServices] = {}
 
     @_guard
     def __call__(self) -> MetadataServices:
@@ -78,7 +81,8 @@ class MetadataProvider:
             with self._lock:
                 # Also gate cached lookups, and precede any schema initialization.
                 assert_metadata_health(jobs)
-                if self._services is None or self._store is not jobs:
+                services = self._services_by_store.get(id(jobs))
+                if services is None:
                     index = MetadataStore(jobs)
                     physical = MetadataRecoveryFiles(jobs.root_dir)
                     # The recovery adapter constructs MetadataFiles. Reuse that
@@ -88,10 +92,12 @@ class MetadataProvider:
                     recovery = MetadataRecovery(index, physical)
                     services = MetadataServices(index, files, storage, recovery)
                     assert_metadata_health(jobs)
-                    # A failed switch leaves the previous cache intact.
-                    self._services = services
-                    self._store = jobs
-                return self._services
+                    # Publish only fully constructed, healthy bundles.
+                    self._services_by_store[id(jobs)] = services
+                # A failed switch leaves the previous current bundle intact.
+                self._services = services
+                self._store = jobs
+                return services
         except Exception:
             # The guard clears implicit exception context on this fixed error.
             # Control exceptions propagate unchanged.

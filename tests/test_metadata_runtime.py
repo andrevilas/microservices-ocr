@@ -1,6 +1,8 @@
 """Behavioral coverage for lazy metadata wiring and observational health checks."""
 from collections import Counter
 from dataclasses import FrozenInstanceError
+from datetime import datetime, timezone
+from hashlib import sha256
 from types import SimpleNamespace
 import builtins
 import os
@@ -10,6 +12,7 @@ import sqlite3
 import pytest
 
 from app.application import ApplicationError
+from app.metadata_models import SaveMetadataReceipt
 from app.services import metadata_runtime as runtime
 from app.services.metadata_files import MetadataFiles
 from app.services.metadata_recovery import MetadataRecovery
@@ -201,6 +204,12 @@ def test_changed_store_builds_a_new_bound_bundle(make_store):
         assert getattr(second, name) is not getattr(first, name)
     assert second.storage.store is second.recovery.store is second.index
     assert second.storage.files is second.recovery.physical._files is second.files
+    current.store = original
+    assert provider() is first
+    assert provider._store is original
+    assert provider._services is first
+    current.store = replacement
+    assert provider() is second
 
 
 @pytest.mark.parametrize("phase", ["constructor", "final_health"])
@@ -231,11 +240,118 @@ def test_failed_switch_preserves_previous_cache_without_publishing_partial_bundl
     assert constructed[0].store.jobs is replacement
     assert provider._services is first
     assert provider._store is original
+    assert provider._services_by_store == {id(original): first}
     if phase == "final_health":
         assert replacement._sqlite_quarantined
     current.store = original
     assert provider() is first
     assert not original._sqlite_quarantined
+    assert_lock_free(original)
+    assert_lock_free(replacement)
+    if phase == "constructor":
+        def successful_recovery(store, physical):
+            result = real_recovery(store, physical)
+            constructed.append(result)
+            return result
+
+        monkeypatch.setattr(runtime, "MetadataRecovery", successful_recovery)
+        current.store = replacement
+        retried = provider()
+        assert len(constructed) == 2
+        assert retried.recovery is constructed[1]
+        assert retried.recovery is not constructed[0]
+        assert retried is provider()
+        current.store = original
+        assert provider() is first
+
+
+def test_switch_back_preserves_real_writer_claim_and_rejects_duplicate(
+        make_store, monkeypatch):
+    original, replacement = make_store("writer"), make_store("other")
+    current = SimpleNamespace(store=original)
+    provider = runtime.MetadataProvider(lambda: current)
+    bundle = provider()
+    job = original.create("source.pdf", b"%PDF-1.4\n", owner_user_id=1)
+    job = original.update(job.job_id, status="completed")
+    principal = SimpleNamespace(
+        subject="user:1", auth_source="unknown", require=lambda scope: None)
+    canonical = b"{}"
+    digest = sha256(canonical).hexdigest()
+    reservation = bundle.index.reserve(
+        principal, job.job_id, key_hash="1" * 64, request_hash="2" * 64,
+        expected_head=None, expected_sha256=None, revision_id="3" * 32,
+        sha256=digest, size_bytes=len(canonical),
+        created_at=datetime.now(timezone.utc),
+    ).pending
+    assert reservation is not None
+    receipt = SaveMetadataReceipt(
+        revision_id=reservation.revision_id, sha256=digest, segment_ids={})
+    claims = bundle.index._active_writes
+    prepared, published = [], []
+    stop = KeyboardInterrupt("stop writer at the publication boundary")
+
+    def durable_state():
+        # A separate connection observes committed state, including while the
+        # original writer owns its claim outside the shared SQL lock.
+        reader = sqlite3.connect(str(original.db_path), timeout=1)
+        try:
+            return tuple(
+                reader.execute("SELECT * FROM " + table).fetchall()
+                for table in ("metadata_pending", "metadata_heads",
+                              "metadata_revisions", "metadata_operations",
+                              "metadata_audit")
+            )
+        finally:
+            reader.close()
+
+    baseline = durable_state()
+    assert len(baseline[0]) == 1
+    assert baseline[1:] == ([], [], [], [])
+
+    def publish(data):
+        published.append(data)
+        assert claims == {reservation.pending_id}
+        current.store = replacement
+        assert provider().jobs is replacement
+        current.store = original
+        reused = provider()
+        assert reused is bundle
+        assert reused.index is bundle.index
+        assert reused.index._active_writes is claims
+        with pytest.raises(ApplicationError) as failure:
+            reused.storage.write_reserved(
+                principal, job, reservation, receipt, canonical,
+                check_bindings_locked=lambda conn: None,
+            )
+        assert (failure.value.status, failure.value.code) == (
+            409, "metadata_write_pending")
+        assert claims == {reservation.pending_id}
+        assert durable_state() == baseline
+        assert prepared == [reservation.pending_id]
+        assert published == [canonical]
+        assert_lock_free(original)
+        raise stop
+
+    def prepare(job, *, pending_id, revision_id, sha256, size_bytes):
+        prepared.append(pending_id)
+        # Instrument the publication boundary; reservation and writer admission
+        # use the real store and write_reserved implementation throughout.
+        return SimpleNamespace(available_bytes=lambda: 2**100, publish=publish)
+
+    monkeypatch.setattr(bundle.files, "prepare", prepare)
+    with pytest.raises(KeyboardInterrupt) as failure:
+        bundle.storage.write_reserved(
+            principal, job, reservation, receipt, canonical,
+            check_bindings_locked=lambda conn: None,
+        )
+    assert failure.value is stop
+    assert prepared == [reservation.pending_id]
+    assert published == [canonical]
+    assert durable_state() == baseline
+    # Only unwinding the original writer releases its in-memory claim.
+    assert bundle.index._active_writes is claims
+    assert claims == set()
+    assert provider() is bundle
     assert_lock_free(original)
     assert_lock_free(replacement)
 
