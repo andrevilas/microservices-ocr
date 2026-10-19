@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import os
 from typing import Literal
 
-from app.metadata_models import MAX_SNAPSHOT_BYTES, ProvenanceRecord
+from app.metadata_models import MAX_SNAPSHOT_BYTES, ApprovalRecord, ProvenanceRecord
 from app.services.metadata_files import (
     MetadataFiles, _Directories, _NOFOLLOW, _fingerprint, _guard, _hex,
     _optional_stat, _reject, _snapshot, _sync,
@@ -32,6 +32,7 @@ class ConfirmedExpectation:
     created_at: datetime
     actor_subject: str
     auth_source: str
+    reviewed_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,11 +272,13 @@ class _RecoveryDirectory:
     def verify_confirmed(
         self, inventory, expectations: tuple[ConfirmedExpectation, ...]
     ) -> tuple[ConfirmedCheck, ...]:
-        """Check caller-supplied draft expectations using original inventory pins.
+        """Check caller-supplied draft/approved expectations using original pins.
 
-        No SQL authority is inferred and no snapshot is consumed. Results are
-        provisional until the enclosing context exits normally, including closes.
-        Approved snapshots require a future contract.
+        Approved expectations require trusted future SQL diagnosis to verify the
+        parent draft and its hash. This physical prerequisite establishes no SQL
+        authority, current HEAD, literal quotes, or permissions. No snapshot is
+        consumed. Results remain provisional until the enclosing context exits
+        normally, including closes.
         """
         if (self._closed or self._orphan_attempted or self._inventory is None
                 or inventory is not self._inventory):
@@ -297,7 +300,8 @@ class _RecoveryDirectory:
             _hex(expected.sha256, 64)
             if (type(expected.size_bytes) is not int
                     or not 1 <= expected.size_bytes <= MAX_SNAPSHOT_BYTES
-                    or type(expected.state) is not str or expected.state != 'draft'
+                    or type(expected.state) is not str
+                    or expected.state not in ('draft', 'approved')
                     or type(expected.created_at) is not datetime
                     or expected.created_at.tzinfo is None
                     or expected.created_at.utcoffset() != timedelta(0)
@@ -310,6 +314,20 @@ class _RecoveryDirectory:
                 'recorded_at': expected.created_at,
                 'execution_id': None,
             }, strict=True)
+            if expected.state == 'draft':
+                if expected.reviewed_sha256 is not None:
+                    _reject()
+            else:
+                if expected.parent_revision_id is None:
+                    _reject()
+                _hex(expected.reviewed_sha256, 64)
+                ApprovalRecord.model_validate({
+                    'actor_subject': expected.actor_subject,
+                    'auth_source': expected.auth_source,
+                    'approved_at': expected.created_at,
+                    'reviewed_revision_id': expected.parent_revision_id,
+                    'reviewed_sha256': expected.reviewed_sha256,
+                }, strict=True)
 
         entries = self._inventory_entries
         pins = self._inventory_pins
@@ -358,7 +376,20 @@ class _RecoveryDirectory:
                             or snapshot.author.auth_source != expected.auth_source
                             or snapshot.author.recorded_at != expected.created_at
                             or snapshot.author.execution_id is not None
-                            or snapshot.approval is not None):
+                            or (expected.state == 'draft'
+                                and snapshot.approval is not None)
+                            or (expected.state == 'approved'
+                                and (snapshot.approval is None
+                                     or snapshot.approval.reviewed_revision_id
+                                     != expected.parent_revision_id
+                                     or snapshot.approval.reviewed_sha256
+                                     != expected.reviewed_sha256
+                                     or snapshot.approval.actor_subject
+                                     != expected.actor_subject
+                                     or snapshot.approval.auth_source
+                                     != expected.auth_source
+                                     or snapshot.approval.approved_at
+                                     != expected.created_at))):
                         _reject()
                 except ValueError:
                     status = 'content_invalid'
