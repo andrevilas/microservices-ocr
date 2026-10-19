@@ -235,6 +235,16 @@ def _validate_dependencies(conn):
     """
     for schema, catalog in (("main", "main.sqlite_master"),
                             ("temp", "sqlite_temp_master")):
+        # Reserved names must also be absent from stored definitions. A view,
+        # foreign key or trigger body can reference a replacement table before
+        # it exists; RENAME could then silently rewrite that external schema.
+        # Conservatively match case-insensitive substrings in every SQL
+        # definition, including quoted identifiers, literals and comments.
+        # Ambiguous matches are unsupported; no general SQL parser is needed.
+        definitions = conn.execute("SELECT sql FROM " + catalog +
+                                   " WHERE sql IS NOT NULL").fetchall()
+        for (statement,) in definitions:
+            _need(not any(name in statement.lower() for name in _TEMP_NAMES.values()))
         tables = conn.execute("SELECT name FROM " + catalog +
                               " WHERE type='table'").fetchall()
         for (table,) in tables:

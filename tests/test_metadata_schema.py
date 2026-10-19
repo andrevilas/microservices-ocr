@@ -488,6 +488,7 @@ def test_unrelated_foreign_keys_and_temp_triggers_allow_migration(h, principal, 
     connection.execute("CREATE TABLE " + parent + " (id TEXT PRIMARY KEY)")
     connection.execute("CREATE TABLE " + child + " (id TEXT REFERENCES " +
                        quote(parent_name) + "(id) ON DELETE CASCADE)")
+    connection.execute("CREATE VIEW " + schema + "unrelated_view AS SELECT * FROM " + parent)
     connection.execute("INSERT INTO " + parent + " VALUES ('keep')")
     connection.execute("INSERT INTO " + child + " VALUES ('keep')")
     connection.execute("CREATE TEMP TRIGGER " + quote('unrelated "trigger') +
@@ -498,12 +499,14 @@ def test_unrelated_foreign_keys_and_temp_triggers_allow_migration(h, principal, 
         catalog = "sqlite_temp_master" if temporary else "main.sqlite_master"
         objects = tuple(tuple(row) for row in connection.execute(
             "SELECT type,name,tbl_name,sql FROM " + catalog +
-            " WHERE tbl_name IN (?,?) ORDER BY type,name", (parent_name, child_name)))
+            " WHERE tbl_name IN (?,?,?) ORDER BY type,name",
+            (parent_name, child_name, "unrelated_view")))
         triggers = tuple(tuple(row) for row in connection.execute(
             "SELECT type,name,tbl_name,sql FROM sqlite_temp_master "
             "WHERE type='trigger' ORDER BY name"))
         return (objects, triggers, connection.execute("SELECT * FROM " + parent).fetchall(),
-                connection.execute("SELECT * FROM " + child).fetchall())
+                connection.execute("SELECT * FROM " + child).fetchall(),
+                connection.execute("SELECT * FROM " + schema + "unrelated_view").fetchall())
 
     before, unrelated = state(h), unrelated_state()
     h.svc = MetadataStore(h.jobs)
@@ -512,6 +515,49 @@ def test_unrelated_foreign_keys_and_temp_triggers_allow_migration(h, principal, 
     assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     assert "approve-v1" in connection.execute(
         "SELECT sql FROM main.sqlite_master WHERE name='metadata_pending'").fetchone()[0]
+
+
+@pytest.mark.parametrize("reserved", TEMPS)
+@pytest.mark.parametrize("temporary", [False, True])
+@pytest.mark.parametrize("dependency", ["view", "foreign_key", "trigger"])
+@pytest.mark.parametrize("identifier", ["{}", '"{}"', "`{}`", "[{}]", "'{}'"])
+@pytest.mark.parametrize("uppercase", [False, True])
+def test_reserved_name_dependencies_are_rejected_before_mutation(
+        h, principal, monkeypatch, reserved, temporary, dependency, identifier, uppercase):
+    seed(h, principal)
+    convert_fixture_to_legacy(h)
+    connection = h.jobs._get_conn()
+    connection.execute("PRAGMA foreign_keys=OFF")
+    schema = "temp." if temporary else "main."
+    reference = identifier.format(reserved.upper() if uppercase else reserved)
+    source = schema + "unrelated_source"
+    child = schema + "unrelated_child"
+    connection.execute("CREATE TABLE " + source + " (id TEXT PRIMARY KEY)")
+    connection.execute("INSERT INTO " + source + " VALUES ('SENSITIVE_MARKER')")
+    if dependency == "view":
+        connection.execute("CREATE VIEW " + schema + "unrelated_view AS SELECT * FROM " + reference)
+    elif dependency == "foreign_key":
+        connection.execute("CREATE TABLE " + child +
+                           " (sentinel TEXT, parent_id TEXT REFERENCES " + reference + "(id))")
+        connection.execute("INSERT INTO " + child + " VALUES ('SENSITIVE_MARKER', NULL)")
+    else:
+        # The trigger belongs to an unrelated table; only its body mentions
+        # the nonexistent reserved table. Creating it does not execute it.
+        connection.execute("CREATE TRIGGER " + schema + "unrelated_trigger AFTER INSERT ON " +
+                           source + " BEGIN SELECT * FROM " + reference + "; END")
+    connection.commit()
+
+    def rows():
+        names = (source, child) if dependency == "foreign_key" else (source,)
+        return tuple(connection.execute("SELECT * FROM " + name + " ORDER BY rowid").fetchall()
+                     for name in names)
+
+    before_rows = rows()
+    # This checks exact main/TEMP schema preservation and observes statements
+    # so transaction rollback cannot conceal a mutation before rejection.
+    assert_schema_preflight_rejection(h, monkeypatch)
+    assert rows() == before_rows
+    assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 0
 
 
 # Register the existing real JobStore/artifact-lease fixture for the POSIX test.
