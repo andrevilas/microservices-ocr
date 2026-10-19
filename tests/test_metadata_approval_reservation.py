@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 
 import app.services.metadata_store as store_module
+from app.metadata_approval_contract import ApproveMetadataReceipt
 from app.services.metadata_recovery import MetadataRecovery
 from app.services.metadata_storage import MetadataStorage
 from test_metadata_store import (
@@ -141,13 +142,38 @@ def test_missing_and_approved_heads_conflict(h, principal):
             expected_head=uuid4().hex, expected_sha256='a' * 64))
     assert state(h) == before
     head = draft(h, principal)
-    # A coherent approved HEAD is deliberately outside this increment's writes.
-    sql(h, "UPDATE metadata_revisions SET state='approved'")
-    sql(h, 'UPDATE metadata_heads SET approval_slots=0, approval_bytes=0')
+    p = approver(principal)
+    pending = approve(h, p, args(head)).pending
+    receipt = ApproveMetadataReceipt.model_validate({
+        'operation': 'approve-v1',
+        'state': 'approved',
+        'revision_id': pending.revision_id,
+        'sha256': pending.sha256,
+        'reviewed_revision_id': head.revision_id,
+        'reviewed_sha256': head.sha256,
+    }, strict=True)
+    # SQL-only fixture: this commit does not prove physical durability.
+    with h.svc._transaction() as conn:
+        assert h.svc._commit_approval_index_locked(
+            conn, p, pending.pending_id, receipt) == receipt
+    approved_head = h.svc.get_head(principal, h.job.job_id)
+    assert approved_head.state == 'approved'
+    assert approved_head.revision_id == pending.revision_id
     before = state(h)
     with error(409, 'metadata_revision_conflict'):
-        approve(h, approver(principal), args(head))
+        approve(h, p, args(approved_head))
     assert state(h) == before
+
+
+def test_tampered_approved_head_without_approval_ledger_fails_closed(h, principal):
+    head = draft(h, principal)
+    # Leave the draft's save receipt and audit inconsistent with its new state.
+    sql(h, "UPDATE metadata_revisions SET state='approved'")
+    sql(h, 'UPDATE metadata_heads SET approval_slots=0, approval_bytes=0')
+    before, charged = state(h), totals(h)
+    with error(503, 'metadata_unavailable'):
+        approve(h, approver(principal), args(head))
+    assert state(h) == before and totals(h) == charged
 
 
 @pytest.mark.parametrize('updates', [
