@@ -183,7 +183,10 @@ def test_manual_save_exact_snapshot_provenance_and_single_lease(env, monkeypatch
     assert model.author.actor_subject == e.owner.subject
     assert model.author.auth_source == "local_jwt" and model.author.execution_id is None
     assert model.author.recorded_at == model.created_at
-    assert dict(rows(e, "metadata_revisions")[0])["owner"] == e.owner.subject
+    with e.jobs._lock:
+        owner_row = e.jobs._conn.execute(
+            "SELECT owner FROM metadata_revisions WHERE job_id=?", (e.job.job_id,)).fetchone()
+    assert owner_row == (e.owner.subject,)
 
 
 def test_incomplete_draft_and_only_new_segments_get_new_ids(env):
@@ -289,7 +292,7 @@ def test_original_replay_survives_later_head_deprecation_and_restart(env, monkey
         changed["segments"][0]["fields"][0]["raw"] = "Different request"
         failure(lambda: save(e, changed), 409)
         failure(lambda: save(e, body(e, original), key="document-save-stale-0001"),
-                409, "metadata_head_conflict")
+                409, "metadata_revision_conflict")
         assert persisted(e, later).parent_revision_id == original.revision_id
         idle(e, 2)
 
@@ -362,7 +365,7 @@ def test_concurrent_same_head_commits_once(env, monkeypatch):
     errors = [value for value in outcomes if isinstance(value, BaseException)]
     assert len(successes) == len(errors) == 1 and successes[0][1] is False
     assert isinstance(errors[0], ApplicationError) and errors[0].status == 409
-    assert errors[0].code in {"metadata_head_conflict", "metadata_write_pending"}
+    assert errors[0].code in {"metadata_revision_conflict", "metadata_write_pending"}
     persisted(e, successes[0][0])
     idle(e, 1)
 
