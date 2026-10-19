@@ -14,7 +14,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.metadata_models import MAX_SNAPSHOT_BYTES, snapshot_bytes
+from app.metadata_models import (
+    MAX_SNAPSHOT_BYTES, ApprovalRecord, MetadataSnapshot, snapshot_bytes,
+)
 from app.services import metadata_files as files
 from app.services.metadata_recovery_files import ConfirmedCheck, ConfirmedExpectation
 from test_metadata_files import (
@@ -333,12 +335,15 @@ def test_pin_close_after_effect_invalidates_provisional_valid_result(case, monke
     assert preserved([final(case)]) == before
 
 
-@pytest.mark.parametrize('shape', ['confirmed_pair', 'two_finals', 'external', 'orphan_pair'])
+@pytest.mark.parametrize('shape', [
+    'confirmed_pair', 'two_finals', 'unselected_two_finals', 'external', 'orphan_pair',
+])
 def test_entire_inventory_hardlink_rules_and_unconsumed_orphan_pair(case, tmp_path, monkeypatch, shape):
     c = case
     seed(c, b'partial' if shape in ('external', 'orphan_pair') else c.data)
     second = (tmp_path / 'external-link' if shape == 'external' else
-              c.directory / ('e' * 32 + '.json') if shape == 'two_finals' else temporary(c))
+              c.directory / ('e' * 32 + '.json')
+              if shape in ('two_finals', 'unselected_two_finals') else temporary(c))
     os.link(final(c), second)
     paths, expected = [final(c), second], ()
     if shape in ('confirmed_pair', 'two_finals'):
@@ -377,7 +382,7 @@ def test_invalid_expectations_reject_before_any_pread(case, monkeypatch, invalid
     }
     supplied = ([good] if invalid == 'list' else (good,) * 33 if invalid == '33' else
                 (good, good) if invalid == 'duplicate' else
-                (good, replace(good, **mutations[invalid])))
+                (replace(good, **mutations[invalid]),))
     before = preserved([final(case)])
     with descriptors(monkeypatch), io_watch(monkeypatch) as io:
         with recovery(case).open(case.job) as session:
@@ -385,6 +390,68 @@ def test_invalid_expectations_reject_before_any_pread(case, monkeypatch, invalid
             unavailable(lambda: session.verify_confirmed(inventory, supplied))
         assert io.reads == io.unlinks == io.syncs == []
     assert preserved([final(case)]) == before
+
+
+@pytest.mark.parametrize('invalid', [
+    'hex', 'bool_size', 'naive', 'nonutc', 'actor', 'auth', 'approved', 'self_parent',
+])
+def test_later_distinct_invalid_expectation_rejects_before_reading_present_file(case, monkeypatch, invalid):
+    seed(case)
+    good = expectation(case)
+    revision = 'e' * 32 if good.revision_id != 'e' * 32 else 'f' * 32
+    mutations = {
+        'hex': {'revision_id': 'G' * 32}, 'bool_size': {'size_bytes': True},
+        'naive': {'created_at': good.created_at.replace(tzinfo=None)},
+        'nonutc': {'created_at': good.created_at.astimezone(timezone(timedelta(hours=1)))},
+        'actor': {'actor_subject': MARKER}, 'auth': {'auth_source': MARKER},
+        'approved': {'state': 'approved'}, 'self_parent': {'parent_revision_id': revision},
+    }
+    bad = replace(replace(good, revision_id=revision), **mutations[invalid])
+    assert bad.revision_id != good.revision_id
+    if invalid == 'self_parent':
+        assert bad.parent_revision_id == bad.revision_id
+    before = preserved([final(case)])
+    with descriptors(monkeypatch) as tracked, io_watch(monkeypatch) as io:
+        with recovery(case).open(case.job) as session:
+            inventory = session.inventory()
+            pins = tuple(session._inventory_fds)
+            unavailable(lambda: session.verify_confirmed(inventory, (good, bad)))
+        assert not tracked.live
+        assert io.reads == io.unlinks == io.syncs == []
+    closed(pins)
+    assert preserved([final(case)]) == before
+
+
+def test_structurally_valid_approved_content_rejects_draft_expectation(case, monkeypatch):
+    c = case
+    reviewed = 'e' * 32 if c.model.revision_id != 'e' * 32 else 'f' * 32
+    approval = ApprovalRecord(
+        actor_subject='user:1', auth_source='local_jwt',
+        approved_at=c.model.created_at, reviewed_revision_id=reviewed,
+        reviewed_sha256='a' * 64,
+    )
+    approved = MetadataSnapshot.model_validate({
+        **c.model.model_dump(mode='python', by_alias=True),
+        'parent_revision_id': reviewed, 'state': 'approved', 'approval': approval,
+    }, strict=True)
+    data = snapshot_bytes(approved)
+    assert MetadataSnapshot.model_validate_json(data, strict=True) == approved
+    expected = expectation(c, data, parent_revision_id=reviewed)
+    assert expected.state == 'draft' and approved.state == 'approved'
+    assert expected.sha256 == hashlib.sha256(data).hexdigest()
+    assert expected.size_bytes == len(data)
+    seed(c, data)
+    before = preserved([final(c)])
+    with descriptors(monkeypatch) as tracked, io_watch(monkeypatch) as io:
+        with recovery(c).open(c.job) as session:
+            inventory = session.inventory()
+            pins = tuple(session._inventory_fds)
+            result = session.verify_confirmed(inventory, (expected,))
+        assert result == (ConfirmedCheck(c.model.revision_id, 'content_invalid'),)
+        assert not tracked.live
+        assert io.reads and io.unlinks == io.syncs == []
+    closed(pins)
+    assert preserved([final(c)]) == before
 
 
 @pytest.mark.parametrize('authority', ['foreign', 'forged', 'consumed', 'closed'])
