@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.application import ApplicationError
-from app.services import storage_service as storage_module
+from app.services import artifact_retention as retention_module
 from app.services.metadata_recovery import RecoveryCounters
 from test_metadata_files import case
 from test_metadata_storage import coordination
@@ -87,7 +87,7 @@ def incident(recovery, monkeypatch):
     assert final(w).read_bytes() == w.data
     original_open = type(c.recovery.physical).open
     original_get = c.jobs._get_conn
-    original_rmtree = storage_module.safe_rmtree
+    original_rmtree = retention_module.safe_rmtree
     c.jobs._conn = probe
 
     def get_conn():
@@ -119,7 +119,7 @@ def incident(recovery, monkeypatch):
                 assert final(w).read_bytes() == w.data
                 if state.tombstone:
                     # Real logical removal, protected by recovery's real lease.
-                    c.jobs.remove_artifacts(job.job_id)
+                    c.jobs.remove_artifacts(job.job_id, "user:1", "user:1")
                     assert actual.in_transaction is False
                     state.removed, purged = actual.execute(
                         "SELECT artifacts_removed_at,artifacts_purged_at "
@@ -143,7 +143,7 @@ def incident(recovery, monkeypatch):
             yield SimpleNamespace(remove_pending=remove_pending)
 
     monkeypatch.setattr(c.jobs, "_get_conn", get_conn)
-    monkeypatch.setattr(storage_module, "safe_rmtree", safe_rmtree)
+    monkeypatch.setattr(retention_module, "safe_rmtree", safe_rmtree)
     monkeypatch.setattr(type(c.recovery.physical), "open", physical_open)
     try:
         yield state
@@ -168,6 +168,7 @@ def assert_memory_released(s):
 def assert_quarantined(s, caplog):
     c = s.c
     assert_memory_released(s)
+    assert c.jobs._sqlite_quarantined is True
     assert s.probe.effects() == s.effects
     assert s.probe.closes == 0
     assert s.actual.in_transaction is True
@@ -188,16 +189,15 @@ def assert_quarantined(s, caplog):
         with pytest.raises(ApplicationError) as caught:
             c.jobs._get_conn()
     errors = [caught.value]
-    for operation in (
-        lambda: c.jobs.update(s.w.job.job_id, status="completed",
-                              progress_percent=100),
-        c.jobs.check_db,
-    ):
-        with pytest.raises(ApplicationError) as caught:
-            operation()
-        errors.append(caught.value)
+    with pytest.raises(ApplicationError) as caught:
+        c.jobs.update(s.w.job.job_id, status="completed", progress_percent=100)
+    errors.append(caught.value)
+    assert c.jobs.check_db() is False
     for error in errors:
         assert error.status == 503
+        assert error.code == "metadata_unavailable"
+        assert error.__cause__ is None
+        assert error.__context__ is None
         assert MARKER not in str(error) + repr(error) + repr(vars(error))
     assert s.probe.effects() == s.effects
     assert s.actual.in_transaction is True
@@ -263,6 +263,7 @@ def test_healthy_ordinary_physical_failure_remains_usable_and_retries(incident, 
     s.mode = "healthy"
     assert s.c.recovery.collect_cleanup(limit=1) == RecoveryCounters(1, 0, 0, 1)
     assert_memory_released(s)
+    assert s.c.jobs._sqlite_quarantined is False
     assert s.actual.in_transaction is False
     assert s.probe.effects() == s.effects
     assert sql_rows(s.actual) == s.before
@@ -270,7 +271,7 @@ def test_healthy_ordinary_physical_failure_remains_usable_and_retries(incident, 
     assert s.purges == []
     with s.c.jobs._lock:
         assert s.c.jobs._get_conn() is s.probe
-    s.c.jobs.check_db()
+    assert s.c.jobs.check_db() is True
     s.c.jobs.update(s.w.job.job_id, status="completed", progress_percent=100)
     s.enabled = False
     assert s.c.recovery.collect_cleanup(limit=1) == RecoveryCounters(1, 1, 0, 0)
@@ -278,5 +279,6 @@ def test_healthy_ordinary_physical_failure_remains_usable_and_retries(incident, 
     assert not final(s.w).exists()
     assert s.w.job.input_pdf_path.read_bytes() == s.original
     assert_memory_released(s)
+    assert s.c.jobs._sqlite_quarantined is False
     assert s.actual.in_transaction is False
     assert MARKER not in caplog.text
