@@ -158,7 +158,7 @@ def test_confirmed_audit_expectations_pending_and_unobserved_protection(h, princ
             'WHERE r.job_id=? ORDER BY r.revision_id', (h.job.job_id,)).fetchall()
     expected = tuple((*row[:5], datetime.fromisoformat(row[5]), *row[6:]) for row in rows)
     actual = tuple((v.revision_id, v.parent_revision_id, v.sha256, v.size_bytes,
-                    v.state, v.created_at, v.actor, v.auth_source)
+                    v.state, v.created_at, v.actor_subject, v.auth_source)
                    for v in plan.state.confirmed)
     assert actual == expected and len(actual) == 2
     assert all(v.state == 'draft' for v in plan.state.confirmed)
