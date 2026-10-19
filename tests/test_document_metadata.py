@@ -1,5 +1,6 @@
 """Synthetic integration coverage for the internal document metadata save API."""
 import copy
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import os
@@ -367,6 +368,149 @@ def test_concurrent_same_head_commits_once(env, monkeypatch):
     assert isinstance(errors[0], ApplicationError) and errors[0].status == 409
     assert errors[0].code in {"metadata_revision_conflict", "metadata_write_pending"}
     persisted(e, successes[0][0])
+    idle(e, 1)
+
+
+def test_expiry_immediately_after_reserve_releases_own_handoff(env, monkeypatch):
+    e = env
+    reserve = e.bundle.index.reserve
+    expired = datetime.now(timezone.utc) - timedelta(seconds=1)
+    reservations = []
+
+    def expire_after_reserve(*args, **kwargs):
+        result = reserve(*args, **kwargs)
+        assert result.pending is not None
+        reservations.append(result.pending)
+        with e.jobs._lock:
+            e.job.artifacts_expires_at = expired
+            e.jobs._persist(e.job)
+        return result
+
+    monkeypatch.setattr(e.bundle.index, "reserve", expire_after_reserve)
+    failure(lambda: save(e), 410, "artifacts_expired")
+    assert len(reservations) == 1
+    assert e.job.artifacts_expires_at == expired
+    idle(e, 0)
+    assert not list((e.job.working_dir / "results" / "metadata").glob(".*.tmp"))
+
+
+def test_initial_transaction_failure_after_reserve_releases_own_handoff(env, monkeypatch):
+    e = env
+    index = e.bundle.index
+    reserve, transaction = index.reserve, index._transaction
+    failures = []
+    message = "Synthetic initial handoff transaction failure."
+
+    def fail_initial_transaction():
+        monkeypatch.setattr(index, "_transaction", transaction)
+        failures.append(True)
+        raise ApplicationError(503, "metadata_unavailable", message)
+
+    def arm_after_reserve(*args, **kwargs):
+        result = reserve(*args, **kwargs)
+        assert result.pending is not None
+        monkeypatch.setattr(index, "reserve", reserve)
+        monkeypatch.setattr(index, "_transaction", fail_initial_transaction)
+        return result
+
+    monkeypatch.setattr(index, "reserve", arm_after_reserve)
+    error = failure(lambda: save(e), 503, "metadata_unavailable")
+    assert error.message == message and failures == [True]
+    idle(e, 0)
+    assert not list((e.job.working_dir / "results" / "metadata").glob(".*.tmp"))
+    with e.jobs._lock:
+        assert e.jobs._conn.in_transaction is False
+    receipt, replayed = save(e)
+    assert not replayed
+    persisted(e, receipt)
+    idle(e, 1)
+
+
+def test_duplicate_handoff_preserves_active_writer_and_published_file(env, monkeypatch):
+    e = env
+    write, read = e.bundle.storage.write_reserved, e.bundle.files.read
+    duplicates = []
+
+    def checked_write(principal, job, reservation, receipt, canonical_bytes, *,
+                      check_bindings_locked):
+        def checked_read(*args, **kwargs):
+            pending = rows(e, "metadata_pending")
+            path = job.working_dir / "results" / "metadata" / (reservation.revision_id + ".json")
+            published = path.read_bytes()
+            assert published == canonical_bytes
+            assert e.bundle.index._active_writes == {reservation.pending_id}
+            assert e.jobs._artifact_leases == {job.job_id: 1}
+
+            def forbidden(*args, **kwargs):
+                pytest.fail("duplicate handoff attempted physical cleanup preparation")
+
+            with monkeypatch.context() as patch:
+                patch.setattr(e.bundle.files, "prepare", forbidden)
+                failure(lambda: write(
+                    principal, job, reservation, receipt, canonical_bytes,
+                    check_bindings_locked=check_bindings_locked,
+                ), 409, "metadata_write_pending")
+            assert e.bundle.index._active_writes == {reservation.pending_id}
+            assert rows(e, "metadata_pending") == pending
+            assert e.jobs._artifact_leases == {job.job_id: 1}
+            assert path.read_bytes() == published
+            duplicates.append(True)
+            return read(*args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(e.bundle.files, "read", checked_read)
+            return write(principal, job, reservation, receipt, canonical_bytes,
+                         check_bindings_locked=check_bindings_locked)
+
+    monkeypatch.setattr(e.bundle.storage, "write_reserved", checked_write)
+    receipt, replayed = save(e)
+    assert not replayed and duplicates == [True]
+    persisted(e, receipt)
+    idle(e, 1)
+
+
+@pytest.mark.parametrize("change", ["owner", "malformed"])
+def test_initial_failure_cannot_cleanup_an_unmatched_handoff(env, monkeypatch, change):
+    e = env
+    index = e.bundle.index
+    write, transaction = e.bundle.storage.write_reserved, index._transaction
+    rejected = []
+    message = "Synthetic initial transaction failure for an unmatched handoff."
+
+    def checked_write(principal, job, reservation, receipt, canonical_bytes, *,
+                      check_bindings_locked):
+        pending = rows(e, "metadata_pending")
+        bad = (replace(reservation, owner="user:2") if change == "owner" else
+               replace(reservation, size_bytes=str(reservation.size_bytes)))
+
+        def fail_initial_transaction():
+            patch.setattr(index, "_transaction", transaction)
+            raise ApplicationError(503, "metadata_unavailable", message)
+
+        def forbidden(*args, **kwargs):
+            pytest.fail("unmatched handoff attempted physical cleanup preparation")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(index, "_transaction", fail_initial_transaction)
+            patch.setattr(e.bundle.files, "prepare", forbidden)
+            error = failure(lambda: write(
+                principal, job, bad, receipt, canonical_bytes,
+                check_bindings_locked=check_bindings_locked,
+            ), 503, "metadata_unavailable")
+        assert error.message == message
+        assert rows(e, "metadata_pending") == pending
+        assert not index._active_writes
+        assert e.jobs._artifact_leases == {job.job_id: 1}
+        assert not list((job.working_dir / "results" / "metadata").glob("*.json"))
+        assert not list((job.working_dir / "results" / "metadata").glob(".*.tmp"))
+        rejected.append(True)
+        return write(principal, job, reservation, receipt, canonical_bytes,
+                     check_bindings_locked=check_bindings_locked)
+
+    monkeypatch.setattr(e.bundle.storage, "write_reserved", checked_write)
+    receipt, replayed = save(e)
+    assert not replayed and rejected == [True]
+    persisted(e, receipt)
     idle(e, 1)
 
 

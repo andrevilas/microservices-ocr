@@ -77,7 +77,7 @@ class MetadataStorage:
         _require(set(receipt.segment_ids.values())
                  == {segment.segment_id for segment in snapshot.segments})
 
-    def _reconcile(self, reservation, receipt, attempt):
+    def _reconcile(self, reservation, receipt, attempt, *, quarantine_sql_failure=False):
         # A successful NEW transaction, including its commit, is essential.
         # Lifecycle admission must not obscure a committed index here.
         try:
@@ -86,20 +86,102 @@ class MetadataStorage:
                 if outcome == "uncommitted":
                     self.store._mark_cleanup_locked(conn, reservation.pending_id)
         except Exception:
+            if quarantine_sql_failure:
+                with self.store.jobs._lock:
+                    self.store.jobs._quarantine_locked()
             _raise(_error("metadata_unavailable"))
         if outcome == "confirmed":
             return
         if outcome != "uncommitted" or attempt is None:
+            if quarantine_sql_failure and outcome != "uncommitted":
+                with self.store.jobs._lock:
+                    self.store.jobs._quarantine_locked()
             _raise(_error("metadata_unavailable"))
         try:
             attempt.cleanup()
             attempt.verify_absent()
+        except Exception:
+            _raise(_error("metadata_unavailable"))
+        try:
             with self.store._transaction() as conn:
                 _require(self.store._index_outcome_locked(conn, reservation, receipt)
                          == "uncommitted")
                 self.store._release_pending_after_cleanup_locked(conn, reservation.pending_id)
         except Exception:
+            if quarantine_sql_failure:
+                with self.store.jobs._lock:
+                    self.store.jobs._quarantine_locked()
             _raise(_error("metadata_unavailable"))
+
+    @_guard
+    def _reconcile_unclaimed(self, principal, job, reservation, receipt):
+        """Claim an exact, owned handoff for cleanup without lifecycle admission."""
+        store = self.store
+        if (type(reservation) is not MetadataPending
+                or not _hex(reservation.pending_id, 32)
+                or not _hex(reservation.job_id, 32)):
+            return
+        owner, auth_source = store._identity(principal, write=True)
+        detached = _receipt(receipt)
+        _require(self.files._root == _absolute(store.jobs.root_dir))
+        claimed = False
+        attempt = None
+        try:
+            try:
+                with store._transaction() as conn:
+                    store._connection_locked(conn)
+                    # A duplicate owns neither cleanup nor removal of this flag.
+                    if reservation.pending_id in store._active_writes:
+                        return
+                    actual = store._pending(conn, reservation.pending_id)
+                    if actual is None:
+                        return
+                    supplied, stored = vars(reservation), vars(actual)
+                    if (supplied.keys() != stored.keys()
+                            or any(type(supplied[name]) is not type(value)
+                                   for name, value in stored.items())
+                            or actual != reservation or actual.state != "active"
+                            or (actual.owner, actual.actor, actual.auth_source)
+                            != (owner, owner, auth_source)
+                            or detached.revision_id != actual.revision_id
+                            or detached.sha256 != actual.sha256):
+                        return
+                    cached = store.jobs.jobs.get(actual.job_id)
+                    if not (cached is not None and job.job_id == actual.job_id
+                            and job.effective_owner == owner
+                            and cached.effective_owner == owner
+                            and job.working_dir == cached.working_dir
+                            and job.parent_job_id == cached.parent_job_id):
+                        return
+                    _require(self.files._root == _absolute(store.jobs.root_dir))
+                    outcome = store._index_outcome_locked(conn, actual, detached)
+                    if outcome == "confirmed":
+                        return
+                    _require(outcome == "uncommitted")
+                    store._active_writes.add(actual.pending_id)
+                    claimed = True
+            except Exception:
+                # An uncertain diagnostic transaction cannot authorize file I/O.
+                with store.jobs._lock:
+                    store.jobs._quarantine_locked()
+                _raise(_error("metadata_unavailable"))
+            try:
+                # Preparation only derives the exact pending-owned names. Retain
+                # its result before any cleanup or physical absence verification.
+                attempt = self.files.prepare(
+                    job, pending_id=actual.pending_id,
+                    revision_id=actual.revision_id, sha256=actual.sha256,
+                    size_bytes=actual.size_bytes,
+                )
+            except Exception:
+                # Reconciliation can still durably mark cleanup, retaining all
+                # charges when physical absence cannot be established.
+                pass
+            self._reconcile(actual, detached, attempt, quarantine_sql_failure=True)
+        finally:
+            if claimed:
+                with store.jobs._lock:
+                    store._active_writes.discard(reservation.pending_id)
 
     @_guard
     def write_reserved(self, principal, job, reservation: MetadataPending,
@@ -159,6 +241,8 @@ class MetadataStorage:
                 failure = _sanitized(exc)
                 if claimed:
                     self._reconcile(reservation, detached, attempt)
+                else:
+                    self._reconcile_unclaimed(principal, job, reservation, receipt)
                 _raise(failure)
         finally:
             # Covers initial transaction exit as well as diagnosis and release.
