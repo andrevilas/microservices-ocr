@@ -7,7 +7,7 @@ Pass plan.check_locked as MetadataStorage.write_reserved's trusted callback.
 The caller must own the shared JobStore lock and write transaction. Lock.locked
 can detect an absent lock, but cannot establish which thread owns it.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import hashlib
 from typing import Callable
@@ -29,7 +29,7 @@ from app.services.metadata_files import MetadataFiles, _absolute
 from app.services.metadata_runtime import MetadataServices
 from app.services.metadata_storage import MetadataStorage
 from app.services.metadata_store import (
-    MetadataStore, _guard, _hex, _integer, _receipt, _require,
+    MetadataRevision, MetadataStore, _guard, _hex, _integer, _receipt, _require,
 )
 from app.services.storage_service import JobStore
 from app.services.type_service import TypeService
@@ -253,6 +253,61 @@ class DocumentMetadataService:
                  and storage.store is index and storage.files is files
                  and canonical.store is jobs)
         _require(files._root == _absolute(jobs.root_dir))
+
+    @_guard
+    def get(self, principal, job_id, revision_id, *, sha256) -> MetadataSnapshot:
+        """Read one immutable revision under a single external artifact lease."""
+        self._check_shared()
+        bundle = self.bundle
+        bundle.ensure_healthy()
+        index, files, jobs = bundle.index, bundle.files, bundle.jobs
+        index._identity(principal, write=False)
+        if not (_hex(job_id, 32) and _hex(revision_id, 32) and _hex(sha256, 64)):
+            raise _invalid()
+
+        with index._transaction():
+            owner, _ = index._admit(principal, job_id, write=False)
+
+        with jobs.artifact_lease(job_id, owner) as job:
+            with index._transaction() as conn:
+                current_owner, _ = index._admit(principal, job_id, write=False)
+                _require(current_owner == owner and job.job_id == job_id
+                         and job.effective_owner == owner)
+                revision = index._revision(conn, revision_id)
+                if (revision is None or revision.owner != owner
+                        or revision.job_id != job_id):
+                    raise ApplicationError(404, "metadata_revision_not_found",
+                                           "Metadata revision not found.")
+                if revision.sha256 != sha256:
+                    raise ApplicationError(409, "metadata_revision_conflict",
+                                           "The metadata revision does not match.")
+                revision = replace(revision)
+
+            # Immutable index decisions survive HEAD changes. The lease permits
+            # this admitted read to finish if retention changes during disk I/O.
+            snapshot = files.read(
+                job, revision_id=revision.revision_id,
+                sha256=revision.sha256, size_bytes=revision.size_bytes)
+            encoded = snapshot_bytes(snapshot)
+            detached = MetadataSnapshot.model_validate_json(encoded, strict=True)
+            _require(
+                hashlib.sha256(encoded).hexdigest() == revision.sha256
+                and len(encoded) == revision.size_bytes
+                and detached.revision_id == revision.revision_id == revision_id
+                and detached.job_id == detached.document_id == job_id
+                and detached.parent_revision_id == revision.parent_revision_id
+                and detached.state == revision.state
+                and detached.created_at == revision.created_at
+                and detached.author.actor_subject == revision.owner)
+            return detached
+
+    @_guard
+    def list_revisions(self, principal, job_id) -> tuple[MetadataRevision, ...]:
+        """Return detached, bounded SQL summaries without reading artifacts."""
+        self._check_shared()
+        self.bundle.ensure_healthy()
+        return tuple(replace(revision) for revision in
+                     self.bundle.index.list_revisions(principal, job_id))
 
     @staticmethod
     def _validation_error(error):
