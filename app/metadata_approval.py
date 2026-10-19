@@ -23,7 +23,7 @@ from uuid import uuid4
 from pydantic import BeforeValidator, Field, model_validator
 
 from .application import ApplicationError, Principal
-from .document_models import FieldName
+from .document_models import FieldName, FieldSpec
 from .metadata_evidence import assess_snapshot
 from .metadata_models import (
     ApprovalRecord,
@@ -35,7 +35,7 @@ from .metadata_models import (
     _list,
     snapshot_bytes,
 )
-from .metadata_validation import MetadataValidationError
+from .metadata_validation import MetadataValidationError, validate_value_records
 
 
 _ERRORS = {
@@ -161,6 +161,23 @@ def _head(head):
     return detached, hashlib.sha256(encoded).hexdigest()
 
 
+def _validate_original_records(draft):
+    """Reject invalid trusted HEAD semantics before changing review statuses.
+
+    Validation failures reach _guard as fixed metadata_unavailable errors.
+    This checks records only and never requests canonical pages.
+    """
+    fields_by_hash = {
+        schema.schema_sha256: [
+            FieldSpec.model_validate(value, strict=True)
+            for value in schema.schema_document["fields"]
+        ]
+        for schema in draft.schemas
+    }
+    for segment in draft.segments:
+        validate_value_records(fields_by_hash[segment.schema_sha256], segment.fields)
+
+
 def _review(draft, selection):
     records = {
         (segment.segment_id, record.field_name): record
@@ -244,6 +261,7 @@ def prepare_approval(principal, owner, head, body, page_source) -> MetadataSnaps
     ):
         _fail("metadata_revision_conflict")
 
+    _validate_original_records(draft)
     reviewed = _review(draft, request.reviewed_fields)
     _assess(reviewed, page_source)
 

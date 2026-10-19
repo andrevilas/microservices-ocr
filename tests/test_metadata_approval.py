@@ -360,6 +360,37 @@ def test_cannot_mark_absent_or_null_field_reviewed():
         source.assert_not_called()
 
 
+@pytest.mark.parametrize("selected", [("title",), ()])
+@pytest.mark.parametrize("status,origin", [
+    ("conflict", "manual"),
+    ("conflict", "declared"),
+    ("needs_review", "inherited"),
+    ("reviewed", "inherited"),
+    ("needs_review", "extracted"),
+    ("reviewed", "extracted"),
+])
+def test_original_unsupported_record_semantics_fail_before_review_or_pages(
+    selected, status, origin,
+):
+    head = make_head()
+    record = head.segments[0].fields[0]
+    provenance = record.provenance.model_copy(update={
+        "execution_id": "7" * 32 if origin == "extracted" else None,
+    })
+    head.segments[0].fields[0] = record.model_copy(update={
+        "status": status, "origin": origin, "provenance": provenance,
+    })
+    # These populated records are structurally valid C1 models, but C2 rejects
+    # their original status/origin even when the request selects them for review.
+    head = MetadataSnapshot.model_validate(head, strict=True)
+    before = snapshot_bytes(head)
+    source = reject(head, body(head, selected), 503, "metadata_unavailable")
+    source.assert_not_called()
+    assert snapshot_bytes(head) == before
+    assert head.segments[0].fields[0].status == status
+    assert head.segments[0].fields[0].origin == origin
+
+
 def test_partial_review_is_not_ready_and_does_not_mutate_head():
     fields = [spec(), spec("other")]
     head = make_head(fields, [
