@@ -226,6 +226,29 @@ def _object(conn, name, *, temporary=False):
                         " WHERE name=? COLLATE NOCASE", (name,)).fetchone()
 
 
+def _validate_dependencies(conn):
+    """Reject dependencies that DROP TABLE could destroy or cascade through.
+
+    Inspect every main and TEMP table, including unfamiliar definitions. Do not
+    rely on foreign_keys being enabled: a disabled constraint is still an
+    unsupported dependency. TEMP dependencies are rejected conservatively too.
+    """
+    for schema, catalog in (("main", "main.sqlite_master"),
+                            ("temp", "sqlite_temp_master")):
+        tables = conn.execute("SELECT name FROM " + catalog +
+                              " WHERE type='table'").fetchall()
+        for (table,) in tables:
+            references = conn.execute("PRAGMA " + schema + ".foreign_key_list(" +
+                                      _quote(table) + ")").fetchall()
+            for reference in references:
+                _need(type(reference[2]) is str and reference[2].lower() not in _TABLES)
+    # TEMP triggers attached to main tables are absent from main.sqlite_master.
+    for table in _TABLES:
+        _need(conn.execute(
+            "SELECT 1 FROM sqlite_temp_master WHERE type='trigger' "
+            "AND tbl_name=? COLLATE NOCASE LIMIT 1", (table,)).fetchone() is None)
+
+
 def _copy(conn, table, temporary, statement, signature):
     match = _HEADER.match(statement)
     _need(match is not None and match.group(1).lower() == table)
@@ -257,6 +280,7 @@ def ensure_metadata_schema(conn, expected_ddl):
     """
     _need(conn.in_transaction is True)
     tables, indexes = _expected(expected_ddl)
+    _validate_dependencies(conn)
     # Fixed replacement names must be unused, even if no rebuild is necessary.
     for name in (*_TABLES, *_TEMP_NAMES.values()):
         _need(_object(conn, name, temporary=True) is None)

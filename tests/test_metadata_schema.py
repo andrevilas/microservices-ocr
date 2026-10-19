@@ -385,5 +385,134 @@ def test_physical_storage_write_and_replay_after_pending_migration(case):
     assert case.store._active_writes == set()
 
 
+def assert_schema_preflight_rejection(harness, monkeypatch):
+    """Observe real SQLite without allowing rollback to hide early mutations."""
+    connection = harness.jobs._get_conn()
+    before = database_state(harness)
+
+    def temporary_schema():
+        return tuple(tuple(row) for row in connection.execute(
+            "SELECT type,name,tbl_name,sql FROM sqlite_temp_master ORDER BY type,name"))
+
+    before_temporary = temporary_schema()
+    mutations = []
+
+    class Observe:
+        def __getattr__(self, name):
+            return getattr(connection, name)
+
+        def execute(self, statement, parameters=()):
+            if statement.lstrip().upper().startswith(
+                    ("CREATE", "INSERT", "UPDATE", "DELETE", "REPLACE", "DROP", "ALTER")):
+                mutations.append(statement)
+            return connection.execute(statement, parameters)
+
+    with monkeypatch.context() as patch:
+        proxy = Observe()
+        patch.setattr(harness.jobs, "_get_conn", lambda: proxy)
+        with error(503, "metadata_unavailable"):
+            MetadataStore(harness.jobs)
+    assert mutations == []
+    assert connection.in_transaction is False
+    assert database_state(harness) == before
+    assert temporary_schema() == before_temporary
+
+
+@pytest.mark.parametrize("foreign_keys", [False, True])
+@pytest.mark.parametrize("temporary", [False, True])
+@pytest.mark.parametrize("table,columns", [
+    ("metadata_operations", ("owner", "job_id", "operation", "key_hash")),
+    ("metadata_pending", ("pending_id",)),
+    ("metadata_audit", ("revision_id", "action")),
+])
+def test_incoming_cascade_is_rejected_before_mutation(
+        h, principal, monkeypatch, foreign_keys, temporary, table, columns):
+    seed(h, principal)
+    convert_fixture_to_legacy(h)
+    connection = h.jobs._get_conn()
+    connection.execute("PRAGMA foreign_keys=" + ("ON" if foreign_keys else "OFF"))
+    assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == int(foreign_keys)
+    # Embedded quotes exercise safe PRAGMA identifier quoting. Mixed case in
+    # the REFERENCES clause must still identify the protected main table.
+    child = ("temp." if temporary else "main.") + quote('unfamiliar "child')
+    names = ",".join(quote(column) for column in columns)
+    definitions = ",".join(quote(column) + " TEXT NOT NULL" for column in columns)
+    connection.execute("CREATE TABLE " + child + " (" + definitions +
+                       ", FOREIGN KEY (" + names + ") REFERENCES " +
+                       quote(table.upper()) + " (" + names + ") ON DELETE CASCADE)")
+    if temporary:
+        # SQLite resolves TEMP foreign keys within TEMP, so provide the parent
+        # there as well. This remains an unsupported structure even though a
+        # DROP of the main target would not cascade into this TEMP child.
+        parent_definitions = definitions + ", UNIQUE (" + names + ")"
+        connection.execute("CREATE TABLE temp." + quote(table.upper()) +
+                           " (" + parent_definitions + ")")
+        connection.execute("INSERT INTO temp." + quote(table.upper()) +
+                           " SELECT " + names + " FROM main." + quote(table) + " LIMIT 1")
+    connection.execute("INSERT INTO " + child + " SELECT " + names +
+                       " FROM main." + quote(table) + " LIMIT 1")
+    connection.commit()
+    before_child = connection.execute("SELECT * FROM " + child).fetchall()
+    assert len(before_child) == 1
+    before_parent = (connection.execute("SELECT * FROM temp." + quote(table)).fetchall()
+                     if temporary else None)
+    assert_schema_preflight_rejection(h, monkeypatch)
+    assert connection.execute("SELECT * FROM " + child).fetchall() == before_child
+    if temporary:
+        assert connection.execute("SELECT * FROM temp." + quote(table)).fetchall() == before_parent
+    assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == int(foreign_keys)
+
+
+@pytest.mark.parametrize("table", TARGETS)
+def test_temp_trigger_on_main_target_is_preserved_before_mutation(
+        h, principal, monkeypatch, table):
+    seed(h, principal)
+    convert_fixture_to_legacy(h)
+    connection = h.jobs._get_conn()
+    connection.execute("CREATE TEMP TRIGGER " + quote('unfamiliar "trigger') +
+                       " AFTER INSERT ON main." + quote(table.upper()) +
+                       " BEGIN SELECT 'SENSITIVE_MARKER'; END")
+    connection.commit()
+    assert_schema_preflight_rejection(h, monkeypatch)
+
+
+@pytest.mark.parametrize("temporary", [False, True])
+def test_unrelated_foreign_keys_and_temp_triggers_allow_migration(h, principal, temporary):
+    seed(h, principal)
+    convert_fixture_to_legacy(h)
+    connection = h.jobs._get_conn()
+    connection.execute("PRAGMA foreign_keys=ON")
+    schema = "temp." if temporary else "main."
+    parent_name, child_name = 'unrelated "parent', 'unrelated "child'
+    parent, child = schema + quote(parent_name), schema + quote(child_name)
+    connection.execute("CREATE TABLE " + parent + " (id TEXT PRIMARY KEY)")
+    connection.execute("CREATE TABLE " + child + " (id TEXT REFERENCES " +
+                       quote(parent_name) + "(id) ON DELETE CASCADE)")
+    connection.execute("INSERT INTO " + parent + " VALUES ('keep')")
+    connection.execute("INSERT INTO " + child + " VALUES ('keep')")
+    connection.execute("CREATE TEMP TRIGGER " + quote('unrelated "trigger') +
+                       " AFTER INSERT ON " + parent + " BEGIN SELECT 1; END")
+    connection.commit()
+
+    def unrelated_state():
+        catalog = "sqlite_temp_master" if temporary else "main.sqlite_master"
+        objects = tuple(tuple(row) for row in connection.execute(
+            "SELECT type,name,tbl_name,sql FROM " + catalog +
+            " WHERE tbl_name IN (?,?) ORDER BY type,name", (parent_name, child_name)))
+        triggers = tuple(tuple(row) for row in connection.execute(
+            "SELECT type,name,tbl_name,sql FROM sqlite_temp_master "
+            "WHERE type='trigger' ORDER BY name"))
+        return (objects, triggers, connection.execute("SELECT * FROM " + parent).fetchall(),
+                connection.execute("SELECT * FROM " + child).fetchall())
+
+    before, unrelated = state(h), unrelated_state()
+    h.svc = MetadataStore(h.jobs)
+    assert state(h) == before
+    assert unrelated_state() == unrelated
+    assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    assert "approve-v1" in connection.execute(
+        "SELECT sql FROM main.sqlite_master WHERE name='metadata_pending'").fetchone()[0]
+
+
 # Register the existing real JobStore/artifact-lease fixture for the POSIX test.
 from test_metadata_files import case
