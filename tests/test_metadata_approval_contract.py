@@ -68,7 +68,7 @@ def draft():
 
 
 @pytest.fixture
-def request(draft):
+def approval_body(draft):
     return ApprovalInput(
         revision_id=draft.revision_id, expected_head=draft.revision_id,
         expected_sha256=hashlib.sha256(snapshot_bytes(draft)).hexdigest(),
@@ -78,10 +78,10 @@ def request(draft):
 
 
 @pytest.fixture
-def candidate(draft, request):
+def candidate(draft, approval_body):
     source = Mock(side_effect=AssertionError("No evidence pages are needed."))
     principal = Principal("user:1", 1, SCOPES, auth_source="local_jwt")
-    result = prepare_approval(principal, 1, draft, request, source)
+    result = prepare_approval(principal, 1, draft, approval_body, source)
     source.assert_not_called()
     return result
 
@@ -103,16 +103,16 @@ def receipt_data(candidate):
     return approval_receipt_for(candidate).model_dump(mode="python")
 
 
-def test_identity_matches_precise_versioned_canonical_envelope(request):
-    data = request.model_dump(mode="python")
-    before = request.model_dump(mode="python")
+def test_identity_matches_precise_versioned_canonical_envelope(approval_body):
+    data = approval_body.model_dump(mode="python")
+    before = approval_body.model_dump(mode="python")
     # Construct the independent expected envelope explicitly, including order.
     expected = {
         "operation": "approve-v1",
         "body": {
-            "revision_id": request.revision_id,
-            "expected_head": request.expected_head,
-            "expected_sha256": request.expected_sha256,
+            "revision_id": approval_body.revision_id,
+            "expected_head": approval_body.expected_head,
+            "expected_sha256": approval_body.expected_sha256,
             "reviewed_fields": [
                 {"segment_id": SEGMENT, "field_name": "title"},
                 {"segment_id": SEGMENT, "field_name": "other"},
@@ -123,7 +123,7 @@ def test_identity_matches_precise_versioned_canonical_envelope(request):
         expected, sort_keys=True, separators=(",", ":"),
         ensure_ascii=False, allow_nan=False,
     ).encode("utf-8")
-    identity = approval_request_identity(KEY, request)
+    identity = approval_request_identity(KEY, approval_body)
     assert identity == (
         hashlib.sha256(KEY.encode("ascii")).hexdigest(),
         hashlib.sha256(canonical).hexdigest(),
@@ -132,14 +132,14 @@ def test_identity_matches_precise_versioned_canonical_envelope(request):
     reordered["reviewed_fields"] = [dict(reversed(list(item.items())))
                                     for item in data["reviewed_fields"]]
     assert approval_request_identity(KEY, reordered) == identity
-    assert approval_request_identity(KEY, request) == identity
-    assert request.model_dump(mode="python") == before
+    assert approval_request_identity(KEY, approval_body) == identity
+    assert approval_body.model_dump(mode="python") == before
     assert data == before
 
 
 @pytest.mark.parametrize("change", ["selection", "order", "hash", "revision"])
-def test_body_and_selection_order_are_identity_significant(request, change):
-    data = request.model_dump(mode="python")
+def test_body_and_selection_order_are_identity_significant(approval_body, change):
+    data = approval_body.model_dump(mode="python")
     if change == "selection":
         data["reviewed_fields"].pop()
     elif change == "order":
@@ -148,11 +148,11 @@ def test_body_and_selection_order_are_identity_significant(request, change):
         data["expected_sha256"] = "9" * 64
     else:
         data["revision_id"] = data["expected_head"] = "9" * 32
-    original = approval_request_identity(KEY, request)
+    original = approval_request_identity(KEY, approval_body)
     changed = approval_request_identity(KEY, data)
     assert changed[0] == original[0]
     assert changed[1] != original[1]
-    other_key = approval_request_identity("another-key", request)
+    other_key = approval_request_identity("another-key", approval_body)
     assert other_key[0] != original[0]
     assert other_key[1] == original[1]
 
@@ -162,48 +162,48 @@ def test_body_and_selection_order_are_identity_significant(request, change):
     "abcédefg", "abc😀defg", "abc\x00defg", None, True, False, 12345678,
     b"abcdefgh", [], {},
 ])
-def test_invalid_keys_are_strict_and_sanitized(key, request):
+def test_invalid_keys_are_strict_and_sanitized(key, approval_body):
     assert_error(422, "invalid_idempotency_key",
-                 lambda: approval_request_identity(key, request))
+                 lambda: approval_request_identity(key, approval_body))
 
 
-def test_string_subclass_is_not_an_exact_key(request):
+def test_string_subclass_is_not_an_exact_key(approval_body):
     class Key(str):
         pass
     assert_error(422, "invalid_idempotency_key",
-                 lambda: approval_request_identity(Key(KEY), request))
+                 lambda: approval_request_identity(Key(KEY), approval_body))
 
 
 @pytest.mark.parametrize("key", ["a" * 8, "a" * 128, "aA09._:-"])
-def test_key_boundaries_and_allowed_characters(key, request):
-    assert approval_request_identity(key, request)[0] == hashlib.sha256(key.encode()).hexdigest()
+def test_key_boundaries_and_allowed_characters(key, approval_body):
+    assert approval_request_identity(key, approval_body)[0] == hashlib.sha256(key.encode()).hexdigest()
 
 
-def test_request_revision_and_head_must_identify_same_draft(request):
-    data = request.model_dump(mode="python")
+def test_request_revision_and_head_must_identify_same_draft(approval_body):
+    data = approval_body.model_dump(mode="python")
     data["expected_head"] = "9" * 32
     assert_error(422, "invalid_metadata_input",
                  lambda: approval_request_identity(KEY, data))
 
 
 @pytest.mark.parametrize("tamper", ["nested", "construct", "tuple", "extra", "duplicate"])
-def test_request_original_data_cannot_be_laundered(request, tamper):
+def test_request_original_data_cannot_be_laundered(approval_body, tamper):
     if tamper == "nested":
-        request.reviewed_fields[0] = ReviewedField.model_construct(
+        approval_body.reviewed_fields[0] = ReviewedField.model_construct(
             segment_id=True, field_name="title",
         )
     elif tamper == "construct":
-        request = ApprovalInput.model_construct(**{
-            **request.__dict__, "expected_sha256": "SENSITIVE_MARKER",
+        approval_body = ApprovalInput.model_construct(**{
+            **approval_body.__dict__, "expected_sha256": "SENSITIVE_MARKER",
         })
     elif tamper == "tuple":
-        request = request.model_copy(update={"reviewed_fields": tuple(request.reviewed_fields)})
+        approval_body = approval_body.model_copy(update={"reviewed_fields": tuple(approval_body.reviewed_fields)})
     elif tamper == "extra":
-        request = request.model_copy(update={"actor": "SENSITIVE_MARKER"})
+        approval_body = approval_body.model_copy(update={"actor": "SENSITIVE_MARKER"})
     else:
-        request.reviewed_fields.append(request.reviewed_fields[0])
+        approval_body.reviewed_fields.append(approval_body.reviewed_fields[0])
     assert_error(422, "invalid_metadata_input",
-                 lambda: approval_request_identity(KEY, request))
+                 lambda: approval_request_identity(KEY, approval_body))
 
 
 def test_receipt_schema_requires_explicit_closed_discriminators(receipt_data):
@@ -264,10 +264,10 @@ def test_mutated_receipt_models_are_revalidated(receipt_data, tamper):
     assert_error(422, "invalid_metadata_input", lambda: validate_approval_receipt(value))
 
 
-def test_real_policy_candidate_receipt_hash_and_unpersisted_contract(draft, request, candidate):
+def test_real_policy_candidate_receipt_hash_and_unpersisted_contract(draft, approval_body, candidate):
     before = snapshot_bytes(candidate)
     original_draft = snapshot_bytes(draft)
-    original_request = request.model_dump(mode="python")
+    original_request = approval_body.model_dump(mode="python")
     receipt = approval_receipt_for(candidate)
     assert receipt.operation == "approve-v1"
     assert receipt.state == "approved"
@@ -277,7 +277,7 @@ def test_real_policy_candidate_receipt_hash_and_unpersisted_contract(draft, requ
     assert receipt.reviewed_sha256 == hashlib.sha256(original_draft).hexdigest()
     assert snapshot_bytes(candidate) == before
     assert snapshot_bytes(draft) == original_draft
-    assert request.model_dump(mode="python") == original_request
+    assert approval_body.model_dump(mode="python") == original_request
     # Describing a policy candidate has not approved the source draft. The
     # receipt is neither an approval request nor a trusted snapshot or commit.
     assert draft.state == "draft" and draft.approval is None
