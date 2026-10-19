@@ -273,7 +273,15 @@ class MetadataStore:
             begun = False
             try:
                 conn = self.jobs._get_conn()
-                _require(not conn.in_transaction)
+                try:
+                    healthy = conn.in_transaction is False
+                except BaseException:
+                    self.jobs._quarantine_locked()
+                    raise
+                if not healthy:
+                    # Never roll back a transaction this context did not begin.
+                    self.jobs._quarantine_locked()
+                    _fail("metadata_unavailable")
                 conn.execute("BEGIN IMMEDIATE")
                 begun = True
                 yield conn
@@ -287,8 +295,25 @@ class MetadataStore:
                     try:
                         conn.rollback()
                     except BaseException:
-                        # Preserve the already sanitized failure, including its code.
-                        pass
+                        # Even an exception after rollback's effect is uncertain.
+                        self.jobs._quarantine_locked()
+                if conn is not None:
+                    try:
+                        healthy = conn.in_transaction is False
+                    except BaseException:
+                        healthy = False
+                    if not healthy:
+                        self.jobs._quarantine_locked()
+            else:
+                # A successful commit must also leave a provably idle connection.
+                # Do not attempt repair after quarantining this successful phase.
+                try:
+                    healthy = conn.in_transaction is False
+                except BaseException:
+                    healthy = False
+                if not healthy:
+                    self.jobs._quarantine_locked()
+                    failure = _error("metadata_unavailable")
         if failure is not None:
             # contextlib throws the caller's exception into this generator.
             # Clear the implicit context AFTER raising attaches it, including

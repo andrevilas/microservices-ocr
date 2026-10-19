@@ -113,6 +113,7 @@ class JobStore(ArtifactRetentionMixin):
     _db_path: Path | None = field(default=None, repr=False)
     _conn: sqlite3.Connection | None = field(default=None, repr=False)
     _artifact_leases: dict[str, int] = field(default_factory=dict, repr=False)
+    _sqlite_quarantined: bool = field(default=False, init=False, repr=False)
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -128,7 +129,22 @@ class JobStore(ArtifactRetentionMixin):
         assert self._db_path is not None
         return self._db_path
 
+    def _quarantine_locked(self) -> None:
+        """Caller holds _lock; only a fresh JobStore can restore availability."""
+        self._sqlite_quarantined = True
+
+    def _check_available(self) -> None:
+        if self._sqlite_quarantined:
+            from app.application import ApplicationError
+            failure = ApplicationError(503, "metadata_unavailable", "Metadata is unavailable.")
+            try:
+                raise failure from None
+            finally:
+                failure.__context__ = None
+                failure.__cause__ = None
+
     def _get_conn(self) -> sqlite3.Connection:
+        self._check_available()
         if self._conn is None:
             self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False, timeout=10)
             self._conn.execute("PRAGMA journal_mode=WAL")
@@ -199,9 +215,9 @@ class JobStore(ArtifactRetentionMixin):
         )
 
     def _persist(self, job: JobRecord, *, commit: bool = True) -> None:
+        conn = self._get_conn()
         if job.status in TERMINAL and job.artifacts_expires_at is None:
             job.artifacts_expires_at = job.updated_at + timedelta(seconds=settings.job_retention_seconds)
-        conn = self._get_conn()
         conn.execute(
             """
             INSERT OR REPLACE INTO jobs
@@ -249,25 +265,26 @@ class JobStore(ArtifactRetentionMixin):
             raise ValueError("Human principal requires owner_user_id.")
         if owner_principal_id is not None and not re.fullmatch(r"(?:user:[1-9][0-9]*|service:[0-9a-f]{32}|legacy:api-key)", owner_principal_id):
             raise ValueError("Invalid owner principal.")
-        job_id = uuid4().hex
-        working_dir = self.root_dir / job_id
-        working_dir.mkdir(parents=True, exist_ok=True)
-        input_pdf_path = working_dir / "original.pdf"
-        input_pdf_path.write_bytes(payload)
-        now = datetime.now(timezone.utc)
-        job = JobRecord(
-            job_id=job_id,
-            filename=filename,
-            working_dir=working_dir,
-            status="queued",
-            owner_user_id=owner_user_id,
-            progress_percent=0,
-            created_at=now,
-            updated_at=now,
-            input_pdf_path=input_pdf_path,
-            owner_principal_id=owner_principal_id,
-        )
         with self._lock:
+            self._check_available()
+            job_id = uuid4().hex
+            working_dir = self.root_dir / job_id
+            working_dir.mkdir(parents=True, exist_ok=True)
+            input_pdf_path = working_dir / "original.pdf"
+            input_pdf_path.write_bytes(payload)
+            now = datetime.now(timezone.utc)
+            job = JobRecord(
+                job_id=job_id,
+                filename=filename,
+                working_dir=working_dir,
+                status="queued",
+                owner_user_id=owner_user_id,
+                progress_percent=0,
+                created_at=now,
+                updated_at=now,
+                input_pdf_path=input_pdf_path,
+                owner_principal_id=owner_principal_id,
+            )
             self.jobs[job_id] = job
             self._persist(job)
         return job
@@ -314,6 +331,7 @@ class JobStore(ArtifactRetentionMixin):
             if not isinstance(progress, int) or progress < 0 or progress > 100:
                 raise ValueError("progress_percent must be an integer between 0 and 100")
         with self._lock:
+            self._check_available()
             job = self.jobs[job_id]
             for key, value in kwargs.items():
                 setattr(job, key, value)
