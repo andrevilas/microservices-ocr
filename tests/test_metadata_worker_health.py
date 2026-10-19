@@ -537,6 +537,197 @@ def test_secondary_health_failure_preserves_cleanup_control(
     assert_observation_only(probe, connects)
 
 
+class UploadTransactionProbe(ConnectionProbe):
+    fault = None
+    after = False
+    failure = None
+
+    def fail(self, phase, after):
+        if self.fault == phase and self.after is after:
+            raise self.failure
+
+    def execute(self, sql, *args, **kwargs):
+        self.calls["execute"] += 1
+        if sql == "BEGIN IMMEDIATE":
+            self.fail("begin", False)
+        result = self.raw.execute(sql, *args, **kwargs)
+        if sql == "BEGIN IMMEDIATE":
+            self.fail("begin", True)
+        return result
+
+    def finalize(self, phase):
+        self.calls[phase] += 1
+        self.fail(phase, False)
+        result = getattr(self.raw, phase)()
+        self.fail(phase, True)
+        return result
+
+    def commit(self):
+        return self.finalize("commit")
+
+    def rollback(self):
+        return self.finalize("rollback")
+
+
+@pytest.fixture
+def upload_transaction(make_store, monkeypatch):
+    jobs = make_store()
+    raw = jobs._conn
+    raw.execute("CREATE TABLE upload_transaction_probe (value TEXT)")
+    observer = sqlite3.connect(str(jobs.db_path))
+    try:
+        _, raw, connects = watch_connection(monkeypatch, jobs)
+        probe = UploadTransactionProbe(raw)
+        jobs._conn = probe
+        yield jobs, probe, raw, observer, connects
+    finally:
+        observer.close()
+
+
+def assert_upload_sql(probe, connects, *, commit=0, rollback=0, execute=2):
+    assert {k: v for k, v in probe.calls.items() if k != "health"} == {
+        k: v for k, v in {"execute": execute, "commit": commit,
+                          "rollback": rollback}.items() if v}
+    assert connects == []
+
+
+def upload_body_error(outcome):
+    return {"return": None, "error": OSError(SECRET),
+            "keyboard": KeyboardInterrupt(SECRET), "system": SystemExit(SECRET)}[outcome]
+
+
+def durable_upload_rows(observer):
+    return observer.execute("SELECT value FROM upload_transaction_probe").fetchall()
+
+
+@pytest.mark.parametrize("outcome", ["return", "error", "keyboard", "system"])
+def test_upload_quarantine_leaves_real_writes_unfinalized(
+        upload_transaction, monkeypatch, outcome):
+    jobs, probe, raw, observer, connects = upload_transaction
+    uploads, exports, events, paths = collaborators(monkeypatch, jobs)
+    original = upload_body_error(outcome)
+
+    def expire():
+        events.append("uploads")
+        probe.execute("INSERT INTO upload_transaction_probe VALUES (?)", (SECRET,))
+        jobs._quarantine_locked()
+        if original is not None:
+            raise original
+
+    uploads._expire = expire
+    worker = retention_worker.RetentionWorker(uploads, exports)
+    control = isinstance(original, (KeyboardInterrupt, SystemExit))
+    with pytest.raises(type(original) if control else ApplicationError) as failure:
+        worker.collect()
+    if control:
+        assert failure.value is original
+    else:
+        unavailable(failure.value)
+    assert jobs._sqlite_quarantined
+    assert raw.in_transaction is True
+    assert raw.execute("SELECT value FROM upload_transaction_probe").fetchall() == [(SECRET,)]
+    assert durable_upload_rows(observer) == []
+    assert events == ["jobs", "uploads"]
+    assert paths["exports"].exists()
+    assert_upload_sql(probe, connects)
+
+
+@pytest.mark.parametrize("outcome", ["return", "error", "keyboard", "system"])
+def test_upload_owned_transaction_healthy_finalization(
+        upload_transaction, monkeypatch, outcome):
+    jobs, probe, raw, observer, connects = upload_transaction
+    uploads, exports, events, paths = collaborators(monkeypatch, jobs)
+    original = upload_body_error(outcome)
+
+    def expire():
+        events.append("uploads")
+        assert raw.in_transaction is True
+        probe.execute("INSERT INTO upload_transaction_probe VALUES (?)", (SECRET,))
+        if original is not None:
+            raise original
+
+    uploads._expire = expire
+    worker = retention_worker.RetentionWorker(uploads, exports)
+    control = isinstance(original, (KeyboardInterrupt, SystemExit))
+    if control:
+        with pytest.raises(type(original)) as failure:
+            worker.collect()
+        assert failure.value is original
+    else:
+        worker.collect()
+    assert not jobs._sqlite_quarantined
+    assert raw.in_transaction is False
+    assert durable_upload_rows(observer) == ([(SECRET,)] if original is None else [])
+    assert events == ["jobs", "uploads"] + ([] if control else ["exports"])
+    assert paths["exports"].exists() is control
+    assert_upload_sql(probe, connects, commit=int(original is None),
+                      rollback=int(original is not None))
+
+
+@pytest.mark.parametrize("phase,outcome", [
+    ("commit", "return"), ("rollback", "error"),
+    ("rollback", "keyboard"), ("rollback", "system")])
+@pytest.mark.parametrize("after", [False, True])
+@pytest.mark.parametrize("kind", [RuntimeError, KeyboardInterrupt, SystemExit])
+def test_upload_finalization_fault_never_retries(
+        upload_transaction, monkeypatch, phase, outcome, after, kind):
+    jobs, probe, raw, observer, connects = upload_transaction
+    uploads, exports, events, paths = collaborators(monkeypatch, jobs)
+    original = upload_body_error(outcome)
+    probe.fault, probe.after, probe.failure = phase, after, kind(SECRET)
+
+    def expire():
+        events.append("uploads")
+        probe.execute("INSERT INTO upload_transaction_probe VALUES (?)", (SECRET,))
+        if original is not None:
+            raise original
+
+    uploads._expire = expire
+    worker = retention_worker.RetentionWorker(uploads, exports)
+    expected = (original if isinstance(original, (KeyboardInterrupt, SystemExit))
+                else probe.failure if kind in (KeyboardInterrupt, SystemExit) else None)
+    with pytest.raises(type(expected) if expected is not None else ApplicationError) as failure:
+        worker.collect()
+    if expected is not None:
+        assert failure.value is expected
+    else:
+        unavailable(failure.value)
+    assert jobs._sqlite_quarantined
+    assert raw.in_transaction is (not after)
+    assert durable_upload_rows(observer) == ([(SECRET,)] if phase == "commit" and after else [])
+    assert events == ["jobs", "uploads"]
+    assert paths["exports"].exists()
+    assert_upload_sql(probe, connects, commit=int(phase == "commit"),
+                      rollback=int(phase == "rollback"))
+
+
+@pytest.mark.parametrize("after", [False, True])
+@pytest.mark.parametrize("kind", [RuntimeError, KeyboardInterrupt, SystemExit])
+def test_upload_begin_failure_does_not_claim_or_repair_transaction(
+        upload_transaction, monkeypatch, after, kind):
+    jobs, probe, raw, observer, connects = upload_transaction
+    uploads, exports, events, paths = collaborators(monkeypatch, jobs)
+    probe.fault, probe.after, probe.failure = "begin", after, kind(SECRET)
+    worker = retention_worker.RetentionWorker(uploads, exports)
+    control = kind in (KeyboardInterrupt, SystemExit)
+    if control or after:
+        with pytest.raises(kind if control else ApplicationError) as failure:
+            worker.collect()
+        if control:
+            assert failure.value is probe.failure
+        else:
+            unavailable(failure.value)
+    else:
+        worker.collect()
+    assert jobs._sqlite_quarantined is after
+    assert raw.in_transaction is after
+    assert durable_upload_rows(observer) == []
+    assert events == ["jobs"] + ([] if control or after else ["exports"])
+    assert paths["uploads"].exists()
+    assert paths["exports"].exists() is (control or after)
+    assert_upload_sql(probe, connects, execute=1)
+
+
 def processor(monkeypatch, jobs):
     monkeypatch.setattr(job_queue, "OcrOrchestrator",
                         lambda job_store: SimpleNamespace())

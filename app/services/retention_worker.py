@@ -5,6 +5,7 @@ from threading import Event, Thread
 from app.application import ApplicationError
 from app.config import settings
 from app.services.artifact_retention import safe_rmtree
+from app.services.metadata_store import _error, _guard
 from app.services.metadata_runtime import (
     MetadataServices,
     _assert_metadata_health_locked,
@@ -66,18 +67,60 @@ class RetentionWorker:
             else:
                 assert_metadata_health(self.jobs)
 
+    @_guard
+    def _finish_upload_transaction_locked(self, conn, *, commit):
+        # Only finalize the transaction we successfully began. Observation must
+        # precede finalization, including when expiry has already quarantined SQL.
+        try:
+            self.jobs._check_available()
+            if self.jobs._conn is not conn or conn.in_transaction is not True:
+                raise _error("metadata_unavailable")
+            if commit:
+                conn.commit()
+            else:
+                conn.rollback()
+            if self.jobs._conn is not conn:
+                raise _error("metadata_unavailable")
+            _assert_metadata_health_locked(self.jobs)
+        except (KeyboardInterrupt, SystemExit):
+            self.jobs._quarantine_locked()
+            raise
+        except Exception:
+            # A finalization failure may have occurred before or after effect.
+            # Never attempt another commit, rollback, or connection replacement.
+            self.jobs._quarantine_locked()
+            raise _error("metadata_unavailable") from None
+
+    @_guard
     def _uploads(self):
         with self.jobs._lock:
-            # Check under the same lock, before entering a SQL context that could
-            # otherwise commit or roll back somebody else's transaction.
             _assert_metadata_health_locked(self.jobs)
+            conn = self.jobs._conn
             try:
-                with self.jobs._get_conn():
-                    self.uploads._expire()
+                conn.execute("BEGIN IMMEDIATE")
+            except (KeyboardInterrupt, SystemExit):
+                _observe_health_on_control(self.jobs, locked=True)
+                raise
             except Exception:
+                # BEGIN did not return: ownership is unknown. Observe only;
+                # an active or uncertain connection must remain untouched.
                 _assert_metadata_health_locked(self.jobs)
                 raise
-            _assert_metadata_health_locked(self.jobs)
+            try:
+                self.uploads._expire()
+            except (KeyboardInterrupt, SystemExit):
+                try:
+                    self._finish_upload_transaction_locked(conn, commit=False)
+                except BaseException:
+                    # Observation/finalization has already quarantined failures.
+                    # Preserve the original control exception even on a second one.
+                    pass
+                raise
+            except Exception:
+                self._finish_upload_transaction_locked(conn, commit=False)
+                raise
+            else:
+                self._finish_upload_transaction_locked(conn, commit=True)
 
     def _exports(self):
         with self.jobs._lock:
