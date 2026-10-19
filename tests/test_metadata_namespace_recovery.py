@@ -305,6 +305,66 @@ def test_real_129_missing_confirmed_jobs_bound_occurrences_and_freeze_results(co
     assert metadata_store.MAX_OWNER_BYTES == original_owner_limit
 
 
+@pytest.mark.parametrize('claim_phase', ['before_pending', 'after_pending'])
+def test_unmatched_claim_blocks_both_global_validations_preserving_orphan(
+        coordination, monkeypatch, claim_phase):
+    c = coordination
+    recovery = collector(c)
+    namespace = MetadataNamespaceRecovery(recovery)
+    garbage = orphan(c.job.working_dir / 'results' / 'metadata')
+    claim = uuid4().hex
+    pending_calls, pending_results, opened_ids = [], [], []
+    original_pending = recovery.recover_pending_startup
+    original_open = recovery.physical.open
+
+    def recover_pending(held):
+        pending_calls.append(True)
+        result = original_pending(held)
+        pending_results.append(result)
+        if claim_phase == 'after_pending':
+            with c.jobs._lock:
+                c.store._active_writes.add(claim)
+        return result
+
+    @contextmanager
+    def opened(job):
+        opened_ids.append(job.job_id)
+        with original_open(job) as directory:
+            yield directory
+
+    with runtime(c.jobs.root_dir) as held:
+        # Before injecting the fault, real inventory and SQL authority establish
+        # that this existing canonical file is eligible for orphan removal.
+        with original_open(c.job) as directory:
+            inventory = directory.inventory()
+            with namespace._transaction(held) as conn:
+                plan = namespace.authority.plan_locked(
+                    conn, c.job.job_id,
+                    tuple(entry.name for entry in inventory.entries))
+        assert garbage.name in plan.orphans
+        before, baseline = sql_state(c), memory(c)
+        payload = garbage.read_bytes()
+        assert before['metadata_pending'] == ()
+        assert claim not in baseline[0]
+        if claim_phase == 'before_pending':
+            with c.jobs._lock:
+                c.store._active_writes.add(claim)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(recovery, 'recover_pending_startup', recover_pending)
+            patch.setattr(recovery.physical, 'open', opened)
+            assert_error(lambda: recovery.recover_startup(held))
+
+        expected_calls = [] if claim_phase == 'before_pending' else [True]
+        expected_results = [] if claim_phase == 'before_pending' else [RecoveryCounters()]
+        assert pending_calls == expected_calls
+        assert pending_results == expected_results
+        assert opened_ids == []
+        assert memory(c) == (baseline[0] | {claim}, baseline[1])
+        assert sql_state(c) == before
+        assert garbage.read_bytes() == payload
+
+
 def test_invalid_runtime_authority_rejects_before_sql_or_namespace_io(coordination, monkeypatch, tmp_path):
     c = coordination
     recovery = collector(c)

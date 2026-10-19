@@ -69,6 +69,8 @@ class MetadataNamespaceRecovery:
 
     def _validate_and_ceiling(self, runtime_lease):
         with self._transaction(runtime_lease) as conn:
+            # Both startup validations reject even claims without pending rows.
+            _require(not self.store._active_writes)
             self.authority.validate_global_locked(conn)
             previous = ''
             ceiling = None
