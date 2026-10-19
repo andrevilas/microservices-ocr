@@ -173,8 +173,8 @@ class MetadataNamespaceAuthority:
         pending = None
         if has_ledger:
             _require(_owner(owner) and status == 'completed')
-            # Despite its historical name this performs only complete SQL ledger
-            # validation, including active-claim rejection. Approved is deferred.
+            # Complete bounded mixed SQL ledger validation, including active
+            # claim rejection; this establishes no physical file authority.
             self.store._validate_purged_ledger_locked(conn, owner, job_id)
             columns = ','.join('r.' + column for column in _REVISION_COLUMNS.split(','))
             cursor = conn.execute(
@@ -188,12 +188,22 @@ class MetadataNamespaceAuthority:
                     revision = self.store._revision_row(values[:8])
                     actor, auth, created = values[8:]
                     _require(revision.owner == owner and revision.job_id == job_id
-                             and revision.state == 'draft' and actor == owner
-                             and _stored_time(created) == revision.created_at)
+                             and actor == owner and _stored_time(created) == revision.created_at)
+                    reviewed_sha256 = None
+                    if revision.state == 'approved':
+                        parent_revision = self.store._revision(conn, revision.parent_revision_id)
+                        _require(parent_revision is not None
+                                 and parent_revision.owner == owner
+                                 and parent_revision.job_id == job_id
+                                 and parent_revision.state == 'draft')
+                        # The complete ledger has checked this parent's hash
+                        # against the strict persisted approval receipt.
+                        reviewed_sha256 = parent_revision.sha256
                     confirmed.append(ConfirmedExpectation(
                         revision.revision_id, revision.parent_revision_id,
                         revision.sha256, revision.size_bytes, revision.state,
-                        revision.created_at, actor, auth))
+                        revision.created_at, actor, auth,
+                        reviewed_sha256=reviewed_sha256))
             finally:
                 cursor.close()
             head = self.store._head(conn, owner, job_id)

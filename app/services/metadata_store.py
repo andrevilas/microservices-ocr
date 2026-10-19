@@ -5,9 +5,9 @@ not proof of snapshot durability. C3b must verify published files and bindings
 before calling the private commit helper inside _transaction(). Cleanup callers
 must verify absence of ALL pending files before releasing a cleanup reservation.
 
-Approval prerequisites may reserve against a draft head's existing slot and MiB.
-Residual files remain charged until physical reconciliation. Approval publication
-and committed approval revisions are not implemented here.
+Approval reservations use a draft head's existing slot and MiB. Residual files
+remain charged until physical reconciliation. Private SQL approval commits do
+not publish files or establish evidence validity or snapshot durability.
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from uuid import uuid4
 
 from app.application import ApplicationError, Principal
 from app.metadata_approval import _authorize as _authorize_approval
+from app.metadata_approval_contract import ApproveMetadataReceipt
 from app.metadata_models import MAX_SNAPSHOT_BYTES, SaveMetadataReceipt
 from app.services.metadata_schema import ensure_metadata_schema
 
@@ -135,6 +136,21 @@ def _receipt(value, *, stored=False):
     return result
 
 
+def _approval_receipt(value, *, stored=False):
+    result = None
+    try:
+        if isinstance(value, ApproveMetadataReceipt) or type(value) is dict:
+            # Revalidate original instances before serialization can coerce them.
+            validated = ApproveMetadataReceipt.model_validate(value, strict=True)
+            detached = validated.model_dump(mode="python", warnings="error")
+            result = ApproveMetadataReceipt.model_validate(detached, strict=True)
+    except Exception:
+        pass
+    if result is None:
+        _fail("metadata_unavailable" if stored else "metadata_invalid_input")
+    return result
+
+
 def _receipt_json(receipt):
     return json.dumps(receipt.model_dump(mode="json", warnings="error"),
                       sort_keys=True, separators=(",", ":"), ensure_ascii=True,
@@ -197,7 +213,7 @@ class MetadataPending:
 @dataclass(frozen=True)
 class MetadataAdmission:
     head: MetadataHead | None
-    receipt: SaveMetadataReceipt | None = None
+    receipt: SaveMetadataReceipt | ApproveMetadataReceipt | None = None
     pending: MetadataPending | None = None
 
 
@@ -424,6 +440,43 @@ class MetadataStore:
                  and receipt.sha256 == revision.sha256 and _stored_time(created) == revision.created_at)
         return receipt
 
+    @_guard
+    def _replay_approval(self, conn, owner, job_id, key_hash, request_hash):
+        row = conn.execute(
+            "SELECT owner,job_id,operation,key_hash,request_hash,revision_id,receipt_json,created_at "
+            "FROM metadata_operations WHERE owner=? AND job_id=? AND operation='approve-v1' AND key_hash=?",
+            (owner, job_id, key_hash)).fetchone()
+        if row is None:
+            return None
+        _require(len(row) == 8)
+        stored_owner, stored_job, operation, key, request, revision_id, encoded, created = row
+        _require((stored_owner, stored_job, operation, key) ==
+                 (owner, job_id, "approve-v1", key_hash))
+        _require(_hex(request, 64) and _hex(revision_id, 32))
+        if request != request_hash:
+            _fail("idempotency_conflict")
+        _require(type(encoded) is str and len(encoded) <= 8192)
+        receipt = _approval_receipt(
+            json.loads(encoded, object_pairs_hook=_unique_object), stored=True)
+        revision = self._revision(conn, revision_id)
+        _require(revision is not None and revision.owner == owner and revision.job_id == job_id
+                 and revision.state == "approved" and owner.startswith("user:")
+                 and receipt.revision_id == revision_id and receipt.sha256 == revision.sha256
+                 and _stored_time(created) == revision.created_at
+                 and revision.parent_revision_id == receipt.reviewed_revision_id)
+        parent = self._revision(conn, revision.parent_revision_id)
+        _require(parent is not None and parent.owner == owner and parent.job_id == job_id
+                 and parent.state == "draft" and parent.sha256 == receipt.reviewed_sha256)
+        audits = conn.execute(
+            "SELECT owner,job_id,parent_revision_id,sha256,action,actor,auth_source,created_at "
+            "FROM metadata_audit WHERE revision_id=?", (revision_id,)).fetchall()
+        _require(len(audits) == 1 and len(audits[0]) == 8)
+        audit = tuple(audits[0])
+        _require(audit[:6] == (owner, job_id, parent.revision_id, revision.sha256, "approve", owner)
+                 and type(audit[6]) is str and audit[6] in ("local_jwt", "oauth")
+                 and _stored_time(audit[7]) == revision.created_at)
+        return receipt
+
     @staticmethod
     def _cas(head, expected_head, expected_sha256):
         actual = (head.revision_id, head.sha256) if head is not None else (None, None)
@@ -488,11 +541,12 @@ class MetadataStore:
         _require(removed <= purged <= now)
         return purged
 
-    def _validate_purged_ledger_locked(self, conn, owner, job_id):
-        """Bound materialization before checking the complete save-v1 ledger.
+    def _validate_purged_ledger_locked(self, conn, owner, job_id, *, _check_active=True):
+        """Bound and validate the complete mixed save/approval SQL ledger.
 
-        C5 must extend these checks before introducing approved revisions.
         Caller owns the transaction and has validated global accounting integrity.
+        Collection and startup reject active claims. Attempt diagnosis and online
+        approval admission may inspect a valid active reservation without repair.
         """
         for table, maximum in (("metadata_revisions", MAX_REVISIONS_PER_JOB),
                                ("metadata_operations", MAX_REVISIONS_PER_JOB),
@@ -504,6 +558,7 @@ class MetadataStore:
         # Other jobs must not retain references to revisions being collected.
         for table, column in (("metadata_operations", "revision_id"),
                               ("metadata_audit", "revision_id"),
+                              ("metadata_audit", "parent_revision_id"),
                               ("metadata_heads", "revision_id"),
                               ("metadata_revisions", "parent_revision_id"),
                               ("metadata_pending", "expected_head"),
@@ -513,24 +568,36 @@ class MetadataStore:
                 column + "=r.revision_id WHERE r.job_id=? AND "
                 "(m.job_id<>r.job_id OR m.owner<>r.owner) LIMIT 1",
                 (job_id,)).fetchone() is None)
-        self._head(conn, owner, job_id)
+        head = self._head(conn, owner, job_id)
         revisions = {}
         for row in conn.execute("SELECT " + _REVISION_COLUMNS +
                                 " FROM metadata_revisions WHERE job_id=?", (job_id,)):
             revision = self._revision_row(row)
-            _require(revision.owner == owner and revision.job_id == job_id
-                     and revision.state == "draft")
+            _require(revision.owner == owner and revision.job_id == job_id)
             revisions[revision.revision_id] = revision
+        visited = set()
+        current = head.revision_id if head is not None else None
+        while current is not None:
+            _require(len(visited) < MAX_REVISIONS_PER_JOB
+                     and current in revisions and current not in visited)
+            visited.add(current)
+            current = revisions[current].parent_revision_id
+        _require(visited == set(revisions))
         operations = set()
         for row in conn.execute(
                 "SELECT owner,job_id,operation,key_hash,request_hash,revision_id "
                 "FROM metadata_operations WHERE job_id=?", (job_id,)):
             stored_owner, stored_job, operation, key, request, revision_id = row
-            _require((stored_owner, stored_job, operation) == (owner, job_id, _OPERATION)
+            _require((stored_owner, stored_job) == (owner, job_id)
+                     and type(operation) is str and operation in ("save-v1", "approve-v1")
                      and _hex(key, 64) and _hex(request, 64)
                      and revision_id in revisions and revision_id not in operations)
-            # Strict receipt, revision/hash and canonical timestamp validation.
-            _require(self._replay(conn, owner, job_id, key, request) is not None)
+            revision = revisions[revision_id]
+            expected_operation = "save-v1" if revision.state == "draft" else "approve-v1"
+            _require(operation == expected_operation)
+            replay = self._replay if operation == "save-v1" else self._replay_approval
+            # Includes strict receipt, parent/hash and canonical timestamp checks.
+            _require(replay(conn, owner, job_id, key, request) is not None)
             operations.add(revision_id)
         audits = set()
         for row in conn.execute(
@@ -540,10 +607,13 @@ class MetadataStore:
             stored_owner, stored_job, revision_id, parent, sha256, action, actor, auth, created = row
             _require(revision_id in revisions and revision_id not in audits)
             revision = revisions[revision_id]
+            expected_action = "save" if revision.state == "draft" else "approve"
             _require((stored_owner, stored_job, parent, sha256, action, actor) ==
-                     (owner, job_id, revision.parent_revision_id, revision.sha256, "save", owner))
+                     (owner, job_id, revision.parent_revision_id, revision.sha256, expected_action, owner))
             _require(_owner(actor) and type(auth) is str and auth in _AUTH_SOURCES
                      and _stored_time(created) == revision.created_at)
+            if revision.state == "approved":
+                _require(owner.startswith("user:") and auth in ("local_jwt", "oauth"))
             audits.add(revision_id)
         _require(operations == audits == set(revisions))
         row = conn.execute("SELECT pending_id FROM metadata_pending WHERE job_id=?",
@@ -551,8 +621,13 @@ class MetadataStore:
         if row is not None:
             pending = self._pending(conn, row[0])
             _require(pending is not None and pending.owner == owner and pending.job_id == job_id
-                     and pending.pending_id not in self._active_writes
+                     and (not _check_active or pending.pending_id not in self._active_writes)
                      and self._revision(conn, pending.revision_id) is None)
+            actual = (head.revision_id, head.sha256) if head is not None else (None, None)
+            _require((pending.expected_head, pending.expected_sha256) == actual
+                     and (pending.charged_slots, pending.charged_bytes,
+                          pending.approval_slots, pending.approval_bytes)
+                     == self._charges(head, pending.size_bytes, operation=pending.operation))
 
     @_guard
     def reconcile_purged_job(self, job_id, *, now=None) -> bool:
@@ -746,10 +821,16 @@ class MetadataStore:
         contradictory references to this attempt never authorize cleanup.
         """
         self._connection_locked(conn)
-        _require(type(reservation) is MetadataPending and reservation.operation == _OPERATION)
+        _require(type(reservation) is MetadataPending
+                 and reservation.operation in ("save-v1", "approve-v1"))
         r = reservation
-        receipt = _receipt(receipt, stored=True)
+        approving = r.operation == "approve-v1"
+        receipt = (_approval_receipt(receipt, stored=True) if approving
+                   else _receipt(receipt, stored=True))
         _require(receipt.revision_id == r.revision_id and receipt.sha256 == r.sha256)
+        if approving:
+            _require((receipt.reviewed_revision_id, receipt.reviewed_sha256) ==
+                     (r.expected_head, r.expected_sha256))
         key = (r.owner, r.job_id, r.operation, r.key_hash)
         pending_rows = conn.execute(
             "SELECT pending_id FROM metadata_pending WHERE pending_id=? OR revision_id=? "
@@ -767,19 +848,33 @@ class MetadataStore:
             "SELECT owner,job_id FROM metadata_heads WHERE revision_id=?",
             (r.revision_id,)).fetchall()
         revision = self._revision(conn, r.revision_id)
+        try:
+            self._quota(conn, r.owner, r.job_id, _check_limits=False)
+            self._validate_purged_ledger_locked(
+                conn, r.owner, r.job_id, _check_active=False)
+        except ApplicationError:
+            return "unknown"
         if len(pending_rows) == 1:
             pending = self._pending(conn, pending_rows[0][0])
             if (pending is not None and pending.state in ("active", "cleanup")
                     and replace(pending, state=r.state) == r and r.state == "active"
                     and revision is None and not operation_rows and not audit_rows
                     and not head_rows):
+                # No committed or pending lineage may reference an unpublished
+                # revision, including an otherwise unrelated job's audit row.
+                for table, column in (("metadata_revisions", "parent_revision_id"),
+                                      ("metadata_audit", "parent_revision_id"),
+                                      ("metadata_pending", "expected_head")):
+                    if conn.execute("SELECT 1 FROM " + table + " WHERE " + column +
+                                    "=? LIMIT 1", (r.revision_id,)).fetchone() is not None:
+                        return "unknown"
                 return "uncommitted"
             return "unknown"
         if pending_rows or revision is None or len(operation_rows) != 1 or len(audit_rows) != 1:
             return "unknown"
         expected_revision = MetadataRevision(
             r.revision_id, r.owner, r.job_id, r.expected_head, r.sha256,
-            r.size_bytes, "draft", r.created_at)
+            r.size_bytes, "approved" if approving else "draft", r.created_at)
         if revision != expected_revision:
             return "unknown"
         operation = tuple(operation_rows[0])
@@ -787,13 +882,14 @@ class MetadataStore:
             return "unknown"
         encoded = operation[6]
         _require(type(encoded) is str and len(encoded) <= 8192)
-        stored_receipt = _receipt(
-            json.loads(encoded, object_pairs_hook=_unique_object), stored=True)
+        decoded = json.loads(encoded, object_pairs_hook=_unique_object)
+        stored_receipt = (_approval_receipt(decoded, stored=True) if approving
+                          else _receipt(decoded, stored=True))
         if stored_receipt != receipt or _stored_time(operation[7]) != r.created_at:
             return "unknown"
         audit = tuple(audit_rows[0])
         if (audit[:8] != (r.owner, r.job_id, r.revision_id, r.expected_head,
-                          r.sha256, "save", r.actor, r.auth_source)
+                          r.sha256, "approve" if approving else "save", r.actor, r.auth_source)
                 or _stored_time(audit[8]) != r.created_at):
             return "unknown"
         head = self._head(conn, r.owner, r.job_id)
@@ -871,12 +967,26 @@ class MetadataStore:
             return MetadataAdmission(head, pending=pending)
 
     @_guard
+    def preflight_approval(self, principal, job_id, *, key_hash, request_hash):
+        """Reauthorize and check lifecycle before reading an approval replay."""
+        self._syntax(job_id, key_hash, request_hash)
+        with self._transaction() as conn:
+            _authorize_approval(principal, principal.user_id if type(principal) is Principal else None)
+            owner, _ = self._admit(principal, job_id, write=False)
+            self._quota(conn, owner, job_id, _check_limits=False)
+            self._validate_purged_ledger_locked(conn, owner, job_id, _check_active=False)
+            receipt = self._replay_approval(conn, owner, job_id, key_hash, request_hash)
+            head = self._head(conn, owner, job_id)
+            return MetadataAdmission(head, receipt)
+
+    @_guard
     def reserve_approval(self, principal, job_id, *, key_hash, request_hash, expected_head,
                          expected_sha256, revision_id, sha256, size_bytes, created_at) -> MetadataAdmission:
-        """Reserve an approval prerequisite; publication and commit are unsupported.
+        """Replay a committed approval or reserve against the draft HEAD.
 
         The draft HEAD retains its slot and MiB throughout active and cleanup
-        states. Even an identical retry conflicts with the unique job pending row.
+        states. An uncommitted retry conflicts with the unique job pending row.
+        SQL reservations and receipts establish no physical durability.
         """
         self._syntax(job_id, key_hash, request_hash)
         _input(_pair(expected_head, expected_sha256) and expected_head is not None)
@@ -886,11 +996,12 @@ class MetadataStore:
         with self._transaction() as conn:
             _authorize_approval(principal, principal.user_id if type(principal) is Principal else None)
             owner, auth_source = self._admit(principal, job_id, write=False)
-            _require(conn.execute(
-                "SELECT 1 FROM metadata_operations WHERE owner=? AND job_id=? "
-                "AND operation='approve-v1' AND key_hash=?",
-                (owner, job_id, key_hash)).fetchone() is None)
+            self._quota(conn, owner, job_id, _check_limits=False)
+            self._validate_purged_ledger_locked(conn, owner, job_id, _check_active=False)
+            receipt = self._replay_approval(conn, owner, job_id, key_hash, request_hash)
             head = self._head(conn, owner, job_id)
+            if receipt is not None:
+                return MetadataAdmission(head, receipt)
             if head is None or head.state != "draft":
                 _fail("metadata_revision_conflict")
             self._cas(head, expected_head, expected_sha256)
@@ -1007,6 +1118,75 @@ class MetadataStore:
             (owner, pending.job_id, pending.revision_id, pending.expected_head, pending.sha256,
              "save", pending.actor, pending.auth_source, timestamp))
         conn.execute("DELETE FROM metadata_pending WHERE pending_id=?", (pending_id,))
+        return receipt
+
+    @_guard
+    def _commit_approval_index_locked(self, conn, principal, pending_id, receipt):
+        """Trusted future writer only, AFTER file/evidence verification under lease.
+
+        Caller owns the shared lock and transaction. No lock, transaction or
+        physical authority is acquired here. The receipt and released reserve
+        become committed only after the caller's transaction exits healthily.
+        SQL alone never proves snapshot durability or evidence validity.
+        """
+        self._connection_locked(conn)
+        _authorize_approval(principal, principal.user_id if type(principal) is Principal else None)
+        _input(_hex(pending_id, 32))
+        receipt = _approval_receipt(receipt)
+        pending = self._pending(conn, pending_id)
+        if pending is None:
+            _fail("metadata_pending_not_found")
+        _require(pending.operation == "approve-v1")
+        owner, auth_source = self._admit(principal, pending.job_id, write=False)
+        if pending.owner != owner:
+            _fail("job_not_found")
+        if pending.state != "active" or pending.actor != owner or pending.auth_source != auth_source:
+            _fail("metadata_write_pending")
+        if (receipt.revision_id, receipt.sha256, receipt.reviewed_revision_id,
+                receipt.reviewed_sha256) != (pending.revision_id, pending.sha256,
+                                             pending.expected_head, pending.expected_sha256):
+            _fail("metadata_revision_conflict")
+        head = self._head(conn, owner, pending.job_id)
+        self._cas(head, pending.expected_head, pending.expected_sha256)
+        _require((pending.charged_slots, pending.charged_bytes,
+                  pending.approval_slots, pending.approval_bytes)
+                 == self._charges(head, pending.size_bytes, operation="approve-v1"))
+        parent = self._revision(conn, pending.expected_head)
+        _require(parent is not None and parent.owner == owner and parent.job_id == pending.job_id
+                 and parent.state == "draft" and parent.sha256 == pending.expected_sha256)
+        _require(self._revision(conn, pending.revision_id) is None)
+        _require(conn.execute(
+            "SELECT 1 FROM metadata_operations WHERE owner=? AND job_id=? "
+            "AND operation='approve-v1' AND key_hash=?",
+            (owner, pending.job_id, pending.key_hash)).fetchone() is None)
+        self._quota(conn, owner, pending.job_id)
+        self._validate_purged_ledger_locked(conn, owner, pending.job_id, _check_active=False)
+        timestamp = pending.created_at.isoformat()
+        encoded = _receipt_json(receipt)
+        conn.execute(
+            "INSERT INTO metadata_revisions (" + _REVISION_COLUMNS + ") VALUES (?,?,?,?,?,?,?,?)",
+            (pending.revision_id, owner, pending.job_id, pending.expected_head,
+             pending.sha256, pending.size_bytes, "approved", timestamp))
+        changed = conn.execute(
+            "UPDATE metadata_heads SET revision_id=?,sha256=?,approval_slots=0,approval_bytes=0 "
+            "WHERE owner=? AND job_id=?",
+            (pending.revision_id, pending.sha256, owner, pending.job_id))
+        _require(changed.rowcount == 1)
+        conn.execute(
+            "INSERT INTO metadata_operations "
+            "(owner,job_id,operation,key_hash,request_hash,revision_id,receipt_json,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (owner, pending.job_id, "approve-v1", pending.key_hash, pending.request_hash,
+             pending.revision_id, encoded, timestamp))
+        conn.execute(
+            "INSERT INTO metadata_audit "
+            "(owner,job_id,revision_id,parent_revision_id,sha256,action,actor,auth_source,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (owner, pending.job_id, pending.revision_id, pending.expected_head, pending.sha256,
+             "approve", pending.actor, pending.auth_source, timestamp))
+        deleted = conn.execute("DELETE FROM metadata_pending WHERE pending_id=?", (pending_id,))
+        _require(deleted.rowcount == 1)
+        self._quota(conn, owner, pending.job_id)
         return receipt
 
     @_guard
