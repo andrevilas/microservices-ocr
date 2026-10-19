@@ -5,8 +5,9 @@ not proof of snapshot durability. C3b must verify published files and bindings
 before calling the private commit helper inside _transaction(). Cleanup callers
 must verify absence of ALL pending files before releasing a cleanup reservation.
 
-Future approval may consume a draft head's reserved slot and MiB. Residual files
-must remain charged until physical reconciliation; no approval is implemented.
+Approval prerequisites may reserve against a draft head's existing slot and MiB.
+Residual files remain charged until physical reconciliation. Approval publication
+and committed approval revisions are not implemented here.
 """
 from __future__ import annotations
 
@@ -18,7 +19,8 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 from uuid import uuid4
 
-from app.application import ApplicationError
+from app.application import ApplicationError, Principal
+from app.metadata_approval import _authorize as _authorize_approval
 from app.metadata_models import MAX_SNAPSHOT_BYTES, SaveMetadataReceipt
 from app.services.metadata_schema import ensure_metadata_schema
 
@@ -429,7 +431,14 @@ class MetadataStore:
             _fail("metadata_revision_conflict")
 
     @staticmethod
-    def _charges(head, size_bytes):
+    def _charges(head, size_bytes, *, operation="save-v1"):
+        _require(type(operation) is str and operation in ("save-v1", "approve-v1"))
+        if operation == "approve-v1":
+            _require(head is not None and head.state == "draft"
+                     and type(head.approval_slots) is int
+                     and type(head.approval_bytes) is int
+                     and (head.approval_slots, head.approval_bytes) == (1, MAX_SNAPSHOT_BYTES))
+            return 0, 0, 0, 0
         approval_slots = 0 if head is not None and head.state == "draft" else 1
         approval_bytes = approval_slots * MAX_SNAPSHOT_BYTES
         return 1 + approval_slots, size_bytes + approval_bytes, approval_slots, approval_bytes
@@ -444,7 +453,8 @@ class MetadataStore:
         _require(len(values) == 19)
         p = MetadataPending(*values[:11], _stored_time(values[11]), *values[12:])
         _require(_hex(p.pending_id, 32) and _hex(p.job_id, 32) and _owner(p.owner))
-        _require(p.operation == _OPERATION and _hex(p.key_hash, 64) and _hex(p.request_hash, 64))
+        _require(type(p.operation) is str and p.operation in ("save-v1", "approve-v1")
+                 and _hex(p.key_hash, 64) and _hex(p.request_hash, 64))
         _require(_hex(p.revision_id, 32) and _hex(p.sha256, 64))
         _require(_integer(p.size_bytes, 1, MAX_SNAPSHOT_BYTES) and _pair(p.expected_head, p.expected_sha256))
         _require(p.expected_head != p.revision_id and p.actor == p.owner and _owner(p.actor))
@@ -452,9 +462,19 @@ class MetadataStore:
         _require(type(p.state) is str and p.state in ("active", "cleanup"))
         counters = (p.charged_slots, p.charged_bytes, p.approval_slots, p.approval_bytes)
         _require(all(type(value) is int for value in counters))
-        _require((p.approval_slots, p.approval_bytes) in ((0, 0), (1, MAX_SNAPSHOT_BYTES)))
-        _require(p.charged_slots == 1 + p.approval_slots
-                 and p.charged_bytes == p.size_bytes + p.approval_bytes)
+        if p.operation == "approve-v1":
+            _require(counters == (0, 0, 0, 0)
+                     and p.expected_head is not None
+                     and p.owner.startswith("user:")
+                     and p.auth_source in ("local_jwt", "oauth"))
+            head = self._head(conn, p.owner, p.job_id)
+            _require(head is not None
+                     and (head.revision_id, head.sha256) == (p.expected_head, p.expected_sha256))
+            _require(counters == self._charges(head, p.size_bytes, operation=p.operation))
+        else:
+            _require((p.approval_slots, p.approval_bytes) in ((0, 0), (1, MAX_SNAPSHOT_BYTES)))
+            _require(p.charged_slots == 1 + p.approval_slots
+                     and p.charged_bytes == p.size_bytes + p.approval_bytes)
         return p
 
     @staticmethod
@@ -628,28 +648,44 @@ class MetadataStore:
                     "AND r.job_id=metadata_heads.job_id AND r.sha256=metadata_heads.sha256 AND "
                     "((r.state='draft' AND approval_slots=1 AND approval_bytes=1048576) OR "
                     "(r.state='approved' AND approval_slots=0 AND approval_bytes=0)))")
-        pending_bad = ("typeof(size_bytes)<>'integer' OR size_bytes<1 OR size_bytes>1048576 OR "
-                       "typeof(charged_slots)<>'integer' OR typeof(charged_bytes)<>'integer' OR "
-                       "typeof(approval_slots)<>'integer' OR typeof(approval_bytes)<>'integer' OR "
-                       "NOT ((approval_slots=0 AND approval_bytes=0) OR "
-                       "(approval_slots=1 AND approval_bytes=1048576)) OR "
-                       "charged_slots<>1+approval_slots OR charged_bytes<>size_bytes+approval_bytes OR "
-                       "state NOT IN ('active','cleanup') OR operation<>'save-v1' OR "
-                       "NOT ((expected_head IS NULL AND expected_sha256 IS NULL "
-                       "AND approval_slots=1 AND approval_bytes=1048576 "
-                       "AND NOT EXISTS (SELECT 1 FROM metadata_heads h WHERE "
-                       "h.job_id=metadata_pending.job_id)) OR "
-                       "EXISTS (SELECT 1 FROM metadata_heads h "
-                       "JOIN metadata_revisions r ON r.revision_id=h.revision_id "
-                       "WHERE h.job_id=metadata_pending.job_id "
-                       "AND h.owner=metadata_pending.owner AND r.owner=h.owner "
-                       "AND r.job_id=h.job_id AND r.sha256=h.sha256 "
-                       "AND h.revision_id=metadata_pending.expected_head "
-                       "AND h.sha256=metadata_pending.expected_sha256 AND "
-                       "((r.state='draft' AND metadata_pending.approval_slots=0 "
-                       "AND metadata_pending.approval_bytes=0) OR "
-                       "(r.state='approved' AND metadata_pending.approval_slots=1 "
-                       "AND metadata_pending.approval_bytes=1048576))))")
+        pending_common_bad = (
+            "typeof(size_bytes)<>'integer' OR size_bytes<1 OR size_bytes>1048576 OR "
+            "typeof(charged_slots)<>'integer' OR typeof(charged_bytes)<>'integer' OR "
+            "typeof(approval_slots)<>'integer' OR typeof(approval_bytes)<>'integer' OR "
+            "state NOT IN ('active','cleanup') OR operation NOT IN ('save-v1','approve-v1')")
+        save_pending_bad = (
+            "NOT ((approval_slots=0 AND approval_bytes=0) OR "
+            "(approval_slots=1 AND approval_bytes=1048576)) OR "
+            "charged_slots<>1+approval_slots OR charged_bytes<>size_bytes+approval_bytes OR "
+            "NOT ((expected_head IS NULL AND expected_sha256 IS NULL "
+            "AND approval_slots=1 AND approval_bytes=1048576 "
+            "AND NOT EXISTS (SELECT 1 FROM metadata_heads h WHERE "
+            "h.job_id=metadata_pending.job_id)) OR "
+            "EXISTS (SELECT 1 FROM metadata_heads h "
+            "JOIN metadata_revisions r ON r.revision_id=h.revision_id "
+            "WHERE h.job_id=metadata_pending.job_id "
+            "AND h.owner=metadata_pending.owner AND r.owner=h.owner "
+            "AND r.job_id=h.job_id AND r.sha256=h.sha256 "
+            "AND h.revision_id=metadata_pending.expected_head "
+            "AND h.sha256=metadata_pending.expected_sha256 AND "
+            "((r.state='draft' AND metadata_pending.approval_slots=0 "
+            "AND metadata_pending.approval_bytes=0) OR "
+            "(r.state='approved' AND metadata_pending.approval_slots=1 "
+            "AND metadata_pending.approval_bytes=1048576))))")
+        approval_pending_bad = (
+            "charged_slots<>0 OR charged_bytes<>0 OR approval_slots<>0 OR approval_bytes<>0 OR "
+            "substr(owner,1,5)<>'user:' OR actor<>owner OR "
+            "auth_source NOT IN ('local_jwt','oauth') OR "
+            "NOT EXISTS (SELECT 1 FROM metadata_heads h "
+            "JOIN metadata_revisions r ON r.revision_id=h.revision_id "
+            "WHERE h.job_id=metadata_pending.job_id AND h.owner=metadata_pending.owner "
+            "AND r.owner=h.owner AND r.job_id=h.job_id AND r.sha256=h.sha256 "
+            "AND h.revision_id=metadata_pending.expected_head "
+            "AND h.sha256=metadata_pending.expected_sha256 AND r.state='draft' "
+            "AND h.approval_slots=1 AND h.approval_bytes=1048576)")
+        pending_bad = ("(" + pending_common_bad + ") OR "
+                       "(operation='save-v1' AND (" + save_pending_bad + ")) OR "
+                       "(operation='approve-v1' AND (" + approval_pending_bad + "))")
         totals = [0, 0, 0, 0]
         for table, byte_column, slot_column, bad in (
             ("metadata_revisions", "size_bytes", "1", revision_bad),
@@ -710,7 +746,7 @@ class MetadataStore:
         contradictory references to this attempt never authorize cleanup.
         """
         self._connection_locked(conn)
-        _require(type(reservation) is MetadataPending)
+        _require(type(reservation) is MetadataPending and reservation.operation == _OPERATION)
         r = reservation
         receipt = _receipt(receipt, stored=True)
         _require(receipt.revision_id == r.revision_id and receipt.sha256 == r.sha256)
@@ -778,7 +814,7 @@ class MetadataStore:
                     != (head.revision_id, head.sha256)
                     or (pending.charged_slots, pending.charged_bytes,
                         pending.approval_slots, pending.approval_bytes)
-                    != self._charges(head, pending.size_bytes)):
+                    != self._charges(head, pending.size_bytes, operation=pending.operation)):
                 return "unknown"
         return "confirmed"
 
@@ -816,7 +852,7 @@ class MetadataStore:
                 _require((pending.expected_head, pending.expected_sha256) == actual)
                 _require((pending.charged_slots, pending.charged_bytes,
                           pending.approval_slots, pending.approval_bytes)
-                         == self._charges(head, pending.size_bytes))
+                         == self._charges(head, pending.size_bytes, operation=pending.operation))
                 _fail("metadata_write_pending")
             if (conn.execute("SELECT 1 FROM metadata_revisions WHERE revision_id=?", (revision_id,)).fetchone()
                     or conn.execute("SELECT 1 FROM metadata_pending WHERE revision_id=?", (revision_id,)).fetchone()):
@@ -828,6 +864,59 @@ class MetadataStore:
                 "INSERT INTO metadata_pending (" + _PENDING_COLUMNS + ") "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (pending_id, job_id, owner, _OPERATION, key_hash, request_hash, revision_id,
+                 sha256, size_bytes, expected_head, expected_sha256, created_at.isoformat(),
+                 owner, auth_source, *charges, "active"))
+            pending = self._pending(conn, pending_id)
+            _require(pending is not None)
+            return MetadataAdmission(head, pending=pending)
+
+    @_guard
+    def reserve_approval(self, principal, job_id, *, key_hash, request_hash, expected_head,
+                         expected_sha256, revision_id, sha256, size_bytes, created_at) -> MetadataAdmission:
+        """Reserve an approval prerequisite; publication and commit are unsupported.
+
+        The draft HEAD retains its slot and MiB throughout active and cleanup
+        states. Even an identical retry conflicts with the unique job pending row.
+        """
+        self._syntax(job_id, key_hash, request_hash)
+        _input(_pair(expected_head, expected_sha256) and expected_head is not None)
+        _input(_hex(revision_id, 32) and _hex(sha256, 64))
+        _input(_integer(size_bytes, 1, MAX_SNAPSHOT_BYTES))
+        created_at = _input_time(created_at)
+        with self._transaction() as conn:
+            _authorize_approval(principal, principal.user_id if type(principal) is Principal else None)
+            owner, auth_source = self._admit(principal, job_id, write=False)
+            _require(conn.execute(
+                "SELECT 1 FROM metadata_operations WHERE owner=? AND job_id=? "
+                "AND operation='approve-v1' AND key_hash=?",
+                (owner, job_id, key_hash)).fetchone() is None)
+            head = self._head(conn, owner, job_id)
+            if head is None or head.state != "draft":
+                _fail("metadata_revision_conflict")
+            self._cas(head, expected_head, expected_sha256)
+            charges = self._charges(head, size_bytes, operation="approve-v1")
+            existing = conn.execute(
+                "SELECT pending_id FROM metadata_pending WHERE job_id=?", (job_id,)).fetchone()
+            if existing is not None:
+                pending = self._pending(conn, existing[0])
+                _require(pending is not None and pending.owner == owner and pending.job_id == job_id
+                         and (pending.expected_head, pending.expected_sha256)
+                         == (head.revision_id, head.sha256)
+                         and (pending.charged_slots, pending.charged_bytes,
+                              pending.approval_slots, pending.approval_bytes)
+                         == self._charges(head, pending.size_bytes, operation=pending.operation))
+                _fail("metadata_write_pending")
+            if (conn.execute("SELECT 1 FROM metadata_revisions WHERE revision_id=?", (revision_id,)).fetchone()
+                    or conn.execute("SELECT 1 FROM metadata_pending WHERE revision_id=?", (revision_id,)).fetchone()):
+                _fail("metadata_revision_conflict")
+            # No incremental capacity is charged, but existing accounting and
+            # every applicable limit must still be validated.
+            self._quota(conn, owner, job_id, add_slots=charges[0], add_bytes=charges[1])
+            pending_id = uuid4().hex
+            conn.execute(
+                "INSERT INTO metadata_pending (" + _PENDING_COLUMNS + ") "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (pending_id, job_id, owner, "approve-v1", key_hash, request_hash, revision_id,
                  sha256, size_bytes, expected_head, expected_sha256, created_at.isoformat(),
                  owner, auth_source, *charges, "active"))
             pending = self._pending(conn, pending_id)
@@ -871,6 +960,7 @@ class MetadataStore:
         pending = self._pending(conn, pending_id)
         if pending is None:
             _fail("metadata_pending_not_found")
+        _require(pending.operation == _OPERATION)
         owner, auth_source = self._admit(principal, pending.job_id, write=True)
         if pending.owner != owner:
             _fail("job_not_found")
@@ -888,7 +978,8 @@ class MetadataStore:
         head = self._head(conn, owner, pending.job_id)
         self._cas(head, pending.expected_head, pending.expected_sha256)
         _require((pending.charged_slots, pending.charged_bytes,
-                  pending.approval_slots, pending.approval_bytes) == self._charges(head, pending.size_bytes))
+                  pending.approval_slots, pending.approval_bytes)
+                 == self._charges(head, pending.size_bytes, operation=pending.operation))
         _require(self._revision(conn, pending.revision_id) is None)
         # The durable pending row is already counted: do not charge it twice.
         self._quota(conn, owner, pending.job_id)
@@ -946,6 +1037,6 @@ class MetadataStore:
         _require(conn.execute(
             "SELECT 1 FROM metadata_operations WHERE revision_id=? OR "
             "(owner=? AND job_id=? AND operation=? AND key_hash=?) LIMIT 1",
-            (pending.revision_id, pending.owner, pending.job_id, _OPERATION,
+            (pending.revision_id, pending.owner, pending.job_id, pending.operation,
              pending.key_hash)).fetchone() is None)
         conn.execute("DELETE FROM metadata_pending WHERE pending_id=?", (pending_id,))

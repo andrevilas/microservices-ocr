@@ -43,6 +43,7 @@ class MetadataStorage:
     def _admission_locked(self, conn, principal, job, reservation):
         store = self.store
         store._connection_locked(conn)
+        _require(reservation.operation == "save-v1")
         owner, auth_source = store._admit(principal, reservation.job_id, write=True)
         actual = store._pending(conn, reservation.pending_id)
         if actual is None:
@@ -60,7 +61,7 @@ class MetadataStorage:
         store._cas(head, actual.expected_head, actual.expected_sha256)
         _require((actual.charged_slots, actual.charged_bytes,
                   actual.approval_slots, actual.approval_bytes)
-                 == store._charges(head, actual.size_bytes))
+                 == store._charges(head, actual.size_bytes, operation=actual.operation))
 
     @staticmethod
     def _verify_header(snapshot, reservation, receipt):
@@ -118,6 +119,7 @@ class MetadataStorage:
         """Claim an exact, owned handoff for cleanup without lifecycle admission."""
         store = self.store
         if (type(reservation) is not MetadataPending
+                or reservation.operation != "save-v1"
                 or not _hex(reservation.pending_id, 32)
                 or not _hex(reservation.job_id, 32)):
             return

@@ -275,7 +275,7 @@ class MetadataRecovery:
         self.store._cas(head, r.expected_head, r.expected_sha256)
         _require((r.charged_slots, r.charged_bytes,
                   r.approval_slots, r.approval_bytes)
-                 == self.store._charges(head, r.size_bytes))
+                 == self.store._charges(head, r.size_bytes, operation=r.operation))
 
     @staticmethod
     def _binding(job):
