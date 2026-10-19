@@ -190,6 +190,28 @@ class PreparedCanonicalText:
         if size !=self._manifest["size_bytes"] or digest.hexdigest() != self._manifest["sha256"]:
             raise _integrity()
 
+    def read_page_text(self, page: int) -> dict:
+        """Return one complete, checked page while this preparation remains open.
+
+        The fixed internal mapping contains text and canonical identity only.
+        PDF hashes in the manifest remain persisted report identifiers; this
+        operation neither rehashes PDFs nor performs PDF/A validation.
+        """
+        self._ensure_open()
+        if not (_strict_int(page) and 1 <= page <= len(self._pages)):
+            raise ApplicationError(422, "invalid_text_range", "Invalid page, offset or character limit.")
+        info = self._pages[page - 1]
+        text, _ = self._read_checked(info)
+        return {
+            "document_id": self._job_id,
+            "artifact_version": ARTIFACT_VERSION,
+            "text_version": TEXT_VERSION,
+            "canonical_sha256": self._manifest["sha256"],
+            "page": info.page,
+            "text_sha256": info.digest.sha256,
+            "text": text,
+        }
+
     def page_chunk(self, page: int, offset: int = 0, max_chars: int = 8000) -> dict:
         self._ensure_open()
         count = len(self._pages)
