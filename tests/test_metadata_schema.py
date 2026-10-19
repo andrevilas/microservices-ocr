@@ -49,10 +49,10 @@ def convert_fixture_to_legacy(harness, *, change=None):
         for table in TARGETS:
             temporary = "_fixture_legacy_" + table
             statement = table_ddl(ddl, table)
-            if change is not None:
-                statement = change(table, statement)
             statement = statement.replace("CREATE TABLE IF NOT EXISTS " + table,
                                           "CREATE TABLE " + temporary, 1)
+            if change is not None:
+                statement = change(table, statement)
             conn.execute(statement)
             columns = ",".join(quote(row[1]) for row in conn.execute(
                 "PRAGMA table_info(" + quote(table) + ")"))
