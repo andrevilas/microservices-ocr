@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from app.application import ApplicationError
 from app.metadata_models import MAX_SNAPSHOT_BYTES, SaveMetadataReceipt
+from app.services.metadata_schema import ensure_metadata_schema
 
 MAX_REVISIONS_PER_JOB = 32
 MAX_JOB_BYTES = 32 * 1024 * 1024
@@ -213,14 +214,14 @@ _DDL = (
     )""",
     """CREATE TABLE IF NOT EXISTS metadata_operations (
         owner TEXT NOT NULL, job_id TEXT NOT NULL,
-        operation TEXT NOT NULL CHECK(operation='save-v1'),
+        operation TEXT NOT NULL CHECK(operation IN ('save-v1','approve-v1')),
         key_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
         revision_id TEXT NOT NULL, receipt_json TEXT NOT NULL, created_at TEXT NOT NULL,
         UNIQUE(owner,job_id,operation,key_hash)
     )""",
     """CREATE TABLE IF NOT EXISTS metadata_pending (
         pending_id TEXT PRIMARY KEY, job_id TEXT NOT NULL UNIQUE, owner TEXT NOT NULL,
-        operation TEXT NOT NULL CHECK(operation='save-v1'),
+        operation TEXT NOT NULL CHECK(operation IN ('save-v1','approve-v1')),
         key_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
         revision_id TEXT NOT NULL UNIQUE, sha256 TEXT NOT NULL,
         size_bytes INTEGER NOT NULL CHECK(typeof(size_bytes)='integer' AND size_bytes>0),
@@ -236,7 +237,7 @@ _DDL = (
     """CREATE TABLE IF NOT EXISTS metadata_audit (
         owner TEXT NOT NULL, job_id TEXT NOT NULL, revision_id TEXT NOT NULL,
         parent_revision_id TEXT, sha256 TEXT NOT NULL,
-        action TEXT NOT NULL CHECK(action='save'), actor TEXT NOT NULL,
+        action TEXT NOT NULL CHECK(action IN ('save','approve')), actor TEXT NOT NULL,
         auth_source TEXT NOT NULL
             CHECK(auth_source IN ('unknown','local_jwt','service','oauth','legacy')),
         created_at TEXT NOT NULL, UNIQUE(revision_id,action)
@@ -261,6 +262,7 @@ class MetadataStore:
         self.jobs = jobs
         with self._transaction() as conn:
             self._active_writes = set()
+            ensure_metadata_schema(conn, _DDL)
             for statement in _DDL:
                 conn.execute(statement)
 
