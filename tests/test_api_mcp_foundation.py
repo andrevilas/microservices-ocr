@@ -167,11 +167,34 @@ def test_one_runtime_owner_between_processes(tmp_path):
 def test_combined_app_lifecycle_and_real_mcp(fixture, monkeypatch, tmp_path):
     from unittest.mock import Mock
     import app.main as main
+    from app.services.upload_service import UploadService, get_upload_service
+    from app.services.batch_service import BatchService, get_batch_service
+    from app.services.control_service import ControlService, get_control_service
+    from app.services.export_service import ExportService, get_export_service
+    from app.services.job_queue import get_job_queue_processor
+
     service, _, tokens, _, _ = fixture
     processor = Mock()
-    monkeypatch.setattr(main, "get_job_queue_processor", lambda: processor)
-    monkeypatch.setattr(settings, "ocr_tmp_dir", tmp_path / "lifecycle")
+    processor.job_store = service.store
+    monkeypatch.setattr(settings, "ocr_tmp_dir", service.store.root_dir)
     combined = main.create_app(lambda: service)
+    cache = {}
+
+    def cached(name, build):
+        if name not in cache:
+            cache[name] = build()
+        return cache[name]
+
+    def uploads():
+        return cached("uploads", lambda: UploadService(service.store))
+
+    combined.dependency_overrides.update({
+        get_upload_service: uploads,
+        get_batch_service: lambda: cached("batches", lambda: BatchService(service.store, uploads())),
+        get_control_service: lambda: cached("controls", lambda: ControlService(uploads())),
+        get_export_service: lambda: cached("exports", lambda: ExportService(service.store)),
+        get_job_queue_processor: lambda: processor,
+    })
     async def scenario():
         async with combined.router.lifespan_context(combined):
             async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=combined),
