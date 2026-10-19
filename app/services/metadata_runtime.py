@@ -21,27 +21,37 @@ from app.services.storage_service import JobStore
 
 
 @_guard
-def assert_metadata_health(jobs: JobStore) -> None:
-    """Observe the existing connection under jobs._lock; never repair it.
+def _assert_metadata_health_locked(jobs: JobStore) -> None:
+    """Observe without repair. Caller MUST hold the nonreentrant jobs._lock.
 
-    Call outside jobs._lock. Unsafe or uncertain observations quarantine the
-    store; only a fresh JobStore can restore availability.
+    Never call this helper without that lock. Unsafe or uncertain observations
+    quarantine the store; only a fresh JobStore can restore availability.
+    """
+    _require(isinstance(jobs, JobStore))
+    try:
+        jobs._check_available()
+        conn = jobs._conn
+        # Check absence first: _get_conn must never initialize a connection.
+        _require(conn is not None)
+        _require(conn is jobs._get_conn())
+        _require(conn.in_transaction is False)
+    except (KeyboardInterrupt, SystemExit):
+        jobs._quarantine_locked()
+        raise
+    except Exception:
+        jobs._quarantine_locked()
+        raise _error("metadata_unavailable") from None
+
+
+@_guard
+def assert_metadata_health(jobs: JobStore) -> None:
+    """Observe connection health without repair; call outside jobs._lock.
+
+    This acquires the nonreentrant lock and does not establish namespace readiness.
     """
     _require(isinstance(jobs, JobStore))
     with jobs._lock:
-        try:
-            jobs._check_available()
-            conn = jobs._conn
-            # Check absence first: _get_conn must never initialize a connection.
-            _require(conn is not None)
-            _require(conn is jobs._get_conn())
-            _require(conn.in_transaction is False)
-        except (KeyboardInterrupt, SystemExit):
-            jobs._quarantine_locked()
-            raise
-        except Exception:
-            jobs._quarantine_locked()
-            raise _error("metadata_unavailable") from None
+        _assert_metadata_health_locked(jobs)
 
 
 @dataclass(frozen=True)
