@@ -267,26 +267,28 @@ class JobStore(ArtifactRetentionMixin):
             raise ValueError("Invalid owner principal.")
         with self._lock:
             self._check_available()
-            job_id = uuid4().hex
-            working_dir = self.root_dir / job_id
-            working_dir.mkdir(parents=True, exist_ok=True)
-            input_pdf_path = working_dir / "original.pdf"
-            input_pdf_path.write_bytes(payload)
-            now = datetime.now(timezone.utc)
-            job = JobRecord(
-                job_id=job_id,
-                filename=filename,
-                working_dir=working_dir,
-                status="queued",
-                owner_user_id=owner_user_id,
-                progress_percent=0,
-                created_at=now,
-                updated_at=now,
-                input_pdf_path=input_pdf_path,
-                owner_principal_id=owner_principal_id,
-            )
-            self.jobs[job_id] = job
+        job_id = uuid4().hex
+        working_dir = self.root_dir / job_id
+        working_dir.mkdir(parents=True, exist_ok=True)
+        input_pdf_path = working_dir / "original.pdf"
+        input_pdf_path.write_bytes(payload)
+        now = datetime.now(timezone.utc)
+        job = JobRecord(
+            job_id=job_id,
+            filename=filename,
+            working_dir=working_dir,
+            status="queued",
+            owner_user_id=owner_user_id,
+            progress_percent=0,
+            created_at=now,
+            updated_at=now,
+            input_pdf_path=input_pdf_path,
+            owner_principal_id=owner_principal_id,
+        )
+        with self._lock:
+            self._check_available()
             self._persist(job)
+            self.jobs[job_id] = job
         return job
 
     def get(self, job_id: str) -> JobRecord | None:

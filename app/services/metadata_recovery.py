@@ -385,9 +385,13 @@ class MetadataRecovery:
                         healthy = (conn is not None
                                    and conn is self.jobs._get_conn()
                                    and conn.in_transaction is False)
-                    except Exception:
+                    except BaseException as exc:
                         healthy = False
+                        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                            self.jobs._quarantine_locked()
+                            raise
                     if not healthy:
+                        self.jobs._quarantine_locked()
                         failed = True
                     cached = self.jobs.jobs.get(owned.job_id)
                     if cached is not owned.cached_job:

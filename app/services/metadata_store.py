@@ -268,6 +268,7 @@ class MetadataStore:
     def _transaction(self):
         """Own the shared nonreentrant lock and one immediate SQLite transaction."""
         failure = None
+        control = None
         with self.jobs._lock:
             conn = None
             begun = False
@@ -287,21 +288,27 @@ class MetadataStore:
                 yield conn
                 conn.commit()
             except BaseException as exc:
-                if isinstance(exc, ApplicationError):
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    control = exc
+                elif isinstance(exc, ApplicationError):
                     failure = ApplicationError(exc.status, exc.code, exc.message)
                 else:
                     failure = _error("metadata_unavailable")
                 if begun:
                     try:
                         conn.rollback()
-                    except BaseException:
+                    except BaseException as exc:
                         # Even an exception after rollback's effect is uncertain.
                         self.jobs._quarantine_locked()
+                        if control is None and isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                            control = exc
                 if conn is not None:
                     try:
                         healthy = conn.in_transaction is False
-                    except BaseException:
+                    except BaseException as exc:
                         healthy = False
+                        if control is None and isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                            control = exc
                     if not healthy:
                         self.jobs._quarantine_locked()
             else:
@@ -309,11 +316,15 @@ class MetadataStore:
                 # Do not attempt repair after quarantining this successful phase.
                 try:
                     healthy = conn.in_transaction is False
-                except BaseException:
+                except BaseException as exc:
                     healthy = False
+                    if control is None and isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                        control = exc
                 if not healthy:
                     self.jobs._quarantine_locked()
                     failure = _error("metadata_unavailable")
+        if control is not None:
+            raise control
         if failure is not None:
             # contextlib throws the caller's exception into this generator.
             # Clear the implicit context AFTER raising attaches it, including
