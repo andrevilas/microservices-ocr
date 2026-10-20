@@ -48,13 +48,28 @@ permite preparar upload, submeter uma referência e recuperar texto e artefato.
 | GET /api/v1/jobs/{job_id}/report | ocr_get_report | jobs:read e artifacts:read |
 | GET /api/v1/jobs/{job_id}/artifact/content | URL retornada por ocr_get_artifact | jobs:read e artifacts:read |
 
-### Catálogo HTTP (contextos e tipos documentais) — sem tools MCP ainda
+### Catálogo (contextos e tipos documentais) — HTTP e MCP
 
-Onze operações HTTP (tag `Catalog`) expõem os serviços de contextos/tipos. **Não há
-tools MCP nem UI para elas neste corte**; a paridade é pendente. Escopos:
+Contrato atual: HTTP `1.7.0` com exatamente 59 operações (44 anteriores, incluindo
+14 de catálogo, mais 15 de documentos) e MCP `0.6.0` com exatamente 46 ferramentas:
+20 legadas, 14 de catálogo e 12 de documentos; 29 leituras e 17 escritas. A tabela
+acima lista só o subconjunto legado (20 tools; histórico: 12 leituras e 8 escritas).
+As 14 operações de catálogo (tag `Catalog`) estão implementadas em HTTP e MCP, e a
+UI existente do catálogo continua disponível. Escopos:
 leituras `contexts:read`; criar/atualizar `contexts:read` + `contexts:write`;
 publicar `contexts:read` + `contexts:publish`. Tokens JWT legados (sem claims de
 escopo) não recebem esses escopos (403).
+
+A tabela abaixo detalha as 11 operações originais do catálogo (histórico daquele
+corte, quando não havia tools MCP); as 3 restantes são:
+
+- `POST /api/v1/document-types/{type_id}/versions/{version}/deprecate`
+  (`ocr_deprecate_document_type_version`): `contexts:read` + `contexts:publish`;
+- `GET /api/v1/context-templates` (`ocr_list_context_templates`): `contexts:read`;
+- `POST /api/v1/context-templates/{template_id}/clone`
+  (`ocr_clone_context_template`): `contexts:read` + `contexts:write`.
+
+Detalhes em [HTTP v1](http-contract.md).
 
 | HTTP | operationId |
 |---|---|
@@ -76,11 +91,21 @@ cursor `after`). A versão publicada devolve o schema canônico no campo de fio
 `schema`; editar contexto/tipo depois nunca altera versões publicadas. Recursos de
 outro dono, inclusive de administradores, retornam 404.
 
+### Documentos e metadados
+
+Quinze rotas HTTP e doze ferramentas MCP (10 leituras, salvar e aprovar) cobrem texto
+canônico e revisões de metadados; escopos adicionais `metadata:read`,
+`metadata:write` e `metadata:approve`. Matriz completa, limites e semântica de CAS e
+idempotência: [metadados documentais](document-metadata-api.md). UI de metadados,
+enriquecimento por LLM, XMP, PDF/A final, exportação e RAG externo continuam
+pendentes.
+
 As duas interfaces chamam `JobApplication`, passando um `Principal` imutável.
 O SDK MCP oficial está fixado em 2.3.0. `/openapi.json` declara Bearer, schemas,
 operationId e erros da API v1. O download usa HTTP autenticado; PDFs não entram
-no JSON das ferramentas. Doze ferramentas são de leitura; preparação de upload,
-submissão, criação de lote, exportação, retry, exclusão de arquivos e os dois cancelamentos são mutações. Admissão e encaminhamento à fila usam o mesmo serviço
+no JSON das ferramentas. Entre as 20 ferramentas legadas (subconjunto histórico),
+doze são de leitura; preparação de upload,
+submissão, criação de lote, exportação, retry, exclusão de arquivos e os dois cancelamentos são mutações (8). No total de 46 ferramentas, 29 são leituras e 17 escritas. Admissão e encaminhamento à fila usam o mesmo serviço
 em HTTP e MCP.
 
 ## Autenticação e compatibilidade
@@ -89,7 +114,9 @@ O piloto usa Bearer JWT de usuário emitido por `POST /auth/login` ou credencial
 individual de serviço, enviado
 explicitamente em `Authorization`. A identidade é validada no banco a cada
 requisição. Expiração ausente, expirada ou inválida é rejeitada. As permissões
-atuais do usuário são `jobs:read`, `artifacts:read`, `jobs:submit`, `jobs:cancel` e `artifacts:delete`.
+atuais do usuário incluem `jobs:read`, `artifacts:read`, `jobs:submit`, `jobs:cancel` e `artifacts:delete`
+(escopos de catálogo e metadados: ver seções próprias). Os contratos Bearer locais
+são distintos do candidato a gateway remoto OAuth; não há afirmação geral de OAuth disponível.
 Serviços recebem apenas os escopos explícitos da credencial.
 
 Não há emissão de credenciais, login ou senha como ferramenta MCP. Tokens não

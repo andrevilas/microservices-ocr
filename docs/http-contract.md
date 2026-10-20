@@ -1,7 +1,11 @@
 # Contrato HTTP v1
 
-Entrega OCR-AM-04, atividade LPM `hkKLY54xl4fHElZsRNdK`. O contrato atual tem
-44 operações sob `/api/v1`, incluindo 14 do catálogo local, versão de contrato `1.6.0`, após a AM-05 de
+Entrega OCR-AM-04, atividade LPM `hkKLY54xl4fHElZsRNdK`. O contrato atual (versão
+`1.7.0`) tem exatamente 59 operações sob `/api/v1`: 44 anteriores, incluindo 14 do
+catálogo local, mais 15 de documentos ([metadados documentais](document-metadata-api.md)).
+O MCP `0.6.0` anuncia 46 ferramentas (20 legadas, 14 de catálogo e 12 de documentos),
+29 leituras e 17 escritas. As referências abaixo a `1.6.0`, 44 operações e 34
+ferramentas são históricas das entregas indicadas. Seguem a AM-05 de
 [uploads persistentes e admissão idempotente](uploads.md) e a AM-06 de
 [texto por página e relatórios](results.md) e AM-07 de
 [opções e capacidades](capabilities.md) e AM-09 de [lotes/exportação](batches-exports.md). A AM-10 acrescenta [cancelamento e reprocessamento](job-control.md), e a AM-11 [retenção e exclusão](retention.md). Administração ampla continua no backlog.
@@ -133,7 +137,8 @@ Os nomes, descrições e exemplos são dados não confiáveis, nunca instruçõe
 Após timeout, repetir o mesmo template, chave e corpo reproduz o recibo
 histórico; requisição alterada sob a mesma chave retorna 409. Consultar
 contexto/tipo para o estado atual. Não há seed ou publicação automática.
-O contrato tem 44 operações HTTP e 34 ferramentas MCP, sendo 14 de catálogo.
+Histórico (entrega dos templates): o contrato tinha 44 operações HTTP e 34
+ferramentas MCP, sendo 14 de catálogo; hoje são 59 e 46.
 As rotas remotas explícitas mantêm escopos, posse e replay dos serviços.
 Não representa conclusão de UI, metadados ou integração com DocumentService,
 homologação de clientes externos ou implantação em produção.
@@ -174,16 +179,28 @@ publicação nasce com ciclo de vida `published`, revisão 1.
 A ação está exposta no HTTP local, na ferramenta MCP
 `ocr_deprecate_document_type_version` e na rota explícita do gateway OAuth
 `POST /api/v1/document-types/{type_id}/versions/{version}/deprecate`, com os
-mesmos requisitos de escopo, proprietário, CAS e replay. Com os templates, o contrato tem 44 operações HTTP; o MCP anuncia 34 ferramentas, sendo 14 do catálogo e
-20 legadas. A matriz SDK anteriormente validada para o ciclo de vida cobre HTTP e stdio nos modos auto e legacy;
+mesmos requisitos de escopo, proprietário, CAS e replay. Histórico, com os templates:
+44 operações HTTP e 34 ferramentas MCP (14 do catálogo e 20 legadas). A matriz SDK anteriormente validada para o ciclo de vida cobre HTTP e stdio nos modos auto e legacy;
 a validação em aplicações desktop/CLI reais, com emissor externo e DNS/TLS,
 continua pendente. Isso não anuncia implantação em produção nem conclusão de
 Contexts ou UI. A vinculação efetiva no DocumentService ainda não foi
 integrada, portanto esta entrega não garante o bloqueio de novas associações
 de documentos de ponta a ponta.
 
+## Documentos e metadados (HTTP 1.7.0)
+
+As 15 rotas de documentos (tag `Documents`, sob `/api/v1/jobs/{job_id}`) e as 12
+ferramentas MCP correspondentes, com escopos, limites, CAS, idempotência (201 na
+primeira execução, 200 no replay), 503/429 sem retry automático e regras de
+download, estão em [metadados documentais](document-metadata-api.md). O OpenAPI
+atual é a fonte autoritativa. A qualificação real cobre SDK oficial e JWT local em
+quatro combinações (HTTP e stdio, `auto` e `legacy`); não cobre os seis aplicativos
+nem OIDC em produção. UI de metadados, enriquecimento por LLM, XMP, PDF/A final,
+exportação e RAG externo continuam pendentes.
+
 ## Validação
 
+As contagens e resultados desta seção são históricos das datas e entregas citadas.
 `tests/test_http_contract.py` valida respostas reais e exemplos contra schemas
 JSON do OpenAPI; as 12 operações iniciais têm testes de troca HTTP neste módulo,
 e as cinco operações de upload/admissão em `tests/test_upload_admission.py`.
@@ -225,7 +242,7 @@ automática, escopos reduzidos e isolamento entre usuários e administrador.
 Esses testes usam identidades sintéticas locais e não substituem a
 homologação nos aplicativos externos.
 O inventário
-MCP permanece independente, com 14 ferramentas de catálogo (34 no total).
+MCP permanecia independente, com 14 ferramentas de catálogo (34 no total, histórico).
 `tests/test_catalog_lifecycle_mcp_vertical.py` verifica
 recibos, replay, conflitos, preservação do snapshot e autorização por clientes
 SDK reais HTTP/stdio, em auto e legacy. A validação independente de 16/10/2026
