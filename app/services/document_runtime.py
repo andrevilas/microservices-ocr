@@ -11,6 +11,7 @@ from app.services.catalog_runtime import CatalogServices
 from app.services.context_service import ContextService
 from app.services.context_template_service import ContextTemplateService
 from app.services.document_execution import DocumentExecution
+from app.services.document_queries import DocumentQueries
 from app.services.document_service import DocumentMetadataService
 from app.services.metadata_runtime import MetadataServices
 from app.services.metadata_store import _error, _guard, _require
@@ -23,6 +24,7 @@ class DocumentServices:
     document: DocumentMetadataService
     canonical: CanonicalTextService
     execution: DocumentExecution
+    queries: DocumentQueries
 
     @property
     def jobs(self) -> JobStore:
@@ -68,7 +70,8 @@ class DocumentProvider:
                 if cached is None:
                     document = DocumentMetadataService(metadata, catalog.types)
                     services = DocumentServices(
-                        document, document.canonical, self._execution)
+                        document, document.canonical, self._execution,
+                        DocumentQueries(document))
                 else:
                     old_metadata, old_catalog, services = cached
                     _require(old_metadata is metadata and old_catalog is catalog)
@@ -77,7 +80,10 @@ class DocumentProvider:
                          and services.document.types is catalog.types
                          and services.canonical is services.document.canonical
                          and services.canonical.store is jobs
-                         and services.execution is self._execution)
+                         and services.execution is self._execution
+                         and type(services.queries) is DocumentQueries
+                         and services.queries.document is services.document
+                         and services.queries.document.bundle.jobs is jobs)
                 self._shared(metadata, catalog)
                 metadata.ensure_healthy()
                 # Publish only after construction and every identity/health check.
