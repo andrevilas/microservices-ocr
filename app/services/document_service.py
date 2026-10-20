@@ -15,6 +15,13 @@ from uuid import uuid4
 
 from app.application import ApplicationError, Principal
 from app.document_models import FieldSpec
+from app.metadata_approval import (
+    _authorize as _authorize_approval, _input as _approval_input, prepare_approval,
+)
+from app.metadata_approval_contract import (
+    ApproveMetadataReceipt, approval_receipt_for, approval_request_identity,
+    validate_approval_receipt,
+)
 from app.metadata_evidence import assess_snapshot
 from app.metadata_models import (
     MetadataSnapshot, PersistentID, ProvenanceRecord, SaveMetadataReceipt,
@@ -308,6 +315,130 @@ class DocumentMetadataService:
         self.bundle.ensure_healthy()
         return tuple(replace(revision) for revision in
                      self.bundle.index.list_revisions(principal, job_id))
+
+    @_guard
+    def approve(self, principal, job_id, body, *, key) -> tuple[ApproveMetadataReceipt, bool]:
+        """Approve the verified current draft under one external artifact lease."""
+        self._check_shared()
+        bundle = self.bundle
+        bundle.ensure_healthy()
+        index, files, storage, jobs = (
+            bundle.index, bundle.files, bundle.storage, bundle.jobs)
+        request = _approval_input(body)
+        key_hash, request_hash = approval_request_identity(key, request)
+        admission = index.preflight_approval(
+            principal, job_id, key_hash=key_hash, request_hash=request_hash)
+        if admission.receipt is not None:
+            return validate_approval_receipt(admission.receipt), True
+        index._cas(admission.head, request.expected_head, request.expected_sha256)
+
+        with self.canonical.open(principal, job_id) as prepared:
+            manifest = prepared.manifest
+            with index._transaction() as conn:
+                owner, auth_source = index._admit(principal, job_id, write=False)
+                current = index._head(conn, owner, job_id)
+                index._cas(current, request.expected_head, request.expected_sha256)
+                _require(current is not None)
+                job = jobs.jobs.get(job_id)
+                _require(job is not None and job.job_id == job_id
+                         and job.effective_owner == owner)
+                owner_id = job.owner_user_id
+                _authorize_approval(principal, owner_id)
+                _require(owner == principal.subject
+                         and auth_source == principal.auth_source)
+                revision = index._revision(conn, current.revision_id)
+                _require(revision is not None
+                         and revision.owner == owner and revision.job_id == job_id
+                         and revision.revision_id == current.revision_id
+                         and revision.sha256 == current.sha256
+                         and revision.state in ("draft", "approved"))
+                revision = replace(revision)
+                job_identity = (job.job_id, job.effective_owner, job.owner_user_id,
+                                job.parent_job_id, job.working_dir)
+
+            # The copied index decision is verified against physical bytes outside
+            # the SQL lock. No public get(), second lease, or catalog lookup occurs.
+            head = files.read(
+                job, revision_id=revision.revision_id,
+                sha256=revision.sha256, size_bytes=revision.size_bytes)
+            encoded_head = snapshot_bytes(head)
+            head = MetadataSnapshot.model_validate_json(encoded_head, strict=True)
+            _require(hashlib.sha256(encoded_head).hexdigest() == revision.sha256
+                     and len(encoded_head) == revision.size_bytes
+                     and head.revision_id == revision.revision_id
+                     and head.parent_revision_id == revision.parent_revision_id
+                     and head.created_at == revision.created_at
+                     and head.state == revision.state
+                     and head.author.actor_subject == owner)
+            _require(
+                head.job_id == manifest["job_id"] == job_id
+                and head.document_id == manifest["document_id"] == job_id
+                and head.artifact_version == manifest["artifact_version"]
+                and head.text_version == manifest["text_version"]
+                and head.canonical_sha256 == manifest["sha256"]
+                and head.input_pdf_sha256 == manifest["input_pdf_sha256"]
+                and head.output_pdf_sha256 == manifest["output_pdf_sha256"]
+                and head.page_count == manifest["page_count"]
+                and head.parent_job_id == manifest.get("parent_job_id")
+                and head.parent_job_id == job_identity[3])
+            manifest_job_identity = (manifest["job_id"], manifest.get("parent_job_id"))
+
+            source = MetadataCanonicalSource(prepared)
+            source_errors = []
+
+            def page_source(number):
+                try:
+                    return source(number)
+                except ApplicationError as error:
+                    source_errors.append(error)
+                    raise
+
+            try:
+                candidate = prepare_approval(
+                    principal, owner_id, head, request, page_source)
+            except ApplicationError:
+                if source_errors:
+                    raise source_errors[0] from None
+                raise
+            canonical_bytes = snapshot_bytes(candidate)
+            receipt = approval_receipt_for(candidate)
+
+            def check_approval_locked(conn):
+                # This callback has authority only over the captured draft and
+                # admitted job. It acquires no lock and performs no artifact I/O.
+                self._check_shared()
+                index._connection_locked(conn)
+                _authorize_approval(principal, owner_id)
+                current_owner, current_auth = index._admit(
+                    principal, job_id, write=False)
+                _require((current_owner, current_auth) == (owner, auth_source))
+                cached = jobs.jobs.get(job_id)
+                _require(cached is job
+                         and (cached.job_id, cached.effective_owner, cached.owner_user_id,
+                              cached.parent_job_id, cached.working_dir) == job_identity
+                         and type(cached.owner_user_id) is int
+                         and cached.owner_user_id == owner_id
+                         and (cached.job_id, cached.parent_job_id) == manifest_job_identity)
+                current_head = index._head(conn, owner, job_id)
+                index._cas(current_head, revision.revision_id, revision.sha256)
+                _require(current_head is not None
+                         and current_head.revision_id == revision.revision_id
+                         and current_head.sha256 == revision.sha256)
+                current_revision = index._revision(conn, revision.revision_id)
+                _require(current_revision == revision and revision.state == "draft")
+
+            reserved = index.reserve_approval(
+                principal, job_id, key_hash=key_hash, request_hash=request_hash,
+                expected_head=request.expected_head,
+                expected_sha256=request.expected_sha256,
+                revision_id=candidate.revision_id, sha256=receipt.sha256,
+                size_bytes=len(canonical_bytes), created_at=candidate.created_at)
+            if reserved.receipt is not None:
+                return validate_approval_receipt(reserved.receipt), True
+            result = storage.write_approval_reserved(
+                principal, job, reserved.pending, receipt, canonical_bytes,
+                check_bindings_locked=check_approval_locked)
+            return validate_approval_receipt(result), False
 
     @staticmethod
     def _validation_error(error):
