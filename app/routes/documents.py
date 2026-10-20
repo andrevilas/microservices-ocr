@@ -2,12 +2,15 @@
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Path, Query, Request
+from starlette.responses import Response
 
 from app.application import Principal
 from app.document_canonical_models import (
     CanonicalManifest, CanonicalPageChunk, CanonicalPageText,
 )
-from app.document_http_examples import response_example
+from app.document_http_examples import canonical_jsonl_example, response_example
+from app.document_http_streaming import DocumentDownloadResponse
+from app.metadata_models import MetadataSnapshot
 from app.document_content_models import (
     MetadataEvidencePage, MetadataSchemaChunk, MetadataStringChunk, MetadataValuePage,
 )
@@ -226,6 +229,56 @@ async def get_metadata_schema(
             principal, job_id, revision_id, schema_sha256, sha256=sha256,
             offset=offset, max_chars=max_chars, checkpoint=control.checkpoint),
     )
+
+
+@router.get(
+    "/metadata/revisions/{revision_id}/content",
+    response_model=MetadataSnapshot, response_class=Response,
+    operation_id="ocr_download_document_metadata",
+    responses={200: {
+        "model": MetadataSnapshot,
+        "description": "Exact persisted metadata snapshot, up to 1 MiB.",
+        "content": {"application/json": {"example": response_example(MetadataSnapshot)}},
+        "headers": {
+            "Content-Length": {"schema": {"type": "integer", "minimum": 0, "maximum": 1048576}},
+            "X-Content-SHA256": {"schema": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+            "Content-Disposition": {"schema": {"type": "string", "enum": ['attachment; filename="metadata.json"']}},
+            "Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}},
+        },
+    }},
+    openapi_extra=operation("jobs:read", "artifacts:read", "metadata:read"),
+)
+async def download_metadata(
+    job_id: ID, revision_id: ID, sha256: Digest,
+    principal: Reader, services: Services,
+):
+    return DocumentDownloadResponse(lambda: services.streams.open_metadata(
+        principal, job_id, revision_id, sha256=sha256))
+
+
+@router.get(
+    "/canonical/pages.jsonl", response_class=Response,
+    operation_id="ocr_download_document_canonical",
+    responses={200: {
+        "description": "Exact canonical pages JSONL download.",
+        "content": {"application/x-ndjson": {
+            "schema": {"type": "string", "format": "binary"},
+            "example": canonical_jsonl_example(),
+        }},
+        "headers": {
+            "Content-Length": {"schema": {"type": "integer", "minimum": 0, "maximum": 33554432}},
+            "X-Content-SHA256": {"schema": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+            "Content-Disposition": {"schema": {"type": "string", "enum": ['attachment; filename="pages.jsonl"']}},
+            "Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}},
+        },
+    }},
+    openapi_extra=operation("jobs:read", "artifacts:read"),
+)
+async def download_canonical(
+    job_id: ID, principal: CanonicalReader, services: CanonicalServices,
+):
+    return DocumentDownloadResponse(lambda: services.streams.open_canonical(
+        principal, job_id))
 
 
 @router.get(
