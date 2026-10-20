@@ -10,7 +10,10 @@ from app.document_canonical_models import (
 )
 from app.document_http_examples import canonical_jsonl_example, request_example, response_example
 from app.document_http_streaming import DocumentDownloadResponse
-from app.metadata_models import MetadataSnapshot, SaveMetadataInput, SaveMetadataReceipt
+from app.metadata_models import (
+    ApprovalInput, ApproveMetadataReceipt,
+    MetadataSnapshot, SaveMetadataInput, SaveMetadataReceipt,
+)
 from app.document_content_models import (
     MetadataEvidencePage, MetadataSchemaChunk, MetadataStringChunk, MetadataValuePage,
 )
@@ -104,6 +107,73 @@ async def save_metadata(
     receipt, replayed = await services.execution.run(
         principal,
         lambda control: services.document.save(
+            principal, job_id, body, key=idempotency_key,
+            checkpoint=control.checkpoint),
+    )
+    response.status_code = 200 if replayed else 201
+    response.headers["Idempotency-Replayed"] = "true" if replayed else "false"
+    return receipt
+
+
+def metadata_approval_principal(
+    principal: Annotated[Principal, Depends(metadata_principal)],
+) -> Principal:
+    principal.require("metadata:approve")
+    return principal
+
+
+def metadata_approval_services(
+    request: Request,
+    principal: Annotated[Principal, Depends(metadata_approval_principal)],
+) -> DocumentServices:
+    return get_document_services(request)
+
+
+Approver = Annotated[Principal, Depends(metadata_approval_principal)]
+ApprovalServices = Annotated[DocumentServices, Depends(metadata_approval_services)]
+APPROVAL_CONTRACT = json_contract(ApprovalInput)
+APPROVAL_CONTRACT.update(operation(
+    "jobs:read", "artifacts:read", "metadata:read", "metadata:approve"))
+APPROVAL_CONTRACT["requestBody"]["content"]["application/json"]["schema"]["examples"] = [
+    request_example(ApprovalInput)]
+
+
+@router.post(
+    "/metadata/approve", response_model=ApproveMetadataReceipt, status_code=201,
+    operation_id="ocr_approve_document_metadata",
+    openapi_extra=APPROVAL_CONTRACT,
+    responses={
+        **error_responses(410, 415),
+        **{status: {
+            **example(response_example(ApproveMetadataReceipt), status)[status],
+            "model": ApproveMetadataReceipt,
+            "description": "Historical receipt replay." if status == 200 else "Approved revision created.",
+            "headers": {"Idempotency-Replayed": {
+                "description": "Whether the original persisted receipt was replayed.",
+                "schema": {"type": "string", "enum": ["true", "false"]},
+            }},
+        } for status in (200, 201)},
+    },
+)
+async def approve_metadata(
+    job_id: ID, request: Request, response: Response,
+    principal: Approver, services: ApprovalServices,
+    idempotency_key: Annotated[str, Header(
+        min_length=8, max_length=128, pattern=r"^[\x00-\x7f]+$")],
+):
+    """Approve the current draft with explicitly selected reviewed fields.
+
+    This records the authorized principal's selection, not proof of human review
+    or MFA. Only the exact user owner authenticated through local JWT or OAuth
+    may approve; service principals and administrator bypass are not allowed.
+    After an uncertain response, retry with the same Idempotency-Key and body.
+    Replay can return a historical receipt after a later HEAD or catalog
+    deprecation.
+    """
+    body = await json_input(request, ApprovalInput, max_bytes=512 * 1024)
+    receipt, replayed = await services.execution.run(
+        principal,
+        lambda control: services.document.approve(
             principal, job_id, body, key=idempotency_key,
             checkpoint=control.checkpoint),
     )
