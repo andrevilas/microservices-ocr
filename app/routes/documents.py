@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request
 from app.application import Principal
 from app.document_http_examples import response_example
 from app.document_transport_models import MetadataRevisionPage, MetadataView
-from app.http_contract import error_responses, operation
+from app.http_contract import error_responses, example, operation
 from app.security import require_principal
 from app.services.document_runtime import DocumentServices, get_document_services
 
@@ -42,7 +42,7 @@ Services = Annotated[DocumentServices, Depends(metadata_services)]
 @router.get(
     "/metadata", response_model=MetadataView,
     operation_id="ocr_get_document_metadata",
-    responses=response_example(MetadataView),
+    responses=example(response_example(MetadataView)),
     openapi_extra=operation("jobs:read", "artifacts:read", "metadata:read"),
 )
 async def get_metadata(job_id: ID, principal: Reader, services: Services):
@@ -56,7 +56,7 @@ async def get_metadata(job_id: ID, principal: Reader, services: Services):
 @router.get(
     "/metadata/revisions", response_model=MetadataRevisionPage,
     operation_id="ocr_list_document_metadata_revisions",
-    responses=response_example(MetadataRevisionPage),
+    responses=example(response_example(MetadataRevisionPage)),
     openapi_extra=operation("jobs:read", "artifacts:read", "metadata:read"),
 )
 async def list_metadata_revisions(
@@ -75,7 +75,7 @@ async def list_metadata_revisions(
 @router.get(
     "/metadata/revisions/{revision_id}", response_model=MetadataView,
     operation_id="ocr_get_document_metadata_revision",
-    responses=response_example(MetadataView),
+    responses=example(response_example(MetadataView)),
     openapi_extra=operation("jobs:read", "artifacts:read", "metadata:read"),
 )
 async def get_metadata_revision(

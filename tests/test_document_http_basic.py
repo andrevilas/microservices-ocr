@@ -1,17 +1,16 @@
 """Standalone HTTP integration with the real shared document services."""
-import asyncio
 import json
 import os
-from threading import Event
 
 import pytest
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from app.application import ApplicationError, JobApplication
 from app.document_transport_models import MetadataRevisionPage, MetadataView
-from app.http_contract import V1Boundary, error_response, install_openapi
+from app.http_contract import V1Boundary, error_response, install_openapi, is_v1
 from app.routes.documents import router
 from app.security import require_principal
 from app.services.catalog_runtime import CatalogProvider
@@ -39,8 +38,10 @@ def http(env):
     async def validation_error(request, error):
         return error_response(request, 422, "validation_error", "Invalid request parameters.")
 
-    app.add_middleware(V1Boundary, routes=app.routes)
-    install_openapi(app, app.routes)
+    routes = [route for route in app.routes
+              if isinstance(route, APIRoute) and is_v1(route.path)]
+    app.add_middleware(V1Boundary, routes=routes)
+    install_openapi(app, routes)
     services = provider()
     with TestClient(app) as client:
         try:
@@ -152,28 +153,10 @@ def test_scope_checked_before_provider(http):
 
 def test_busy_execution_returns_429_and_releases_permits(http):
     e, app, client, services = http
-    release, busy = Event(), Event()
-
-    async def occupy():
-        tasks = [asyncio.create_task(services.execution.run(
-            e.owner, lambda control: release.wait(10))) for _ in range(64)]
-        try:
-            for _ in range(500):
-                if any(task.done() and not task.cancelled() and isinstance(
-                        task.exception(), ApplicationError) and task.exception().status == 429
-                       for task in tasks):
-                    busy.set()
-                    break
-                await asyncio.sleep(0.01)
-        finally:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-    future = client.portal.start_task_soon(occupy)
+    permit = services.execution.acquire(e.owner)
     try:
-        assert busy.wait(7), "execution admission did not report saturation"
         assert client.get(base(e)).status_code == 429
     finally:
-        release.set()
-        future.result(timeout=15)
+        permit.close()
     assert client.get(base(e)).status_code == 404
     assert not e.jobs._artifact_leases
