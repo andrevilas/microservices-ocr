@@ -77,7 +77,7 @@ def _fixtures():
     jsonl = _canonical(record) + b"\n"
     canonical_hash = _sha(jsonl)
     composed = compose_schema([], [FieldSpec(
-        name="titulo", label="T?tulo", type="string", required=True,
+        name="titulo", label="T\u00edtulo", type="string", required=True,
         description="Título sintético para documentação.",
     )])
     provenance = ProvenanceRecord(
