@@ -9,6 +9,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
 
 from app.catalog_mcp_tools import register_catalog_tools
+from app.document_mcp_limits import DocumentMCPOutputGuard
 from app.api_models import ArtifactResponse, IdentityResponse, JobPage, MetricsResponse
 from app.models import JobResponse, JobStatus, QualityLabel
 from app.results import JobReport, TextChunk
@@ -34,6 +35,11 @@ INSTRUCTIONS = (
 
 class OcrMCPServer(MCPServer):
     """Reject extra arguments and keep rejected values out of tool errors."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Outermost middleware inspects the final serialized wire result.
+        self.middleware.insert(0, DocumentMCPOutputGuard())
+
     async def list_tools(self):
         tools = await super().list_tools()
         for tool in tools:
