@@ -7,6 +7,7 @@ Pass plan.check_locked as MetadataStorage.write_reserved's trusted callback.
 The caller must own the shared JobStore lock and write transaction. Lock.locked
 can detect an absent lock, but cannot establish which thread owns it.
 """
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import hashlib
@@ -34,7 +35,9 @@ from app.services.canonical_text_service import CanonicalTextService
 from app.services.metadata_canonical import MetadataCanonicalSource
 from app.services.metadata_files import MetadataFiles, _absolute
 from app.services.metadata_runtime import MetadataServices
-from app.services.metadata_storage import MetadataStorage
+from app.services.metadata_storage import (
+    MetadataStorage, _checkpoint, _raise, _sanitized, _validate_checkpoint,
+)
 from app.services.metadata_store import (
     MetadataRevision, MetadataStore, _guard, _hex, _integer, _receipt, _require,
 )
@@ -261,52 +264,77 @@ class DocumentMetadataService:
                  and canonical.store is jobs)
         _require(files._root == _absolute(jobs.root_dir))
 
+    @contextmanager
+    def open_snapshot(self, principal, job_id, revision_id, *, sha256, checkpoint=None):
+        """Yield a detached verified revision while retaining one artifact lease.
+
+        Checkpoints are trusted, nonblocking internal callbacks. They must perform
+        no I/O or JobStore lock acquisition. Admission is not repeated after I/O:
+        an admitted read may finish despite a retention change. Caller exceptions
+        are outside the setup error boundary and propagate unchanged.
+        """
+        with ExitStack() as stack:
+            try:
+                _validate_checkpoint(checkpoint)
+                self._check_shared()
+                bundle = self.bundle
+                bundle.ensure_healthy()
+                index, files, jobs = bundle.index, bundle.files, bundle.jobs
+                index._identity(principal, write=False)
+                if not (_hex(job_id, 32) and _hex(revision_id, 32) and _hex(sha256, 64)):
+                    raise _invalid()
+
+                with index._transaction():
+                    owner, _ = index._admit(principal, job_id, write=False)
+
+                job = stack.enter_context(jobs.artifact_lease(job_id, owner))
+                with index._transaction() as conn:
+                    current_owner, _ = index._admit(principal, job_id, write=False)
+                    _require(current_owner == owner and job.job_id == job_id
+                             and job.effective_owner == owner)
+                    revision = index._revision(conn, revision_id)
+                    if (revision is None or revision.owner != owner
+                            or revision.job_id != job_id):
+                        raise ApplicationError(404, "metadata_revision_not_found",
+                                               "Metadata revision not found.")
+                    if revision.sha256 != sha256:
+                        raise ApplicationError(409, "metadata_revision_conflict",
+                                               "The metadata revision does not match.")
+                    revision = replace(revision)
+
+                _checkpoint(checkpoint)
+                snapshot = files.read(
+                    job, revision_id=revision.revision_id,
+                    sha256=revision.sha256, size_bytes=revision.size_bytes)
+                encoded = snapshot_bytes(snapshot)
+                detached = MetadataSnapshot.model_validate_json(encoded, strict=True)
+                _require(
+                    hashlib.sha256(encoded).hexdigest() == revision.sha256
+                    and len(encoded) == revision.size_bytes
+                    and detached.revision_id == revision.revision_id == revision_id
+                    and detached.job_id == detached.document_id == job_id
+                    and detached.parent_revision_id == revision.parent_revision_id
+                    and detached.state == revision.state
+                    and detached.created_at == revision.created_at
+                    and detached.author.actor_subject == revision.owner)
+                _checkpoint(checkpoint)
+            except Exception as error:
+                _raise(_sanitized(error))
+            _checkpoint_before_yield = checkpoint
+            # Keep setup failures sanitized without catching the caller's block.
+            try:
+                _checkpoint(_checkpoint_before_yield)
+            except Exception as error:
+                _raise(_sanitized(error))
+            yield detached
+
     @_guard
-    def get(self, principal, job_id, revision_id, *, sha256) -> MetadataSnapshot:
-        """Read one immutable revision under a single external artifact lease."""
-        self._check_shared()
-        bundle = self.bundle
-        bundle.ensure_healthy()
-        index, files, jobs = bundle.index, bundle.files, bundle.jobs
-        index._identity(principal, write=False)
-        if not (_hex(job_id, 32) and _hex(revision_id, 32) and _hex(sha256, 64)):
-            raise _invalid()
-
-        with index._transaction():
-            owner, _ = index._admit(principal, job_id, write=False)
-
-        with jobs.artifact_lease(job_id, owner) as job:
-            with index._transaction() as conn:
-                current_owner, _ = index._admit(principal, job_id, write=False)
-                _require(current_owner == owner and job.job_id == job_id
-                         and job.effective_owner == owner)
-                revision = index._revision(conn, revision_id)
-                if (revision is None or revision.owner != owner
-                        or revision.job_id != job_id):
-                    raise ApplicationError(404, "metadata_revision_not_found",
-                                           "Metadata revision not found.")
-                if revision.sha256 != sha256:
-                    raise ApplicationError(409, "metadata_revision_conflict",
-                                           "The metadata revision does not match.")
-                revision = replace(revision)
-
-            # Immutable index decisions survive HEAD changes. The lease permits
-            # this admitted read to finish if retention changes during disk I/O.
-            snapshot = files.read(
-                job, revision_id=revision.revision_id,
-                sha256=revision.sha256, size_bytes=revision.size_bytes)
-            encoded = snapshot_bytes(snapshot)
-            detached = MetadataSnapshot.model_validate_json(encoded, strict=True)
-            _require(
-                hashlib.sha256(encoded).hexdigest() == revision.sha256
-                and len(encoded) == revision.size_bytes
-                and detached.revision_id == revision.revision_id == revision_id
-                and detached.job_id == detached.document_id == job_id
-                and detached.parent_revision_id == revision.parent_revision_id
-                and detached.state == revision.state
-                and detached.created_at == revision.created_at
-                and detached.author.actor_subject == revision.owner)
-            return detached
+    def get(self, principal, job_id, revision_id, *, sha256, checkpoint=None) -> MetadataSnapshot:
+        """Return one detached revision after releasing its artifact lease."""
+        with self.open_snapshot(
+                principal, job_id, revision_id, sha256=sha256,
+                checkpoint=checkpoint) as snapshot:
+            return snapshot
 
     @_guard
     def list_revisions(self, principal, job_id) -> tuple[MetadataRevision, ...]:
@@ -317,8 +345,9 @@ class DocumentMetadataService:
                      self.bundle.index.list_revisions(principal, job_id))
 
     @_guard
-    def approve(self, principal, job_id, body, *, key) -> tuple[ApproveMetadataReceipt, bool]:
+    def approve(self, principal, job_id, body, *, key, checkpoint=None) -> tuple[ApproveMetadataReceipt, bool]:
         """Approve the verified current draft under one external artifact lease."""
+        _validate_checkpoint(checkpoint)
         self._check_shared()
         bundle = self.bundle
         bundle.ensure_healthy()
@@ -332,6 +361,7 @@ class DocumentMetadataService:
             return validate_approval_receipt(admission.receipt), True
         index._cas(admission.head, request.expected_head, request.expected_sha256)
 
+        _checkpoint(checkpoint)
         with self.canonical.open(principal, job_id) as prepared:
             manifest = prepared.manifest
             with index._transaction() as conn:
@@ -382,12 +412,14 @@ class DocumentMetadataService:
                 and head.parent_job_id == manifest.get("parent_job_id")
                 and head.parent_job_id == job_identity[3])
             manifest_job_identity = (manifest["job_id"], manifest.get("parent_job_id"))
+            _checkpoint(checkpoint)
 
             source = MetadataCanonicalSource(prepared)
             source_errors = []
 
             def page_source(number):
                 try:
+                    _checkpoint(checkpoint)
                     return source(number)
                 except ApplicationError as error:
                     source_errors.append(error)
@@ -427,6 +459,7 @@ class DocumentMetadataService:
                 current_revision = index._revision(conn, revision.revision_id)
                 _require(current_revision == revision and revision.state == "draft")
 
+            _checkpoint(checkpoint)
             reserved = index.reserve_approval(
                 principal, job_id, key_hash=key_hash, request_hash=request_hash,
                 expected_head=request.expected_head,
@@ -437,7 +470,8 @@ class DocumentMetadataService:
                 return validate_approval_receipt(reserved.receipt), True
             result = storage.write_approval_reserved(
                 principal, job, reserved.pending, receipt, canonical_bytes,
-                check_bindings_locked=check_approval_locked)
+                check_bindings_locked=check_approval_locked,
+                **({"checkpoint": checkpoint} if checkpoint is not None else {}))
             return validate_approval_receipt(result), False
 
     @staticmethod
@@ -446,8 +480,9 @@ class DocumentMetadataService:
                 else _invalid())
 
     @_guard
-    def save(self, principal, job_id, body, *, key) -> tuple[SaveMetadataReceipt, bool]:
+    def save(self, principal, job_id, body, *, key, checkpoint=None) -> tuple[SaveMetadataReceipt, bool]:
         """Return a detached receipt and whether this request was replayed."""
+        _validate_checkpoint(checkpoint)
         self._check_shared()
         bundle = self.bundle
         bundle.ensure_healthy()
@@ -469,6 +504,7 @@ class DocumentMetadataService:
         index._cas(admission.head, request.expected_head, request.expected_sha256)
 
         # This is the sole lease; it remains open through publication and cleanup.
+        _checkpoint(checkpoint)
         with self.canonical.open(principal, job_id) as prepared:
             manifest = prepared.manifest
             with index._transaction() as conn:
@@ -515,6 +551,8 @@ class DocumentMetadataService:
                     and head.page_count == manifest["page_count"]
                     and head.parent_job_id == manifest.get("parent_job_id"))
 
+            if revision is not None:
+                _checkpoint(checkpoint)
             plan = MetadataBindingPreparer(jobs, self.types).prepare(
                 principal, job_id, manifest["page_count"], request, head)
             source = MetadataCanonicalSource(prepared)
@@ -524,6 +562,7 @@ class DocumentMetadataService:
                 # assess_snapshot sanitizes arbitrary callback failures. Preserve
                 # framework storage/integrity errors for the outer guard instead.
                 try:
+                    _checkpoint(checkpoint)
                     return source(number)
                 except ApplicationError as error:
                     source_errors.append(error)
@@ -581,6 +620,7 @@ class DocumentMetadataService:
                 raise _invalid() from None
 
             check_bindings_locked = plan.check_locked
+            _checkpoint(checkpoint)
             reserved = index.reserve(
                 principal, job_id, key_hash=key_hash, request_hash=request_hash,
                 expected_head=request.expected_head,
@@ -591,4 +631,5 @@ class DocumentMetadataService:
                 return _receipt(reserved.receipt), True
             return storage.write_reserved(
                 principal, job, reserved.pending, receipt, canonical_bytes,
-                check_bindings_locked=check_bindings_locked), False
+                check_bindings_locked=check_bindings_locked,
+                **({"checkpoint": checkpoint} if checkpoint is not None else {})), False

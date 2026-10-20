@@ -20,6 +20,21 @@ from app.services.metadata_store import (
 )
 
 
+def _validate_checkpoint(checkpoint):
+    if checkpoint is not None and not callable(checkpoint):
+        raise ApplicationError(422, "invalid_metadata_input", "Invalid manual metadata input.")
+
+
+def _checkpoint(checkpoint):
+    """Invoke trusted cooperative control, including under the SQL lock.
+
+    Callbacks must be nonblocking and perform no I/O or JobStore lock acquisition.
+    They confer no admission authority and are never taken from client input.
+    """
+    if checkpoint is not None:
+        checkpoint()
+
+
 def _raise(error):
     try:
         raise error from None
@@ -234,16 +249,17 @@ class MetadataStorage:
     @_guard
     def write_reserved(self, principal, job, reservation: MetadataPending,
                        receipt: SaveMetadataReceipt, canonical_bytes: bytes, *,
-                       check_bindings_locked) -> SaveMetadataReceipt:
-        """Caller owns one lease; the final callback supplies binding validation."""
+                       check_bindings_locked, checkpoint=None) -> SaveMetadataReceipt:
+        """Caller owns one lease; callbacks provide binding and cooperative checks."""
         return self._write_reserved(
             principal, job, reservation, receipt, canonical_bytes,
-            operation="save-v1", check_bindings_locked=check_bindings_locked)
+            operation="save-v1", check_bindings_locked=check_bindings_locked,
+            checkpoint=checkpoint)
 
     @_guard
     def write_approval_reserved(self, principal, job, reservation: MetadataPending,
                                 receipt: ApproveMetadataReceipt, canonical_bytes: bytes, *,
-                                check_bindings_locked) -> ApproveMetadataReceipt:
+                                check_bindings_locked, checkpoint=None) -> ApproveMetadataReceipt:
         """Publish a trusted approval candidate under the caller's existing lease.
 
         The caller has validated approval policy, current verified draft HEAD and
@@ -253,15 +269,18 @@ class MetadataStorage:
         """
         return self._write_reserved(
             principal, job, reservation, receipt, canonical_bytes,
-            operation="approve-v1", check_bindings_locked=check_bindings_locked)
+            operation="approve-v1", check_bindings_locked=check_bindings_locked,
+            checkpoint=checkpoint)
 
     def _write_reserved(self, principal, job, reservation, receipt, canonical_bytes, *,
-                        operation, check_bindings_locked):
+                        operation, check_bindings_locked, checkpoint=None):
         claimed = False
         attempt = None
         detached = None
         try:
             try:
+                _validate_checkpoint(checkpoint)
+                _checkpoint(checkpoint)
                 _input(type(reservation) is MetadataPending
                        and _hex(reservation.pending_id, 32)
                        and _hex(reservation.job_id, 32))
@@ -289,28 +308,37 @@ class MetadataStorage:
                         _raise(ApplicationError(503, "storage_unavailable",
                                                 "Insufficient free disk space."))
                 # No SQL lock during publication, hashing, verified read or fsync.
+                _checkpoint(checkpoint)
                 attempt.publish(canonical_bytes)
                 snapshot = self.files.read(
                     job, revision_id=reservation.revision_id,
                     sha256=reservation.sha256, size_bytes=reservation.size_bytes,
                 )
                 self._verify_header(snapshot, reservation, detached)
+                _checkpoint(checkpoint)
                 with self.store._transaction() as conn:
                     self._admission_locked(
                         conn, principal, job, reservation, operation=operation)
                     check_bindings_locked(conn)
+                    _checkpoint(checkpoint)
                     commit = (self.store._commit_approval_index_locked
                               if operation == "approve-v1"
                               else self.store._commit_index_locked)
                     result = commit(conn, principal, reservation.pending_id, detached)
                 return result
-            except Exception as exc:
-                failure = _sanitized(exc)
-                if claimed:
-                    self._reconcile(reservation, detached, attempt)
-                else:
-                    self._reconcile_unclaimed(
-                        principal, job, reservation, receipt, operation=operation)
+            except BaseException as exc:
+                failure = _sanitized(exc) if isinstance(exc, Exception) else exc
+                try:
+                    if claimed:
+                        self._reconcile(reservation, detached, attempt)
+                    else:
+                        self._reconcile_unclaimed(
+                            principal, job, reservation, receipt, operation=operation)
+                except BaseException:
+                    # Control identity survives failed recovery. Recovery retains
+                    # pending charges whenever physical absence is unverified.
+                    if isinstance(exc, Exception):
+                        raise
                 _raise(failure)
         finally:
             # Covers initial transaction exit as well as diagnosis and release.
