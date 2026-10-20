@@ -127,7 +127,7 @@ class MetadataView(_ClosedModel):
     sha256: SHA256
     content_path: ContentPath
     segments: Annotated[
-        list[MetadataSegmentSummary], BeforeValidatorPlaceholder := Field(min_length=1, max_length=16)
+        list[MetadataSegmentSummary], Field(min_length=1, max_length=16)
     ]
     schemas: Annotated[list[MetadataSchemaReference], Field(min_length=1, max_length=16)]
 

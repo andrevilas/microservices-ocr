@@ -291,8 +291,6 @@ def _pack(model, header, key, items, start, limit, cursor_at):
 
 def metadata_view(owner, snapshot, sha256):
     """Return a detached header and references, without values or schema content."""
-    query = _query(_Scope, dict(owner=owner, job_id=snapshot.job_id if isinstance(snapshot, MetadataSnapshot) else None,
-                               view="revisions")) if False else None
     # The owner is query syntax; all snapshot identities are validated source data.
     query = _query(_OwnerQuery, {"owner": owner})
     source, digest = _verified_snapshot(query.owner, snapshot, sha256)
