@@ -95,7 +95,8 @@ def test_approval_exact_bytes_provenance_read_list_and_one_lease(ready, monkeypa
         checks.append(e.jobs._lock.locked())
         return check()
 
-    def checked_health():
+    def checked_health(self):
+        assert self is e.bundle
         assert not e.jobs._lock.locked()
         return health()
 
@@ -108,7 +109,7 @@ def test_approval_exact_bytes_provenance_read_list_and_one_lease(ready, monkeypa
         patch.setattr(e.bundle.files, "read", checked_read)
         patch.setattr(canonical, "read_page", checked_page)
         patch.setattr(e.service, "_check_shared", checked_shared)
-        patch.setattr(e.bundle, "ensure_healthy", checked_health)
+        patch.setattr(type(e.bundle), "ensure_healthy", checked_health)
         patch.setattr(e.bundle.index, "_commit_approval_index_locked", checked_commit)
         patch.setattr(documents.MetadataBindingPreparer, "prepare", forbidden)
         patch.setattr(e.types, "get_version", forbidden)
@@ -433,8 +434,13 @@ def test_changes_after_publication_are_rejected_and_cleaned(ready, monkeypatch, 
                 monkeypatch.setattr(e.bundle.index, "_head", different_head)
         return result
 
+    original_scopes = e.approver.scopes
     monkeypatch.setattr(e.bundle.files, "read", changed_read)
-    failure(lambda: approve(e), status)
+    try:
+        failure(lambda: approve(e), status)
+    finally:
+        if change == "grant":
+            object.__setattr__(e.approver, "scopes", original_scopes)
     assert changed == [True]
     assert_original(e)
     idle(e, 1)
@@ -524,11 +530,12 @@ def test_shared_identity_and_health_fail_before_canonical_work(ready, monkeypatc
     finally:
         e.types.jobs = jobs
 
-    def unhealthy():
+    def unhealthy(self):
+        assert self is e.bundle
         assert not e.jobs._lock.locked()
         raise ApplicationError(503, "metadata_unavailable", "Metadata is unavailable.")
 
-    monkeypatch.setattr(e.bundle, "ensure_healthy", unhealthy)
+    monkeypatch.setattr(type(e.bundle), "ensure_healthy", unhealthy)
     failure(lambda: approve(e), 503, "metadata_unavailable")
     idle(e, 1)
 
