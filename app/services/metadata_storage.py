@@ -326,19 +326,13 @@ class MetadataStorage:
                               else self.store._commit_index_locked)
                     result = commit(conn, principal, reservation.pending_id, detached)
                 return result
-            except BaseException as exc:
-                failure = _sanitized(exc) if isinstance(exc, Exception) else exc
-                try:
-                    if claimed:
-                        self._reconcile(reservation, detached, attempt)
-                    else:
-                        self._reconcile_unclaimed(
-                            principal, job, reservation, receipt, operation=operation)
-                except BaseException:
-                    # Control identity survives failed recovery. Recovery retains
-                    # pending charges whenever physical absence is unverified.
-                    if isinstance(exc, Exception):
-                        raise
+            except Exception as exc:
+                failure = _sanitized(exc)
+                if claimed:
+                    self._reconcile(reservation, detached, attempt)
+                else:
+                    self._reconcile_unclaimed(
+                        principal, job, reservation, receipt, operation=operation)
                 _raise(failure)
         finally:
             # Covers initial transaction exit as well as diagnosis and release.

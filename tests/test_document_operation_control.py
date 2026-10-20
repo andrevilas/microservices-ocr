@@ -296,6 +296,8 @@ def test_postpublication_control_identity_and_cleanup_accounting(ready, monkeypa
     read = e.bundle.files.read
     published = []
     error = SystemExit("trusted control") if control else timeout()
+    cleanup = metadata_files.WriteAttempt.cleanup
+    cleanups = []
 
     def checked_read(*args, **kwargs):
         result = read(*args, **kwargs)
@@ -307,12 +309,14 @@ def test_postpublication_control_identity_and_cleanup_accounting(ready, monkeypa
         if published:
             raise error
 
-    def failed_cleanup(self):
-        raise OSError("PRIVATE_CLEANUP_DETAIL")
+    def checked_cleanup(self):
+        cleanups.append(self)
+        if cleanup_fails:
+            raise OSError("PRIVATE_CLEANUP_DETAIL")
+        return cleanup(self)
 
     monkeypatch.setattr(e.bundle.files, "read", checked_read)
-    if cleanup_fails:
-        monkeypatch.setattr(metadata_files.WriteAttempt, "cleanup", failed_cleanup)
+    monkeypatch.setattr(metadata_files.WriteAttempt, "cleanup", checked_cleanup)
     with pytest.raises(type(error) if control else ApplicationError) as caught:
         operation(e, name, checkpoint)
     if control:
@@ -322,19 +326,36 @@ def test_postpublication_control_identity_and_cleanup_accounting(ready, monkeypa
         assert caught.value.__cause__ is None and caught.value.__context__ is None
         assert "PRIVATE_CLEANUP_DETAIL" not in str(caught.value) + repr(vars(caught.value))
     assert len(published) == 1
+    assert len(cleanups) == (0 if control else 1)
     after = ledger(e)
     for table in TABLES[:-1]:
         assert after[table] == before[table]
     assert not e.bundle.index._active_writes and not e.jobs._artifact_leases
     assert_original(e)
-    if cleanup_fails:
+    if control or cleanup_fails:
         assert len(rows(e, "metadata_pending")) == 1
         with e.jobs._lock:
             pending = e.jobs._conn.execute(
                 "SELECT state,charged_slots,charged_bytes FROM metadata_pending WHERE job_id=?",
                 (e.job.job_id,)).fetchone()
-        assert pending[0] == "cleanup" and pending[1] >= 1 and pending[2] > 0
-        assert published[0] + ".json" in artifacts(e)
+            head_reserve = tuple(e.jobs._conn.execute(
+                "SELECT approval_slots,approval_bytes FROM metadata_heads WHERE job_id=?",
+                (e.job.job_id,)).fetchone())
+        assert pending[0] == ("active" if control else "cleanup")
+        assert head_reserve == (1, 1048576)
+        # Committed usage is unchanged above. Retained quota also includes
+        # the draft HEAD reserve plus any additional pending charges.
+        retained = (head_reserve[0] + pending[1], head_reserve[1] + pending[2])
+        if name == "approve":
+            assert tuple(pending[1:]) == (0, 0)
+            assert retained == (1, 1048576)
+        else:
+            assert pending[1] >= 1 and pending[2] > 0
+            assert retained[0] >= 2 and retained[1] > 1048576
+        assert artifacts(e) == {**disk, published[0] + ".json":
+                                (e.job.working_dir / "results" / "metadata" /
+                                 (published[0] + ".json")).read_bytes()}
+        assert not e.jobs._conn.in_transaction
     else:
         assert after == before and artifacts(e) == disk
         idle(e, 1)
@@ -394,7 +415,7 @@ def test_success_checks_only_before_commit_and_duplicate_cannot_steal_claim(read
 
 
 @pytest.mark.parametrize("name", ["save", "approve"])
-def test_control_before_initial_admission_reconciles_exact_handoff(ready, monkeypatch, name):
+def test_control_before_initial_admission_leaves_active_handoff(ready, monkeypatch, name):
     e = ready
     before, disk = ledger(e), artifacts(e)
     index = e.bundle.index
@@ -417,5 +438,14 @@ def test_control_before_initial_admission_reconciles_exact_handoff(ready, monkey
     with pytest.raises(KeyboardInterrupt) as caught:
         operation(e, name, checkpoint)
     assert caught.value is error and len(armed) == 1
-    assert ledger(e) == before and artifacts(e) == disk
-    idle(e, 1)
+    after = ledger(e)
+    for table in TABLES[:-1]:
+        assert after[table] == before[table]
+    assert len(rows(e, "metadata_pending")) == 1
+    with index._transaction() as conn:
+        assert index._pending(conn, armed[0].pending_id) == armed[0]
+    assert armed[0].state == "active"
+    assert artifacts(e) == disk
+    assert not index._active_writes and not e.jobs._artifact_leases
+    assert not e.jobs._conn.in_transaction
+    assert_original(e)
