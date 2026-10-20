@@ -8,7 +8,8 @@ from app.document_canonical_models import (
     CanonicalManifest, CanonicalPageChunk, CanonicalPageText,
 )
 from app.document_http_examples import response_example
-from app.document_transport_models import MetadataRevisionPage, MetadataView
+from app.document_content_models import MetadataSchemaChunk
+from app.document_transport_models import MetadataFieldPage, MetadataRevisionPage, MetadataView
 from app.http_contract import error_responses, example, operation
 from app.security import require_principal
 from app.services.document_runtime import DocumentServices, get_document_services
@@ -110,6 +111,49 @@ async def get_metadata_revision(
         lambda control: services.queries.get_revision(
             principal, job_id, revision_id, sha256=sha256,
             checkpoint=control.checkpoint),
+    )
+
+
+@router.get(
+    "/metadata/revisions/{revision_id}/segments/{segment_id}/fields",
+    response_model=MetadataFieldPage,
+    operation_id="ocr_list_document_metadata_fields",
+    responses=example(response_example(MetadataFieldPage)),
+    openapi_extra=operation("jobs:read", "artifacts:read", "metadata:read"),
+)
+async def list_metadata_fields(
+    job_id: ID, revision_id: ID, segment_id: ID, sha256: Digest,
+    principal: Reader, services: Services,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    after: Annotated[str | None, Query(max_length=2048)] = None,
+):
+    return await services.execution.run(
+        principal,
+        lambda control: services.queries.list_fields(
+            principal, job_id, revision_id, segment_id, sha256=sha256,
+            limit=limit, after=after, checkpoint=control.checkpoint),
+    )
+
+
+@router.get(
+    "/metadata/revisions/{revision_id}/schemas/{schema_sha256}",
+    response_model=MetadataSchemaChunk,
+    operation_id="ocr_get_document_metadata_schema",
+    responses=example(response_example(MetadataSchemaChunk)),
+    openapi_extra=operation("jobs:read", "artifacts:read", "metadata:read"),
+)
+async def get_metadata_schema(
+    job_id: ID, revision_id: ID,
+    schema_sha256: Annotated[str, Path(pattern=r"^[0-9a-f]{64}$")],
+    sha256: Digest, principal: Reader, services: Services,
+    offset: Annotated[int, Query(ge=0, le=262144)] = 0,
+    max_chars: Annotated[int, Query(ge=1, le=1000)] = 1000,
+):
+    return await services.execution.run(
+        principal,
+        lambda control: services.queries.get_schema(
+            principal, job_id, revision_id, schema_sha256, sha256=sha256,
+            offset=offset, max_chars=max_chars, checkpoint=control.checkpoint),
     )
 
 
