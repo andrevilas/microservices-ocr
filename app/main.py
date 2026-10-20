@@ -18,6 +18,7 @@ from app.routes.uploads import router as upload_router
 from app.routes.bulk import router as bulk_router
 from app.routes.control import router as control_router
 from app.routes.catalog import router as catalog_router
+from app.routes.documents import router as document_router
 from app.services.catalog_runtime import CatalogProvider
 from app.services.control_service import get_control_service
 from app.services.document_runtime import DocumentProvider
@@ -195,7 +196,7 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
     application.state.metadata_provider = MetadataProvider(job_application)
     application.state.document_provider = new_document_provider()
     versioned_routes = []
-    for versioned_router in (v1_router, identity_router, upload_router, bulk_router, control_router, catalog_router):
+    for versioned_router in (v1_router, identity_router, upload_router, bulk_router, control_router, catalog_router, document_router):
         application.include_router(versioned_router)
         versioned_routes.extend(versioned_router.routes)
     if service_provider is not get_job_application:

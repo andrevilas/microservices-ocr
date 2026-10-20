@@ -1,5 +1,9 @@
 """Validate actual HTTP exchanges and examples against the published JSON schemas."""
+import hashlib
 import json
+from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import Mock
 import os
 import subprocess
 import sys
@@ -14,6 +18,7 @@ from app.main import create_app
 from app.security import require_principal
 from app.services.identity_store import IdentityStore, get_identity_store
 from app.services.storage_service import JobStore
+from test_document_metadata import PAGES, body, env, persisted, save
 
 
 @pytest.fixture
@@ -50,7 +55,7 @@ def validate_response(app, response, path, method="get"):
 def test_all_published_examples_and_security(contract):
     app, _, _, _ = contract
     schema = v1_schema(app)
-    assert schema["info"]["x-api-version"] == "1.6.0"
+    assert schema["info"]["x-api-version"] == "1.7.0"
     assert list(schema["components"]["securitySchemes"]) == ["PrincipalBearer"]
     operations = []
     for path, methods in schema["paths"].items():
@@ -64,11 +69,12 @@ def test_all_published_examples_and_security(contract):
             for status, response in operation["responses"].items():
                 assert "X-Request-ID" in response["headers"]
                 for media, content in response["content"].items():
-                    if media in ("application/pdf", "application/zip"):
+                    if media in ("application/pdf", "application/zip", "application/x-ndjson"):
                         assert content["schema"]["format"] == "binary"
-                    else:
-                        assert "example" in content, (path, status)
-                        Draft202012Validator({"components": schema["components"], **content["schema"]}).validate(content["example"])
+                        if media != "application/x-ndjson":
+                            continue
+                    assert "example" in content, (path, status)
+                    Draft202012Validator({"components": schema["components"], **content["schema"]}).validate(content["example"])
             if "requestBody" in operation:
                 if "application/json" not in operation["requestBody"]["content"]:
                     continue  # Binary exchanges are covered by upload integration tests.
@@ -76,7 +82,7 @@ def test_all_published_examples_and_security(contract):
                 model = schema["components"]["schemas"][body["$ref"].rsplit("/", 1)[1]] if "$ref" in body else body
                 for example in model["examples"]:
                     Draft202012Validator({"components": schema["components"], **model}).validate(example)
-    assert len(operations) == len(set(operations)) == 44
+    assert len(operations) == len(set(operations)) == 59
 
 
 def test_real_success_exchanges_match_openapi(contract):
@@ -191,3 +197,147 @@ def test_export_is_deterministic_and_does_not_start_runtime(tmp_path):
     result = subprocess.run(command + ["--check"], env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 1
     assert target.read_text(encoding="utf-8") == "{}"
+
+
+DOCUMENT_BASE = "/api/v1/jobs/{job_id}"
+CANONICAL_SCOPES = {"jobs:read", "artifacts:read"}
+METADATA_SCOPES = CANONICAL_SCOPES | {"metadata:read"}
+DOCUMENT_OPERATIONS = {
+    ("put", DOCUMENT_BASE + "/metadata"): METADATA_SCOPES | {"metadata:write"},
+    ("post", DOCUMENT_BASE + "/metadata/approve"): METADATA_SCOPES | {"metadata:approve"},
+    ("get", DOCUMENT_BASE + "/metadata"): METADATA_SCOPES,
+    ("get", DOCUMENT_BASE + "/metadata/revisions"): METADATA_SCOPES,
+    ("get", DOCUMENT_BASE + "/metadata/revisions/{revision_id}"): METADATA_SCOPES,
+    ("get", DOCUMENT_BASE + "/metadata/revisions/{revision_id}/segments/{segment_id}/fields"): METADATA_SCOPES,
+    ("get", DOCUMENT_BASE + "/metadata/revisions/{revision_id}/segments/{segment_id}/fields/{field_name}/values"): METADATA_SCOPES,
+    ("get", DOCUMENT_BASE + "/metadata/revisions/{revision_id}/segments/{segment_id}/fields/{field_name}/evidence"): METADATA_SCOPES,
+    ("get", DOCUMENT_BASE + "/metadata/revisions/{revision_id}/segments/{segment_id}/fields/{field_name}/strings/{part}"): METADATA_SCOPES,
+    ("get", DOCUMENT_BASE + "/metadata/revisions/{revision_id}/schemas/{schema_sha256}"): METADATA_SCOPES,
+    ("get", DOCUMENT_BASE + "/metadata/revisions/{revision_id}/content"): METADATA_SCOPES,
+    ("get", DOCUMENT_BASE + "/canonical/pages.jsonl"): CANONICAL_SCOPES,
+    ("get", DOCUMENT_BASE + "/canonical/manifest"): CANONICAL_SCOPES,
+    ("get", DOCUMENT_BASE + "/canonical/pages"): CANONICAL_SCOPES,
+    ("get", DOCUMENT_BASE + "/canonical/pages/{page}"): CANONICAL_SCOPES,
+}
+
+
+def test_published_document_operations_and_exact_scopes(contract):
+    schema = v1_schema(contract[0])
+    actual = {(method, path): set(operation["x-required-scopes"])
+              for path, methods in schema["paths"].items()
+              if path.startswith((DOCUMENT_BASE + "/metadata", DOCUMENT_BASE + "/canonical"))
+              for method, operation in methods.items()}
+    assert len(DOCUMENT_OPERATIONS) == 15
+    assert actual == DOCUMENT_OPERATIONS
+    description = schema["paths"][DOCUMENT_BASE + "/metadata"]["put"]["description"]
+    assert "contexts:read is required only for new or changed catalog bindings." in description
+
+
+@pytest.fixture
+def mounted_document(env, monkeypatch):
+    import app.main as main
+    from app.config import settings
+    from app.services.upload_service import get_upload_service
+    from app.services.batch_service import get_batch_service
+    from app.services.control_service import get_control_service
+    from app.services.export_service import get_export_service
+    from app.services.job_queue import get_job_queue_processor
+
+    e = env
+    monkeypatch.setattr(settings, "ocr_tmp_dir", e.jobs.root_dir)
+    monkeypatch.setattr(main, "get_user_store", Mock(return_value=Mock()))
+    monkeypatch.setattr(main, "RetentionWorker", Mock())
+    app = create_app(lambda: JobApplication(e.jobs))
+    principal = replace(e.owner, scopes=e.owner.scopes | {"metadata:approve"})
+    uploads = SimpleNamespace(jobs=e.jobs)
+    app.dependency_overrides.update({
+        require_principal: lambda: principal,
+        get_upload_service: lambda: uploads,
+        get_batch_service: lambda: SimpleNamespace(jobs=e.jobs, uploads=uploads),
+        get_control_service: lambda: SimpleNamespace(jobs=e.jobs, uploads=uploads),
+        get_export_service: Mock(return_value=Mock(jobs=e.jobs)),
+        get_job_queue_processor: Mock(return_value=Mock(job_store=e.jobs)),
+    })
+    with TestClient(app) as client:
+        provider = app.state.document_provider
+        assert provider().jobs is e.jobs
+        yield e, app, client
+    assert provider._execution.active_count == 0
+    assert app.state.document_provider is not provider
+    assert app.state.runtime_lease._file is None
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Real MetadataFiles requires POSIX")
+@pytest.mark.parametrize("method,suffix,status", [
+    ("get", "/metadata", 200),
+    ("get", "/canonical/pages", 200),
+    ("get", "/metadata/revisions/{revision_id}/content", 200),
+    ("get", "/canonical/pages.jsonl", 200),
+    ("put", "/metadata", 201),
+    ("post", "/metadata/approve", 201),
+])
+def test_mounted_document_exchanges(mounted_document, method, suffix, status):
+    e, app, client = mounted_document
+    head = save(e)[0] if "/metadata" in suffix and method != "put" else None
+    template = DOCUMENT_BASE + suffix
+    path = template.replace("{job_id}", e.job.job_id)
+    kwargs = {}
+    if method == "put":
+        kwargs["json"] = body(e)
+    elif method == "post":
+        snapshot = persisted(e, head)
+        kwargs["json"] = dict(
+            expected_head=head.revision_id, expected_sha256=head.sha256,
+            reviewed_fields=[dict(segment_id=segment.segment_id, field_name=field.field_name)
+                             for segment in snapshot.segments for field in segment.fields])
+    if method in ("put", "post"):
+        kwargs["headers"] = {"Idempotency-Key": "mounted-document-operation-0001"}
+    if "{revision_id}" in path:
+        path = path.replace("{revision_id}", head.revision_id)
+        kwargs["params"] = {"sha256": head.sha256}
+    response = client.request(method, path, **kwargs)
+    assert response.status_code == status, response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert len(response.headers["x-request-id"]) == 32
+    if suffix.endswith("pages.jsonl"):
+        content = v1_schema(app)["paths"][template][method]["responses"]["200"]["content"]["application/x-ndjson"]
+        assert response.headers["content-type"].split(";")[0] == "application/x-ndjson"
+        Draft202012Validator(content["schema"]).validate(response.text)
+        assert [json.loads(line)["text"] for line in response.text.splitlines()] == PAGES
+    else:
+        payload = validate_response(app, response, template, method)
+        if method in ("put", "post"):
+            assert response.headers["Idempotency-Replayed"] == "false"
+            snapshot = persisted(e, SimpleNamespace(**payload))
+            assert snapshot.state == ("draft" if method == "put" else "approved")
+        elif suffix == "/metadata":
+            assert payload["revision_id"] == head.revision_id
+        elif suffix == "/canonical/pages":
+            assert payload["text"] == PAGES[0][:8000]
+    if suffix.endswith(("/content", "pages.jsonl")):
+        filename = "metadata.json" if suffix.endswith("/content") else "pages.jsonl"
+        assert response.headers["content-disposition"] == f'attachment; filename="{filename}"'
+        assert int(response.headers["content-length"]) == len(response.content)
+        assert response.headers["x-content-sha256"] == hashlib.sha256(response.content).hexdigest()
+        if filename == "metadata.json":
+            expected = e.job.working_dir / "results" / "metadata" / (head.revision_id + ".json")
+            assert response.content == expected.read_bytes()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Real MetadataFiles requires POSIX")
+def test_mounted_document_authentication_and_canonical_only_scopes(mounted_document):
+    e, app, client = mounted_document
+    path = f"/api/v1/jobs/{e.job.job_id}"
+    app.dependency_overrides.pop(require_principal)
+    response = client.get(path + "/metadata")
+    assert response.status_code == 401
+    assert validate_response(app, response, DOCUMENT_BASE + "/metadata")["error"]["code"] == "authentication_required"
+    assert response.headers["www-authenticate"] == "Bearer"
+    canonical_reader = replace(e.owner, scopes=frozenset(CANONICAL_SCOPES))
+    app.dependency_overrides[require_principal] = lambda: canonical_reader
+    response = client.get(path + "/metadata")
+    assert response.status_code == 403
+    assert validate_response(app, response, DOCUMENT_BASE + "/metadata")["error"]["code"] == "insufficient_scope"
+    response = client.get(path + "/canonical/pages")
+    assert response.status_code == 200
+    assert validate_response(app, response, DOCUMENT_BASE + "/canonical/pages")["text"] == PAGES[0][:8000]
