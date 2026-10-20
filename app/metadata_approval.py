@@ -17,22 +17,17 @@ holding the required transaction and lease. There are no writes here.
 from functools import wraps
 import hashlib
 from datetime import datetime, timezone
-from typing import Annotated
 from uuid import uuid4
 
-from pydantic import BeforeValidator, Field, model_validator
-
 from .application import ApplicationError, Principal
-from .document_models import FieldName, FieldSpec
+from .document_models import FieldSpec
 from .metadata_evidence import assess_snapshot
 from .metadata_models import (
+    ApprovalInput,
     ApprovalRecord,
     MetadataSnapshot,
-    PersistentID,
     ProvenanceRecord,
-    SHA256,
-    _ClosedModel,
-    _list,
+    ReviewedField,
     snapshot_bytes,
 )
 from .metadata_validation import MetadataValidationError, validate_value_records
@@ -79,27 +74,6 @@ def _guard(method):
             failure.__context__ = None
             failure.__cause__ = None
     return guarded
-
-
-class ReviewedField(_ClosedModel):
-    segment_id: PersistentID
-    field_name: FieldName
-
-
-class ApprovalInput(_ClosedModel):
-    revision_id: PersistentID
-    expected_head: PersistentID
-    expected_sha256: SHA256
-    reviewed_fields: Annotated[
-        list[ReviewedField], Field(max_length=200), BeforeValidator(_list)
-    ]
-
-    @model_validator(mode="after")
-    def _unique(self):
-        pairs = [(item.segment_id, item.field_name) for item in self.reviewed_fields]
-        if len(set(pairs)) != len(pairs):
-            raise ValueError("Duplicate reviewed field.")
-        return self
 
 
 def _authorize(principal, owner):

@@ -14,30 +14,10 @@ on every call, including replay, before returning any stored receipt.
 import hashlib
 import json
 import re
-from typing import Literal
-
-from pydantic import model_validator
 
 from .application import ApplicationError
 from .metadata_approval import _guard, _input
-from .metadata_models import MetadataSnapshot, PersistentID, SHA256, _ClosedModel, snapshot_bytes
-
-
-class ApproveMetadataReceipt(_ClosedModel):
-    """Candidate description only; its existence grants no approval authority."""
-
-    operation: Literal["approve-v1"]
-    state: Literal["approved"]
-    revision_id: PersistentID
-    sha256: SHA256
-    reviewed_revision_id: PersistentID
-    reviewed_sha256: SHA256
-
-    @model_validator(mode="after")
-    def _lineage(self):
-        if self.revision_id == self.reviewed_revision_id:
-            raise ValueError("Approval requires a distinct child revision.")
-        return self
+from .metadata_models import ApproveMetadataReceipt, MetadataSnapshot, snapshot_bytes
 
 
 @_guard

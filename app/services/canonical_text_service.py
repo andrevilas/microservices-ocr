@@ -52,6 +52,10 @@ from contextlib import contextmanager
 from typing import Iterator
 
 from app.application import ApplicationError, JobApplication, Principal
+from app.metadata_models import (
+    MAX_CANONICAL_CHUNK_CHARS as MAX_CHUNK_CHARS,
+    MAX_CANONICAL_JSONL_BYTES as MAX_JSONL_BYTES,
+)
 from app.results import MAX_TOTAL_CHARS, PageInfo, read_page
 from app.services.storage_service import JobStore
 
@@ -61,9 +65,7 @@ NORMALIZATION = "identity-utf8-v1"
 OFFSET_UNIT = "unicode_code_points"
 ARTIFACT_VERSION = 1
 TEXT_VERSION = 1
-MAX_JSONL_BYTES = 32 * 1024 * 1024
 STREAM_CHUNK_BYTES = 256 * 1024
-MAX_CHUNK_CHARS = 20000
 
 
 def _unavailable() -> ApplicationError:

@@ -4,9 +4,12 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, Field, StrictBool, StrictInt, StrictStr, StringConstraints, model_validator
 
-from app.metadata_models import _ClosedModel, _utf8, PersistentID, SHA256, Page, VersionOne
+from app.metadata_models import (
+    MAX_CANONICAL_CHUNK_CHARS as MAX_CHUNK_CHARS,
+    MAX_CANONICAL_JSONL_BYTES as MAX_JSONL_BYTES,
+    _ClosedModel, _utf8, PersistentID, SHA256, Page, VersionOne,
+)
 from app.results import MAX_PAGE_CHARS, MAX_TOTAL_CHARS
-from app.services.canonical_text_service import MAX_CHUNK_CHARS, MAX_JSONL_BYTES
 
 
 CanonicalOffset = Annotated[StrictInt, Field(ge=0, le=MAX_PAGE_CHARS)]

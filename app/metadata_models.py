@@ -30,6 +30,8 @@ MAX_SEGMENTS = 16
 MAX_TOTAL_FIELDS = 200
 MAX_TOTAL_EVIDENCE = 128
 MAX_SNAPSHOT_BYTES = 1024 * 1024
+MAX_CANONICAL_CHUNK_CHARS = 20000
+MAX_CANONICAL_JSONL_BYTES = 32 * 1024 * 1024
 
 
 def _utf8(value: str) -> str:
@@ -202,6 +204,44 @@ class SaveMetadataReceipt(_ClosedModel):
     def _unique_ids(self):
         if len(set(self.segment_ids.values())) != len(self.segment_ids):
             raise ValueError("Duplicate persistent segment ID.")
+        return self
+
+
+class ReviewedField(_ClosedModel):
+    segment_id: PersistentID
+    field_name: FieldName
+
+
+class ApprovalInput(_ClosedModel):
+    revision_id: PersistentID
+    expected_head: PersistentID
+    expected_sha256: SHA256
+    reviewed_fields: Annotated[
+        list[ReviewedField], Field(max_length=200), BeforeValidator(_list)
+    ]
+
+    @model_validator(mode="after")
+    def _unique(self):
+        pairs = [(item.segment_id, item.field_name) for item in self.reviewed_fields]
+        if len(set(pairs)) != len(pairs):
+            raise ValueError("Duplicate reviewed field.")
+        return self
+
+
+class ApproveMetadataReceipt(_ClosedModel):
+    """Candidate description only; its existence grants no approval authority."""
+
+    operation: Literal["approve-v1"]
+    state: Literal["approved"]
+    revision_id: PersistentID
+    sha256: SHA256
+    reviewed_revision_id: PersistentID
+    reviewed_sha256: SHA256
+
+    @model_validator(mode="after")
+    def _lineage(self):
+        if self.revision_id == self.reviewed_revision_id:
+            raise ValueError("Approval requires a distinct child revision.")
         return self
 
 
