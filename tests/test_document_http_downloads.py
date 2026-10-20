@@ -67,7 +67,7 @@ def test_exact_download_and_openapi(http, kind):
     headers = success["headers"]
     assert {"Content-Length", "X-Content-SHA256", "Content-Disposition", "Cache-Control"} <= headers.keys()
     assert headers["Content-Disposition"]["schema"]["enum"] == [f'attachment; filename="{filename}"']
-    assert headers["Cache-Control"]["schema"]["enum"] == ["no-store"]
+    assert headers["Cache-Control"]["schema"]["const"] == "no-store"
     example = success["content"][media]["example"]
     if kind == "metadata":
         MetadataSnapshot.model_validate_json(json.dumps(example))
