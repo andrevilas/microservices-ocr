@@ -1,4 +1,9 @@
-"""Basic metadata reads over the shared document execution runtime."""
+"""Document HTTP API for metadata revisions, approvals, and canonical text.
+
+Shared bounded execution may return 429; requests are not silently retried.
+Pagination cursors are continuation coordinates, not authorization credentials.
+Accepted queries return 410 when retention has expired.
+"""
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Path, Query, Request
@@ -26,7 +31,7 @@ from app.services.document_runtime import DocumentServices, get_document_service
 
 router = APIRouter(
     prefix="/api/v1/jobs/{job_id}", tags=["Documents"],
-    responses=error_responses(401, 403, 404, 405, 408, 409, 413, 422, 429, 500, 503),
+    responses=error_responses(401, 403, 404, 405, 408, 409, 410, 413, 422, 429, 500, 503),
 )
 ID = Annotated[str, Path(pattern=r"^[0-9a-f]{32}$")]
 Digest = Annotated[str, Query(pattern=r"^[0-9a-f]{64}$")]
@@ -100,8 +105,8 @@ async def save_metadata(
     """Save a manual draft with exact HEAD preconditions.
 
     contexts:read is required only for new or changed catalog bindings.
-    After an uncertain outcome, retry with the same Idempotency-Key and body.
-    A replay can return a historical receipt after HEAD has advanced.
+    After an uncertain outcome, retry with the same Idempotency-Key and body;
+    replay can return a historical receipt after HEAD has advanced.
     """
     body = await json_input(request, SaveMetadataInput, max_bytes=512 * 1024)
     receipt, replayed = await services.execution.run(
@@ -161,13 +166,14 @@ async def approve_metadata(
     idempotency_key: Annotated[str, Header(
         min_length=8, max_length=128, pattern=r"^[\x00-\x7f]+$")],
 ):
-    """Approve the current draft with explicitly selected reviewed fields.
+    """Approve the current draft using explicitly selected reviewed fields,
+    recording the authorized principal's selection without proving human review
+    or MFA.
 
-    This records the authorized principal's selection, not proof of human review
-    or MFA. Only the exact user owner authenticated through local JWT or OAuth
-    may approve; service principals and administrator bypass are not allowed.
-    After an uncertain response, retry with the same Idempotency-Key and body.
-    Replay can return a historical receipt after a later HEAD or catalog
+    Only the exact user owner authenticated through local JWT or OAuth may
+    approve; service principals and administrator bypass are not allowed.
+    After an uncertain response, retry with the same Idempotency-Key and body;
+    replay can return a historical receipt after a later HEAD or catalog
     deprecation.
     """
     body = await json_input(request, ApprovalInput, max_bytes=512 * 1024)
@@ -209,6 +215,11 @@ CanonicalServices = Annotated[DocumentServices, Depends(canonical_services)]
     openapi_extra=operation("jobs:read", "artifacts:read", "metadata:read"),
 )
 async def get_metadata(job_id: ID, principal: Reader, services: Services):
+    """Return a summary of the metadata revision selected by current HEAD.
+
+    The read pins that revision and hash once; later HEAD changes do not alter
+    the result, and content references retrieve the immutable snapshot.
+    """
     return await services.execution.run(
         principal,
         lambda control: services.queries.get_current(
@@ -227,6 +238,10 @@ async def list_metadata_revisions(
     limit: Annotated[int, Query(ge=1, le=100)] = 25,
     after: Annotated[str | None, Query(max_length=2048)] = None,
 ):
+    """List a bounded page of metadata revision summaries ordered by revision ID.
+
+    Continue with next_cursor as after; cursors do not grant authorization.
+    """
     return await services.execution.run(
         principal,
         lambda control: services.queries.list_revisions(
@@ -245,6 +260,10 @@ async def get_metadata_revision(
     job_id: ID, revision_id: ID, sha256: Digest,
     principal: Reader, services: Services,
 ):
+    """Return a summary of an immutable metadata revision pinned by ID and SHA-256.
+
+    The summary includes content references and does not follow later HEAD changes.
+    """
     return await services.execution.run(
         principal,
         lambda control: services.queries.get_revision(
@@ -266,6 +285,11 @@ async def list_metadata_fields(
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
     after: Annotated[str | None, Query(max_length=2048)] = None,
 ):
+    """List up to 50 field descriptors in stored order for a pinned revision and segment.
+
+    Continue with next_cursor as after; cursors are scoped to the query and do
+    not grant authorization.
+    """
     return await services.execution.run(
         principal,
         lambda control: services.queries.list_fields(
@@ -288,6 +312,11 @@ async def list_metadata_values(
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
     after: Annotated[str | None, Query(max_length=2048)] = None,
 ):
+    """List up to 50 raw/normalized value pairs in stored order for a pinned field.
+
+    Large strings use references; continue with next_cursor as after, which
+    carries query coordinates without granting authorization.
+    """
     return await services.execution.run(
         principal,
         lambda control: services.queries.list_values(
@@ -310,6 +339,11 @@ async def list_metadata_evidence(
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
     after: Annotated[str | None, Query(max_length=2048)] = None,
 ):
+    """List up to 50 stored evidence references for a field in a pinned revision.
+
+    Continue with next_cursor as after; query-scoped cursors do not grant
+    authorization or certify the evidence.
+    """
     return await services.execution.run(
         principal,
         lambda control: services.queries.list_evidence(
@@ -334,6 +368,12 @@ async def get_metadata_string(
     offset: Annotated[int, Query(ge=0, le=262144)] = 0,
     max_chars: Annotated[int, Query(ge=1, le=1000)] = 1000,
 ):
+    """Read up to 1,000 Unicode code points from a pinned raw or normalized string.
+
+    Use item_index for a list item and omit it for a scalar; offset and
+    next_offset count Unicode code points, while content_sha256 identifies
+    the complete source string.
+    """
     return await services.execution.run(
         principal,
         lambda control: services.queries.get_string(
@@ -357,6 +397,11 @@ async def get_metadata_schema(
     offset: Annotated[int, Query(ge=0, le=262144)] = 0,
     max_chars: Annotated[int, Query(ge=1, le=1000)] = 1000,
 ):
+    """Read up to 1,000 Unicode code points of canonical schema JSON.
+
+    The revision ID and sha256 pin the metadata snapshot, schema_sha256
+    identifies the canonical schema, and next_offset continues the text.
+    """
     return await services.execution.run(
         principal,
         lambda control: services.queries.get_schema(
@@ -386,6 +431,14 @@ async def download_metadata(
     job_id: ID, revision_id: ID, sha256: Digest,
     principal: Reader, services: Services,
 ):
+    """Download the exact persisted JSON snapshot, pinned by revision and SHA-256,
+    up to 1 MiB.
+
+    Content-Length and X-Content-SHA256 describe the bytes; Content-Disposition
+    names metadata.json and Cache-Control is no-store.
+    The overall execution deadline applies throughout the download; Range
+    requests are not supported.
+    """
     return DocumentDownloadResponse(lambda: services.streams.open_metadata(
         principal, job_id, revision_id, sha256=sha256))
 
@@ -411,6 +464,13 @@ async def download_metadata(
 async def download_canonical(
     job_id: ID, principal: CanonicalReader, services: CanonicalServices,
 ):
+    """Download the exact canonical pages JSONL, up to 32 MiB.
+
+    Content-Length and X-Content-SHA256 describe the bytes; Content-Disposition
+    names pages.jsonl and Cache-Control is no-store.
+    The overall execution deadline applies throughout the download; Range
+    requests are not supported.
+    """
     return DocumentDownloadResponse(lambda: services.streams.open_canonical(
         principal, job_id))
 
@@ -424,6 +484,11 @@ async def download_canonical(
 async def get_canonical_manifest(
     job_id: ID, principal: CanonicalReader, services: CanonicalServices,
 ):
+    """Return canonical text identity, page and character counts, and JSONL size and hash.
+
+    Input and output PDF hashes identify persisted reports and do not prove
+    PDF conformity.
+    """
     return await services.execution.run(
         principal,
         lambda control: services.queries.get_canonical_manifest(
@@ -443,6 +508,13 @@ async def get_canonical_chunk(
     offset: Annotated[int, Query(ge=0, le=500000)] = 0,
     max_chars: Annotated[int, Query(ge=1, le=20000)] = 8000,
 ):
+    """Read a canonical page chunk of up to 20,000 Unicode code points
+    (8,000 by default).
+
+    Offsets count Unicode code points; next_page and next_offset continue
+    within the page or advance to the next page, and text_sha256 identifies
+    the complete page while canonical_sha256 identifies the JSONL artifact.
+    """
     return await services.execution.run(
         principal,
         lambda control: services.queries.get_canonical_chunk(
@@ -461,6 +533,11 @@ async def get_canonical_page(
     job_id: ID, page: Annotated[int, Path(ge=1, le=300)],
     principal: CanonicalReader, services: CanonicalServices,
 ):
+    """Return a complete canonical page through HTTP, up to 500,000 Unicode code points.
+
+    text_sha256 identifies the page's UTF-8 text, while canonical_sha256
+    identifies the canonical JSONL artifact.
+    """
     return await services.execution.run(
         principal,
         lambda control: services.queries.get_canonical_page(
