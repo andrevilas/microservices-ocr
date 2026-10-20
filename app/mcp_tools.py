@@ -9,7 +9,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
 
 from app.catalog_mcp_tools import register_catalog_tools
-from app.document_mcp_limits import DocumentMCPOutputGuard
+from app.document_mcp_limits import DocumentMCPInputGuard, DocumentMCPOutputGuard
 from app.api_models import ArtifactResponse, IdentityResponse, JobPage, MetricsResponse
 from app.models import JobResponse, JobStatus, QualityLabel
 from app.results import JobReport, TextChunk
@@ -39,6 +39,8 @@ class OcrMCPServer(MCPServer):
         super().__init__(*args, **kwargs)
         # Outermost middleware inspects the final serialized wire result.
         self.middleware.insert(0, DocumentMCPOutputGuard())
+        # Raw body validation precedes SDK dispatch, inside the output guard.
+        self.middleware.insert(1, DocumentMCPInputGuard())
 
     async def list_tools(self):
         tools = await super().list_tools()
