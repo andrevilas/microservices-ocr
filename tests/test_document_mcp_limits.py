@@ -6,10 +6,15 @@ from types import SimpleNamespace
 import pytest
 from mcp import Client
 from mcp.types import CallToolResult
+from pydantic import BaseModel
 
 from app.document_mcp_limits import DocumentMCPOutputGuard, MAX_DOCUMENT_MCP_RESULT_BYTES
 from app.document_mcp_tools import DOCUMENT_OPERATIONS
 from app.mcp_tools import OcrMCPServer
+
+class Payload(BaseModel):
+    value: str
+
 
 NAME = "ocr_get_document_canonical_manifest"
 MODERN = "2026-07-28"
@@ -105,8 +110,8 @@ async def roundtrip(kind, payload, mode, name=NAME, target=None):
         return result
     async def text_tool() -> str:
         return payload
-    async def dict_tool() -> dict:
-        return {"value": payload}
+    async def dict_tool() -> Payload:
+        return Payload(value=payload)
     async def result_tool() -> CallToolResult:
         return CallToolResult.model_validate({"content": [{"type": "text", "text": payload}],
                                               "structuredContent": {"value": payload}})
@@ -121,11 +126,23 @@ async def roundtrip(kind, payload, mode, name=NAME, target=None):
 
 
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
+def test_actual_sdk_typed_payload_preserves_both_representations(mode):
+    payload = "é🚀\u0000"
+    response, wire = asyncio.run(roundtrip("dict", payload, mode))
+    assert not response.is_error
+    assert wire["structuredContent"] == {"value": payload}
+    assert len(wire["content"]) == 1
+    assert wire["content"][0]["type"] == "text"
+    assert json.loads(wire["content"][0]["text"]) == {"value": payload}
+
+
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
 @pytest.mark.parametrize("kind,payload", [
     ("text", "🚀" * 18000), ("text", "\u0000" * 12000),
     ("dict", "x" * 34000), ("result", "x" * 34000),
     ("dict", "🚀" * 18000), ("result", "\u0000" * 12000), ("meta", "small"),
-])
+], ids=["text-utf8", "text-control", "dict-ascii-dup", "result-ascii-dup",
+        "dict-utf8-dup", "result-control-dup", "meta"])
 def test_actual_sdk_rejects_oversized_final_results(mode, kind, payload):
     response, wire = asyncio.run(roundtrip(kind, payload, mode))
     assert response.is_error
