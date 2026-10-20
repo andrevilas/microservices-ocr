@@ -98,7 +98,7 @@ class DocumentQueries:
         self._ready(checkpoint)
         head = _job_call(self.document.bundle.index.get_head, principal, job_id)
         # get_head is the authority even when no metadata has been saved yet.
-        owner = principal.subject if head is None else head.owner
+        owner = principal.subject
         return owner, head
 
     def _read(self, principal, job_id, revision_id, sha256, checkpoint, project):

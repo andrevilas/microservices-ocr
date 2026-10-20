@@ -214,7 +214,7 @@ def test_retention_precedes_queries(saved, monkeypatch, operation, deleted):
     assert not e.jobs._artifact_leases
 
 
-@pytest.mark.parametrize("status", ["queued", "running"])
+@pytest.mark.parametrize("status", ["queued", "processing"])
 def test_noncompleted_jobs_keep_existing_conflict_authority(saved, monkeypatch, status):
     e, q, receipt, _ = saved
     e.jobs.update(e.job.job_id, status=status)
