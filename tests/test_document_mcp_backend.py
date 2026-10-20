@@ -11,6 +11,7 @@ from unittest.mock import Mock
 
 import httpx2
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 import pytest
@@ -56,7 +57,7 @@ def backend(env, monkeypatch, staged_registration):
                              READ | {"metadata:approve"}, auth_source="service"),
     }
 
-    async def authenticate(request):
+    async def authenticate(request: Request):
         header = request.headers.get("authorization", "")
         principal = principals.get(header.removeprefix("Bearer ")) if header.startswith("Bearer ") else None
         if principal is None:
