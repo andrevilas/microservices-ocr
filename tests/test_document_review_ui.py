@@ -150,7 +150,7 @@ def test_workspace_link_reads_canonical_current_history_and_pinned_revision(ui):
     data = seeded(ui)
     page = ui.context.new_page()
     calls = []
-    page.on('request', calls.append)  # request objects only; headers are inspected after collection
+    page.on('request', lambda request: calls.append(request))  # request objects only; headers are inspected after collection
     reads = Reads(page, data.job_id)
     page.goto(ui.runtime.origin + '/')
     card = page.locator(f'[data-card-id="{data.job_id}"]')
