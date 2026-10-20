@@ -32,7 +32,7 @@ from mcp.server import MCPServer
 from app.document_mcp_tools import register_document_tools
 server = MCPServer('pure-document-test')
 register_document_tools(server, lambda *args: None)
-assert len(asyncio.run(server.list_tools())) == 6
+assert len(asyncio.run(server.list_tools())) == 10
 blocked = ('app.main', 'app.config', 'app.application', 'app.runtime',
            'app.services', 'app.routes', 'app.document_http_examples')
 assert not [name for name in sys.modules
@@ -54,6 +54,8 @@ def test_registry_schemas_annotations_and_six_tools():
         "get_document_canonical_manifest", "get_document_canonical_chunk",
         "get_document_metadata", "list_document_metadata_revisions",
         "get_document_metadata_revision", "list_document_metadata_fields",
+        "list_document_metadata_values", "list_document_metadata_evidence",
+        "get_document_metadata_string", "get_document_metadata_schema",
     })
     assert set(tools) == {"ocr_" + operation for operation in operations}
     assert DOCUMENT_OPERATIONS == operations
