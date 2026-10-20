@@ -1,5 +1,6 @@
 """Direct MCP dispatch integration using the HTTP fixture's shared runtime."""
 import asyncio
+from threading import Event, Thread
 
 import pytest
 
@@ -152,7 +153,7 @@ def test_internal_canonical_chunk_cannot_bypass_mcp_bound(http, max_chars):
     e = http[0]
     failure = error(lambda: call(http, who(scopes=READ), "get_document_canonical_chunk",
                                  e.job.job_id, 1, 0, max_chars), 422, "invalid_metadata_query")
-    assert failure.message == "Invalid document metadata query."
+    assert failure.message == "Document operation failed."
     assert call(http, who(scopes=READ), "get_document_canonical_chunk",
                 e.job.job_id, 1, 0, 1000).text == "x" * 1000
 
@@ -165,3 +166,39 @@ def test_unknown_operation_and_absent_provider(http):
     failure = error(lambda: asyncio.run(execute_document(
         None, e.owner, "get_document_metadata", (e.job.job_id,))), 503, "metadata_unavailable")
     assert failure.message == "Stored metadata is unavailable."
+
+
+def test_provider_resolution_keeps_event_loop_responsive(http):
+    e, app, client, _ = http
+    locked, release = Event(), Event()
+
+    def hold():
+        with e.jobs._lock:
+            locked.set()
+            release.wait(2)
+            release.set()
+
+    async def scenario():
+        task = asyncio.create_task(execute_document(
+            app.state.document_provider, e.owner,
+            "get_document_canonical_manifest", (e.job.job_id,)))
+        try:
+            await asyncio.sleep(0.02)
+            assert not release.is_set(), "Provider resolution blocked the event loop."
+        finally:
+            release.set()
+            await task
+
+    holder = Thread(target=hold)
+    holder.start()
+    future = None
+    try:
+        assert locked.wait(1)
+        future = client.portal.start_task_soon(scenario)
+        future.result(timeout=4)
+    finally:
+        release.set()
+        holder.join(timeout=3)
+        if future is not None:
+            future.result(timeout=3)
+    assert not holder.is_alive()

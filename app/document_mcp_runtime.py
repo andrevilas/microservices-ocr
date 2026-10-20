@@ -1,4 +1,6 @@
 """Async MCP dispatch through the existing shared document execution runtime."""
+from starlette.concurrency import run_in_threadpool
+
 from app.application import ApplicationError
 from app.document_mcp_tools import DOCUMENT_OPERATIONS
 from app.services.document_runtime import DocumentServices
@@ -98,7 +100,7 @@ async def execute_document(provider, principal, operation, args):
         principal.require("metadata:approve")
     if not callable(provider):
         raise _unavailable()
-    services = provider()
+    services = await run_in_threadpool(provider)
     if not isinstance(services, DocumentServices):
         raise _unavailable()
     return await services.execution.run(
