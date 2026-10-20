@@ -1,4 +1,4 @@
-"""Lazy internal document services sharing existing metadata/catalog runtimes."""
+"""Lazy document services with shared execution and provider-independent shutdown."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -43,6 +43,10 @@ class DocumentProvider:
         # Identity keys therefore cannot be reused during this provider's life.
         self._cache = {}
         self._services: DocumentServices | None = None
+
+    async def shutdown(self, timeout_seconds=30):
+        """Close admission and drain existing work without resolving either provider."""
+        await self._execution.shutdown(timeout_seconds=timeout_seconds)
 
     @staticmethod
     def _shared(metadata, catalog):

@@ -1,9 +1,10 @@
-"""Internal bounded download lifetimes; transport adapters must enclose send in the context.
+"""Internal bounded downloads; transport adapters must enclose actual sends.
 
 One executor worker owns preparation, the source lease, iteration and cleanup.
 A one-slot mailbox and acknowledgements retain that ownership through each send.
+The download exposes the same operation deadline for bounding awaited sends.
 Cancellation is cooperative: blocked or queued work retains its execution permit.
-No HTTP, MCP, application startup or shutdown wiring is installed here.
+Application shutdown drains the shared execution; no HTTP or MCP adapters live here.
 """
 from __future__ import annotations
 
@@ -205,6 +206,12 @@ class DocumentDownload:
     @property
     def filename(self):
         return self._header.filename
+
+    @property
+    def remaining_seconds(self):
+        """Remaining operation deadline, including after successful worker cleanup."""
+        self._ensure_open()
+        return self._transfer.permit.control.remaining_seconds
 
     def _ensure_open(self):
         if self._closed:

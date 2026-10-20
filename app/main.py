@@ -20,6 +20,7 @@ from app.routes.control import router as control_router
 from app.routes.catalog import router as catalog_router
 from app.services.catalog_runtime import CatalogProvider
 from app.services.control_service import get_control_service
+from app.services.document_runtime import DocumentProvider
 from app.services.batch_service import get_batch_service
 from app.services.export_service import get_export_service
 from app.services.job_queue import get_job_queue_processor
@@ -35,6 +36,12 @@ from app.http_contract import API_VERSION, ERRORS, V1Boundary, error_response, i
 
 def create_app(service_provider=get_job_application, *, request_authenticator=None, transport_security=None) -> FastAPI:
     runtime_store = None
+    runtime_lease = None
+
+    def new_document_provider():
+        return DocumentProvider(
+            lambda: application.state.metadata_provider(),
+            lambda: application.state.catalog_provider())
 
     @_guard
     def job_application():
@@ -90,9 +97,15 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
-        nonlocal runtime_store
+        nonlocal runtime_store, runtime_lease
+        # A failed shutdown retains ownership even if the configured root changes.
+        # Reject reentry before acquiring or publishing any replacement lease.
+        if runtime_lease is not None:
+            raise _error("metadata_unavailable") from None
+        document_provider = application.state.document_provider
         lease = RuntimeLease(settings.ocr_tmp_dir)
         lease.acquire()
+        runtime_lease = lease
         application.state.runtime_lease = lease
         processor = None
         export_processor = None
@@ -153,8 +166,10 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
             async with mcp_server.session_manager.run():
                 yield
         finally:
-            # A failed stop retains both the lease and the store pin while
-            # workers may still write. Clear the pin only after safe release.
+            # Drain the captured coordinator before stopping other writers. Any
+            # failure or cancellation retains the exact coordinator, lease and
+            # store pin; a later lifespan must not overwrite that ownership.
+            await document_provider.shutdown()
             if retention_worker is not None:
                 retention_worker.stop()
             if export_processor is not None:
@@ -163,6 +178,11 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
                 processor.stop()
             lease.release()
             runtime_store = None
+            runtime_lease = None
+            # Admission on the drained coordinator is permanently closed. Rotate
+            # only after every stop and lease release succeeds, without resolving
+            # metadata/catalog services or touching their stores.
+            application.state.document_provider = new_document_provider()
 
     application = FastAPI(title=settings.app_name, version=API_VERSION, lifespan=lifespan,
                           description="OCR HTTP API. Versioned operations use Bearer user or individual service credentials; legacy routes retain separate contracts.")
@@ -173,6 +193,7 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
     # Construction is lazy; the active lifespan pins only the actual JobStore.
     application.state.catalog_provider = CatalogProvider(job_application)
     application.state.metadata_provider = MetadataProvider(job_application)
+    application.state.document_provider = new_document_provider()
     versioned_routes = []
     for versioned_router in (v1_router, identity_router, upload_router, bulk_router, control_router, catalog_router):
         application.include_router(versioned_router)
