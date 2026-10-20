@@ -1,7 +1,9 @@
 """Independent, literal expectations for the currently advertised MCP tools."""
 
-EXPECTED_TOOL_COUNT = 46
+EXPECTED_TOOL_COUNT = 52
 EXPECTED_TOOL_NAMES = frozenset({
+    "ocr_list_rag_destinations", "ocr_submit_rag_delivery", "ocr_get_rag_delivery",
+    "ocr_get_rag_receipt", "ocr_get_rag_recovery", "ocr_cancel_rag_delivery",
     "ocr_list_context_templates",
     "ocr_clone_context_template",
     "ocr_whoami",
@@ -76,6 +78,7 @@ CATALOG_DEPRECATE_TOOL_NAMES = frozenset({
     "ocr_deprecate_document_type_version",
 })
 OTHER_WRITE_TOOL_NAMES = frozenset({
+    "ocr_submit_rag_delivery", "ocr_cancel_rag_delivery",
     "ocr_prepare_upload",
     "ocr_submit_job",
     "ocr_create_batch",

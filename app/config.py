@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    rag_config_file: Path | None = None
     app_name: str = "Fluxo OCR"
     app_env: str = "development"
     static_asset_version: str = "20261016-contexts-u2a-i"

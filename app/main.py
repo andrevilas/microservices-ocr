@@ -19,6 +19,7 @@ from app.routes.bulk import router as bulk_router
 from app.routes.control import router as control_router
 from app.routes.catalog import router as catalog_router
 from app.routes.documents import router as document_router
+from app.routes.rag import router as rag_router
 from app.services.catalog_runtime import CatalogProvider
 from app.services.control_service import get_control_service
 from app.services.document_runtime import DocumentProvider
@@ -29,6 +30,7 @@ from app.services.metadata_runtime import MetadataProvider, assert_metadata_heal
 from app.services.metadata_store import _error, _guard
 from app.services.storage_service import JobStore
 from app.services.runtime_lease import RuntimeLease
+from app.services.rag_runtime import configured_runtime
 from app.services.retention_worker import RetentionWorker
 from app.services.user_store import get_user_store
 from app.services.upload_service import get_upload_service
@@ -91,11 +93,18 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
     def controls():
         return application.dependency_overrides.get(get_control_service, get_control_service)()
 
+    def rag_service():
+        service = application.state.rag_service
+        if service is not None and service.outbox.store is not job_application().store:
+            raise ApplicationError(503, "rag_unavailable", "RAG store binding is unavailable.")
+        return service
+
     mcp_server, mcp_app = build_mcp_server(job_application, uploads, queue, batches, exports, controls,
                                           request_authenticator=request_authenticator, transport_security=transport_security,
                                           # Same cached pair/store as the HTTP routes; only called after application exists.
                                           catalog_provider=lambda: application.state.catalog_provider(),
-                                          document_provider=lambda: application.state.document_provider())
+                                          document_provider=lambda: application.state.document_provider(),
+                                          rag_provider=rag_service)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
@@ -112,6 +121,7 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
         processor = None
         export_processor = None
         retention_worker = None
+        rag_runtime = None
         try:
             runtime_store = startup_store(lease)
             # Custom applications require all five backend overrides, each bound
@@ -156,6 +166,8 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
             # Publish shutdown targets only after validating their store identity.
             export_processor = checked_backend(exports)
             processor = checked_backend(queue, store_attribute="job_store")
+            rag_runtime = configured_runtime(runtime_store, settings.rag_config_file)
+            application.state.rag_runtime = rag_runtime
             metadata.ensure_healthy()
             retention_worker = RetentionWorker(upload_service, export_processor, metadata=metadata)
             metadata.ensure_healthy()
@@ -165,6 +177,9 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
             metadata.ensure_healthy()
             export_processor.start()
             metadata.ensure_healthy()
+            if rag_runtime is not None:
+                rag_runtime.start()
+                application.state.rag_service = rag_runtime.service
             async with mcp_server.session_manager.run():
                 yield
         finally:
@@ -172,6 +187,10 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
             # failure or cancellation retains the exact coordinator, lease and
             # store pin; a later lifespan must not overwrite that ownership.
             await document_provider.shutdown()
+            application.state.rag_service = None
+            if rag_runtime is not None:
+                from starlette.concurrency import run_in_threadpool
+                await run_in_threadpool(rag_runtime.stop)
             if retention_worker is not None:
                 retention_worker.stop()
             if export_processor is not None:
@@ -181,6 +200,7 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
             lease.release()
             runtime_store = None
             runtime_lease = None
+            application.state.rag_runtime = None
             # Admission on the drained coordinator is permanently closed. Rotate
             # only after every stop and lease release succeeds, without resolving
             # metadata/catalog services or touching their stores.
@@ -196,8 +216,10 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
     application.state.catalog_provider = CatalogProvider(job_application)
     application.state.metadata_provider = MetadataProvider(job_application)
     application.state.document_provider = new_document_provider()
+    application.state.rag_service = None
+    application.state.rag_provider = rag_service
     versioned_routes = []
-    for versioned_router in (v1_router, identity_router, upload_router, bulk_router, control_router, catalog_router, document_router):
+    for versioned_router in (v1_router, identity_router, upload_router, bulk_router, control_router, catalog_router, document_router, rag_router):
         application.include_router(versioned_router)
         versioned_routes.extend(versioned_router.routes)
     if service_provider is not get_job_application:

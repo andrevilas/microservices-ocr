@@ -1,8 +1,8 @@
 # Adaptador OCR para o RAG independente — preparação
 
 `app/services/rag_delivery.py` prepara e envia um pacote `ocr-rag/1`.
-Ainda não está ligado às rotas, MCP, startup ou workers do OCR. A produção
-permanece na versão anterior; não existe entrega automática habilitada.
+O candidato integra rotas, MCP e startup configurável conforme [API/MCP](rag-api-mcp.md).
+A produção permanece na versão anterior; não existe entrega automática habilitada nela.
 
 ## Implementado
 

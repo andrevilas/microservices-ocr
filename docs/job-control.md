@@ -1,7 +1,7 @@
 # Cancelamento e reprocessamento
 
-Entrega OCR-AM-10, LPM `qwslcnBIlzvnmeDgeTjy`. Contrato atual: HTTP 1.7.0
-(59 operações) e MCP 0.6.0 (46 ferramentas: 29 leituras, 17 escritas). As 20
+Entrega OCR-AM-10, LPM `qwslcnBIlzvnmeDgeTjy`. Contrato atual: HTTP 1.8.0
+(66 operações) e MCP 0.7.0 (52 ferramentas: 33 leituras, 19 escritas). As 20
 ferramentas desta entrega (12 leituras, oito mutações) são o subconjunto OCR
 legado. As 12 operações documentais estão em [metadados documentais](document-metadata-api.md);
 veja o [contrato HTTP](http-contract.md) e [API/MCP](api-mcp.md) mais recentes.

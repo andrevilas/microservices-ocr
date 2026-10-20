@@ -1,7 +1,8 @@
 # Worker e monitor local da entrega RAG
 
 `RagDeliveryWorker` não inicia threads no import nem no construtor.
-`start()` é explícito; nenhuma chamada foi ligada ao startup do OCR.
+`start()` é explícito; o runtime candidato chama-o somente com `RAG_CONFIG_FILE`
+configurado. Consulte [API/MCP e ativação](rag-api-mcp.md).
 O operador fornece destinos, intervalo, tamanho do lote e antecedência
 de aviso. Não há valores predefinidos de produção neste incremento.
 

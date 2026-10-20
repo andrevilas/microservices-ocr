@@ -2,9 +2,9 @@
 
 O schema aditivo `rag_outbox` e a auditoria mínima são criados no banco
 do JobStore, sem modificar jobs legados ou presumir entregas anteriores.
-Não há worker, rota ou ferramenta MCP ativada no startup. O componente
-`RagDeliveryWorker` está disponível para inicialização explícita, conforme
-[rag-worker.md](rag-worker.md).
+O runtime candidato integra rotas, MCP e `RagDeliveryWorker` mediante
+configuração explícita, conforme [API/MCP](rag-api-mcp.md). Sem configuração,
+as operações retornam indisponibilidade e nenhum worker RAG é iniciado.
 
 `RagOutbox` recebe uma `DeliveryPolicy` explícita, sem valores de produção
 predefinidos: quantidade máxima de registros, bytes dos pacotes, prazo do
@@ -52,7 +52,7 @@ confirma armazenamento externo. Após cancelamento ou recibo indexed, a
 cópia da fila já removida não pode ser recuperada por essa operação.
 `receipt` exige proprietário e `jobs:read`, devolve o último recibo validado
 e permanece disponível após reinício e liberação da cópia temporária.
-Estas operações de serviço ainda precisam de transporte API/MCP.
+Estas operações estão expostas pelos transportes descritos em [API/MCP](rag-api-mcp.md).
 
 ## Limites e pendências antes de produção
 
@@ -65,7 +65,7 @@ Essa escolha limita crescimento e pode bloquear novas entregas.
 O estado resolution evita perda silenciosa, mas não é resolução automática
 do acervo vencido. Antes de ativar, definir política operacional aprovada
 de exportação/cancelamento, monitoramento e alertas, quota total de disco,
-valores de prazo, integração do worker ao runtime e API/MCP. A troca de
+valores de prazo e qualificação operacional da integração runtime/API/MCP. A troca de
 credenciais em memória já é suportada pelo worker. Não declarar
 retenção temporal plenamente resolvida enquanto essas peças faltarem.
 
