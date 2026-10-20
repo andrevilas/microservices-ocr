@@ -211,6 +211,7 @@ def test_network_abandonment_closes_real_context(env, abandon):
 
     async def scenario():
         sending, fail, disconnected = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        receive_closed = asyncio.Event()
         messages = []
 
         async def send(message):
@@ -221,8 +222,11 @@ def test_network_abandonment_closes_real_context(env, abandon):
                 raise OSError(PRIVATE)
 
         async def receive():
-            await disconnected.wait()
-            return {"type": "http.disconnect"}
+            try:
+                await disconnected.wait()
+                return {"type": "http.disconnect"}
+            finally:
+                receive_closed.set()
 
         response = DocumentDownloadResponse(
             lambda: streams.open_canonical(e.owner, e.job.job_id))
@@ -242,6 +246,7 @@ def test_network_abandonment_closes_real_context(env, abandon):
             else:
                 disconnected.set()
                 await asyncio.wait_for(task, 2)
+                assert receive_closed.is_set()
             await idle(e, streams)
             assert_private_absent(messages)
             assert all(m.get("more_body") is True for m in messages
@@ -439,24 +444,92 @@ def test_exhausted_deadline_sends_no_headers():
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("version", ["2.3", "2.4"])
+@pytest.mark.parametrize("stage", ["headers", "body"])
 @pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit, asyncio.CancelledError, TimeoutError])
-def test_send_control_exceptions_and_unrelated_timeout_keep_identity(error_type):
+def test_send_control_exceptions_and_unrelated_timeout_keep_identity(error_type, stage, version):
     async def scenario():
         original = error_type(PRIVATE)
         closed, messages = [], []
+        caller = asyncio.current_task()
+        initial_cancelling = caller.cancelling()
+        receive_entered, receive_closed = asyncio.Event(), asyncio.Event()
+
+        async def receive():
+            receive_entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                receive_closed.set()
 
         async def send(message):
             messages.append(dict(message))
-            if message["type"] == "http.response.start":
+            if version == "2.3":
+                await receive_entered.wait()
+            if message["type"] == (
+                    "http.response.start" if stage == "headers" else "http.response.body"):
                 raise original
 
         response = DocumentDownloadResponse(lambda: isolated_download(1, closed))
-        # Catch control exceptions in the caller itself, not a detached task.
-        with pytest.raises(error_type) as caught:
-            await response(scope(), quiet_receive, send)
+        # Keep sends and control exceptions in this caller. The independent
+        # bound fails promptly if a child swallows cancellation and hangs.
+        async with asyncio.timeout(0.2) as bound:
+            with pytest.raises(error_type) as caught:
+                await response(scope(version), receive, send)
+        assert not bound.expired()
         assert caught.value is original
+        assert caller.cancelling() == initial_cancelling
         assert closed == [True]
-        assert body_bytes(messages) == b""
+        assert body_bytes(messages) == (b"" if stage == "headers" else b"x")
+        assert all(m.get("more_body") is True for m in messages
+                   if m["type"] == "http.response.body")
+        assert receive_closed.is_set() == (version == "2.3")
         assert_private_absent(messages)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("order", ["external_first", "disconnect_first"])
+def test_legacy_disconnect_does_not_swallow_simultaneous_caller_cancellation(order):
+    async def scenario():
+        caller = asyncio.current_task()
+        initial_cancelling = caller.cancelling()
+        sending, receive_closed = asyncio.Event(), asyncio.Event()
+        closed, messages = [], []
+
+        async def receive():
+            try:
+                await sending.wait()
+                if order == "external_first":
+                    caller.cancel("external")
+                else:
+                    # Queue external cancellation before the caller resumes
+                    # from the listener's own cancellation request.
+                    asyncio.get_running_loop().call_soon(caller.cancel, "external")
+                return {"type": "http.disconnect"}
+            finally:
+                receive_closed.set()
+
+        async def send(message):
+            messages.append(dict(message))
+            if message.get("body"):
+                sending.set()
+                await asyncio.Event().wait()
+
+        response = DocumentDownloadResponse(lambda: isolated_download(1, closed))
+        try:
+            async with asyncio.timeout(0.2) as bound:
+                with pytest.raises(asyncio.CancelledError):
+                    await response(scope("2.3"), receive, send)
+            assert not bound.expired()
+            assert caller.cancelling() == initial_cancelling + 1
+            assert receive_closed.is_set()
+            assert closed == [True]
+            assert body_bytes(messages) == b"x"
+            assert all(m.get("more_body") is True for m in messages
+                       if m["type"] == "http.response.body")
+        finally:
+            # Remove the external request deliberately issued by this test.
+            caller.uncancel()
 
     asyncio.run(scenario())

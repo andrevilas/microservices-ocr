@@ -17,21 +17,42 @@ class DocumentDownloadResponse(Response):
         super().__init__(content=None)
         self._context_factory = context_factory
 
-    async def __call__(self, scope, receive, send):
-        started = False
-        send_timeout = None
+    async def _stream_with_disconnect(self, response, receive, send):
+        caller = asyncio.current_task()
+        initial_cancelling = caller.cancelling()
+        disconnect_token = object()
+        disconnect_cancelled = False
+        streaming = True
 
-        async def tracked_send(message):
-            nonlocal started, send_timeout
-            if message["type"] == "http.response.start":
-                # Sending headers may itself block or fail.
-                started = True
-            try:
-                await send(message)
-            except TimeoutError as error:
-                send_timeout = error
+        async def listen():
+            nonlocal disconnect_cancelled
+            while True:
+                message = await receive()
+                if message["type"] == "http.disconnect":
+                    # An existing caller cancellation must retain precedence.
+                    if streaming and caller.cancelling() == initial_cancelling:
+                        disconnect_cancelled = caller.cancel(disconnect_token)
+                    return
+
+        listener = asyncio.create_task(listen())
+        try:
+            # Control exceptions from sends must stay in the calling task.
+            await response.stream_response(send)
+        except asyncio.CancelledError as error:
+            if not (disconnect_cancelled
+                    and error.args == (disconnect_token,)
+                    and caller.cancelling() == initial_cancelling + 1):
                 raise
+        finally:
+            streaming = False
+            if disconnect_cancelled:
+                # Remove only our request, including when an external request
+                # raced it. Never consume the external cancellation count.
+                caller.uncancel()
+            listener.cancel()
+            await asyncio.gather(listener, return_exceptions=True)
 
+    async def __call__(self, scope, receive, send):
         async with self._context_factory() as download:
             deadline = asyncio.timeout(download.remaining_seconds)
             try:
@@ -50,21 +71,25 @@ class DocumentDownloadResponse(Response):
                         },
                     )
                     try:
-                        await response(scope, receive, tracked_send)
-                    except ClientDisconnect as error:
-                        if send_timeout is not None and (
-                            error.__cause__ is send_timeout
-                            or error.__context__ is send_timeout
-                        ):
-                            raise send_timeout from None
-                        raise
+                        version = tuple(map(int, scope.get("asgi", {}).get(
+                            "spec_version", "2.0").split(".")))
+                        if version >= (2, 4):
+                            try:
+                                await response.stream_response(send)
+                            except TimeoutError:
+                                # TimeoutError is also an OSError, but a send's
+                                # own timeout is not a client disconnect.
+                                raise
+                            except OSError as error:
+                                raise ClientDisconnect() from error
+                        else:
+                            await self._stream_with_disconnect(response, receive, send)
+                    finally:
+                        await response.body_iterator.aclose()
             except TimeoutError:
                 if not deadline.expired():
                     raise
-                error = ApplicationError(
-                    408, "operation_timeout", "Document operation timed out.")
-                if started:
-                    # Abort the existing response; never send replacement JSON
-                    # or a successful terminal body after a partial download.
-                    raise error from None
-                raise error from None
+                # After headers, abort without a replacement response or a
+                # successful terminal body. Before headers, expose the same 408.
+                raise ApplicationError(
+                    408, "operation_timeout", "Document operation timed out.") from None
