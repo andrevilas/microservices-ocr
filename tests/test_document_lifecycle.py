@@ -425,6 +425,110 @@ def test_backend_stop_failure_keeps_closed_document_provider_and_pin(runtime):
     asyncio.run(scenario())
 
 
+def test_runtime_lease_successful_release_is_idempotent(tmp_path):
+    lease = RuntimeLease(tmp_path)
+    contender = RuntimeLease(tmp_path)
+    try:
+        lease.acquire()
+        handle = lease._file
+        assert handle is not None and not handle.closed
+        lease.release()
+        assert handle.closed
+        assert lease._file is None
+        lease.release()
+        assert lease._file is None
+        contender.acquire()
+        assert contender._file is not None and not contender._file.closed
+    finally:
+        contender.release()
+        lease.release()
+
+
+class LeaseUnlockInterruption(BaseException):
+    pass
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Requires actual POSIX flock ownership")
+@pytest.mark.parametrize("kind", [OSError, LeaseUnlockInterruption, KeyboardInterrupt])
+def test_unlock_failure_retains_actual_runtime_ownership(runtime, monkeypatch, tmp_path, kind):
+    import fcntl
+
+    r = runtime
+    app = r.make()
+    provider = app.state.document_provider
+    original_root = r.jobs.root_dir
+    marker = kind("Synthetic runtime lease unlock interruption")
+    real_flock = fcntl.flock
+
+    async def scenario():
+        lease = None
+        handle = None
+        attempts = []
+        with monkeypatch.context() as unlock_patch:
+            def interrupted_unlock(fd, operation):
+                if (handle is not None and not handle.closed
+                        and fd == handle.fileno() and operation == fcntl.LOCK_UN):
+                    attempts.append(fd)
+                    raise marker
+                return real_flock(fd, operation)
+
+            unlock_patch.setattr(fcntl, "flock", interrupted_unlock)
+            try:
+                # Catch control exceptions here so they cannot escape asyncio.run.
+                with pytest.raises(kind) as caught:
+                    async with app.router.lifespan_context(app):
+                        lease = app.state.runtime_lease
+                        handle = lease._file
+                        assert handle is not None and not handle.closed
+                assert caught.value is marker
+                assert attempts == [handle.fileno()]
+                assert app.state.runtime_lease is lease
+                assert lease._file is handle and not handle.closed
+                assert app.state.document_provider is provider
+                rejected(provider._execution)
+                assert r.events[-3:] == ["retention.stop", "stop:exports", "stop:queue"]
+
+                r.current = r.foreign()
+                unavailable(r.mcp.application)
+                unavailable(app.state.metadata_provider)
+                unavailable(r.mcp.catalog)
+                unavailable(provider)
+
+                changed_root = (tmp_path / "unlock-failure-changed-root").resolve()
+                monkeypatch.setattr(settings, "ocr_tmp_dir", changed_root)
+                await rejected_lifespan(app)
+                assert not changed_root.exists()
+                assert app.state.runtime_lease is lease
+                assert lease._file is handle and not handle.closed
+                assert app.state.document_provider is provider
+
+                # LOCK_EX is never intercepted: the OS must still reject another
+                # independently opened lease on the original directory.
+                contender = RuntimeLease(original_root)
+                try:
+                    with pytest.raises(RuntimeError, match="already has an active server"):
+                        contender.acquire()
+                finally:
+                    contender.release()
+                assert attempts == [handle.fileno()]
+            finally:
+                # Restore real unlocking before explicitly releasing retained
+                # ownership. Backends were already stopped before lease.release.
+                unlock_patch.undo()
+                try:
+                    if lease is not None:
+                        lease.release()
+                finally:
+                    # Also avoid a leaked descriptor when exercising the buggy
+                    # implementation, which detached this still-open handle.
+                    if handle is not None and not handle.closed:
+                        handle.close()
+        assert lease._file is None
+        assert handle.closed
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.skipif(os.name != "posix", reason="Real MetadataFiles requires POSIX")
 def test_download_remaining_seconds_uses_existing_deadline_through_send_and_eof(env, monkeypatch):
     e = env
