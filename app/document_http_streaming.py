@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 
+from starlette.requests import ClientDisconnect
 from starlette.responses import Response, StreamingResponse
 
 from app.application import ApplicationError
@@ -18,13 +19,18 @@ class DocumentDownloadResponse(Response):
 
     async def __call__(self, scope, receive, send):
         started = False
+        send_timeout = None
 
         async def tracked_send(message):
-            nonlocal started
+            nonlocal started, send_timeout
             if message["type"] == "http.response.start":
                 # Sending headers may itself block or fail.
                 started = True
-            await send(message)
+            try:
+                await send(message)
+            except TimeoutError as error:
+                send_timeout = error
+                raise
 
         async with self._context_factory() as download:
             deadline = asyncio.timeout(download.remaining_seconds)
@@ -43,7 +49,15 @@ class DocumentDownloadResponse(Response):
                             "Cache-Control": "no-store",
                         },
                     )
-                    await response(scope, receive, tracked_send)
+                    try:
+                        await response(scope, receive, tracked_send)
+                    except ClientDisconnect as error:
+                        if send_timeout is not None and (
+                            error.__cause__ is send_timeout
+                            or error.__context__ is send_timeout
+                        ):
+                            raise send_timeout from None
+                        raise
             except TimeoutError:
                 if not deadline.expired():
                     raise
