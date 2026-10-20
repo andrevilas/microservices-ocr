@@ -99,12 +99,10 @@ As leituras de revisão exigem `sha256` (64 hex) além do `revision_id`.
 
 ## Exemplo mínimo de salvamento
 
-O formato exato de `SaveMetadataInput` não consta dos arquivos-fonte desta atualização e não é reproduzido aqui para não
-inventar um contrato. Use o exemplo de requisição do próprio OpenAPI
-(`ocr_save_document_metadata`) e **substitua pelos valores retornados** pela API
-os IDs, hashes e referências canônicas; nada de IDs ou hashes fabricados sugerindo
-prova real. Os identificadores de 32 hex e digests de 64 hex em qualquer exemplo
-são sintéticos.
+Consulte o exemplo de requisição do OpenAPI para `ocr_save_document_metadata` e
+**substitua os IDs, hashes e referências canônicas pelos valores reais retornados**
+pela API. Os identificadores de 32 hex e digests de 64 hex em qualquer exemplo
+são sintéticos e não constituem prova.
 
 ## Qualificação
 
