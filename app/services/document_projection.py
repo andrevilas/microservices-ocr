@@ -17,7 +17,7 @@ from typing import Annotated, Literal
 from pydantic import Field, StrictInt, TypeAdapter, model_validator
 
 from app.application import ApplicationError
-from app.document_models import MAX_PAYLOAD_BYTES
+from app.document_models import MAX_PAYLOAD_BYTES, FieldName
 from app.document_transport_models import (
     MAX_PROJECTION_BYTES,
     MetadataFieldDescriptor,
@@ -53,6 +53,8 @@ _ERRORS = {
     "invalid_metadata_query": (422, "Invalid metadata query."),
     "invalid_metadata_cursor": (422, "Invalid metadata cursor."),
     "metadata_segment_not_found": (404, "Metadata segment was not found."),
+    "metadata_field_not_found": (404, "Metadata field was not found."),
+    "metadata_schema_not_found": (404, "Metadata schema was not found."),
     "metadata_response_too_large": (413, "Metadata response exceeds its byte limit."),
 }
 
@@ -65,19 +67,25 @@ def _error(code):
 class _Scope(_ClosedModel):
     owner: ActorSubject
     job_id: PersistentID
-    view: Literal["revisions", "fields"]
+    view: Literal["revisions", "fields", "values", "evidence"]
     revision_id: PersistentID | None = None
     sha256: SHA256 | None = None
     segment_id: PersistentID | None = None
+    field_name: FieldName | None = None
 
     @model_validator(mode="after")
     def _shape(self):
         extras = (self.revision_id, self.sha256, self.segment_id)
         if self.view == "revisions":
-            if any(value is not None for value in extras):
-                raise ValueError("Revision scope cannot contain snapshot coordinates.")
+            if any(value is not None for value in extras) or self.field_name is not None:
+                raise ValueError("Revision scope cannot contain content coordinates.")
         elif any(value is None for value in extras):
-            raise ValueError("Field scope requires all snapshot coordinates.")
+            raise ValueError("Snapshot scope requires all snapshot coordinates.")
+        elif self.view == "fields":
+            if self.field_name is not None:
+                raise ValueError("Field descriptor scope cannot select a field name.")
+        elif self.field_name is None:
+            raise ValueError("Content scope requires a field name.")
         return self
 
 
@@ -98,10 +106,10 @@ class _RevisionSource(MetadataRevisionSummary):
     job_id: PersistentID
 
 
-def _scope_hash(*, owner, job_id, view, revision_id, sha256, segment_id):
+def _scope_hash(*, owner, job_id, view, revision_id, sha256, segment_id, field_name=None):
     scope = _Scope.model_validate(
         dict(owner=owner, job_id=job_id, view=view, revision_id=revision_id,
-             sha256=sha256, segment_id=segment_id), strict=True
+             sha256=sha256, segment_id=segment_id, field_name=field_name), strict=True
     )
     document = {
         "owner_sha256": hashlib.sha256(scope.owner.encode("utf-8", errors="strict")).hexdigest(),
@@ -112,14 +120,17 @@ def _scope_hash(*, owner, job_id, view, revision_id, sha256, segment_id):
         "sha256": scope.sha256,
         "segment_id": scope.segment_id,
     }
+    if scope.view in ("values", "evidence"):
+        document["field_name"] = scope.field_name
     return hashlib.sha256(_bounded_canonical(document, MAX_CURSOR_BYTES)).hexdigest()
 
 
 def _position(value, view):
     if view == "revisions":
         return _ID_ADAPTER.validate_python(value, strict=True)
-    if type(value) is not int or not 0 <= value <= 99:
-        raise ValueError("Invalid field position.")
+    maximum = 127 if view == "evidence" else 99
+    if type(value) is not int or not 0 <= value <= maximum:
+        raise ValueError("Invalid content position.")
     return value
 
 
@@ -132,11 +143,13 @@ def _token(document):
     return encoded
 
 
-def encode_cursor(position, *, owner, job_id, view, revision_id=None, sha256=None, segment_id=None):
+def encode_cursor(position, *, owner, job_id, view, revision_id=None, sha256=None, segment_id=None,
+                  field_name=None):
     """Encode an unsigned position, binding the explicitly authorized scope."""
     try:
         scope = _scope_hash(owner=owner, job_id=job_id, view=view,
-                            revision_id=revision_id, sha256=sha256, segment_id=segment_id)
+                            revision_id=revision_id, sha256=sha256, segment_id=segment_id,
+                            field_name=field_name)
         return _token({"v": 1, "scope": scope, "position": _position(position, view)})
     except Exception:
         pass
@@ -156,7 +169,8 @@ def _invalid_constant(value):
     raise ValueError("Invalid JSON constant.")
 
 
-def decode_cursor(token, *, owner, job_id, view, revision_id=None, sha256=None, segment_id=None):
+def decode_cursor(token, *, owner, job_id, view, revision_id=None, sha256=None, segment_id=None,
+                  field_name=None):
     """Validate scope even for None; adapters can call this before loading a snapshot.
 
     Returned positions must only address the resource already authorized by the
@@ -164,7 +178,8 @@ def decode_cursor(token, *, owner, job_id, view, revision_id=None, sha256=None, 
     """
     try:
         expected = _scope_hash(owner=owner, job_id=job_id, view=view,
-                               revision_id=revision_id, sha256=sha256, segment_id=segment_id)
+                               revision_id=revision_id, sha256=sha256, segment_id=segment_id,
+                               field_name=field_name)
         if token is None:
             return None
         # Check characters and decoded size before allocating decoded input.
