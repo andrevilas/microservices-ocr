@@ -16,7 +16,9 @@ import httpx2
 from mcp.server.mcpserver.exceptions import ToolError
 
 from app.catalog_mcp_tools import CATALOG_OPERATIONS
-from app.mcp_tools import INSTRUCTIONS, OcrMCPServer, register_tools
+from app.document_mcp_http import document_body, document_request
+from app.document_mcp_tools import DOCUMENT_OPERATIONS
+from app.mcp_tools import INSTRUCTIONS, MCP_VERSION, OcrMCPServer, register_tools
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_CATALOG_REQUEST_BYTES = 2 * 1024 * 1024  # internal, never a tool argument
@@ -167,6 +169,11 @@ class ApiClient:
         elif operation == "list_batches":
             path = "/batches"
             query = {key: value for key, value in zip(("limit", "cursor"), args) if value is not None}
+        elif operation in DOCUMENT_OPERATIONS:
+            method, path, query, body, headers = document_request(operation, args)
+            content = document_body(body)
+            if content is not None:
+                body, headers = None, {**(headers or {}), "Content-Type": "application/json"}
         elif operation in CATALOG_OPERATIONS or operation in ("deprecate_document_type_version", "list_context_templates", "clone_context_template"):
             method, path, query, body, headers = catalog_request(operation, args)
             content = catalog_body(body)
@@ -211,7 +218,7 @@ async def run():
     async with httpx2.AsyncClient(headers={"Authorization": "Bearer " + token},
                                  follow_redirects=False, trust_env=False,
                                  timeout=120, limits=httpx2.Limits(max_connections=8)) as http:
-        server = OcrMCPServer("OCR Recognizer", version="0.5.0", instructions=INSTRUCTIONS, log_level="WARNING")
+        server = OcrMCPServer("OCR Recognizer", version=MCP_VERSION, instructions=INSTRUCTIONS, log_level="WARNING")
         register_tools(server, ApiClient(origin, http).invoke)
         await server.run_stdio_async()
 

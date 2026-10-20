@@ -19,6 +19,8 @@ from app.retention_models import DeletionReceipt
 from app.upload_models import UploadReceipt, JobAdmission
 from app.bulk_models import BatchInput, BatchInputItem, BatchPage, BatchReceipt, BatchView, ExportInput, ExportReceipt, ResourceId
 
+MCP_VERSION = '0.5.0'
+
 INSTRUCTIONS = (
     "Process caller-owned PDF uploads asynchronously. Prepare an upload, transfer bytes by "
     "authenticated HTTP PUT, then submit its upload_id with a stable idempotency_key. "
