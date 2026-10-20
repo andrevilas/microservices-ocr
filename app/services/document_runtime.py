@@ -13,6 +13,7 @@ from app.services.context_template_service import ContextTemplateService
 from app.services.document_execution import DocumentExecution
 from app.services.document_queries import DocumentQueries
 from app.services.document_service import DocumentMetadataService
+from app.services.document_streaming import DocumentStreams
 from app.services.metadata_runtime import MetadataServices
 from app.services.metadata_store import _error, _guard, _require
 from app.services.storage_service import JobStore
@@ -25,6 +26,7 @@ class DocumentServices:
     canonical: CanonicalTextService
     execution: DocumentExecution
     queries: DocumentQueries
+    streams: DocumentStreams
 
     @property
     def jobs(self) -> JobStore:
@@ -71,7 +73,8 @@ class DocumentProvider:
                     document = DocumentMetadataService(metadata, catalog.types)
                     services = DocumentServices(
                         document, document.canonical, self._execution,
-                        DocumentQueries(document))
+                        DocumentQueries(document),
+                        DocumentStreams(document, document.canonical, self._execution))
                 else:
                     old_metadata, old_catalog, services = cached
                     _require(old_metadata is metadata and old_catalog is catalog)
@@ -83,7 +86,11 @@ class DocumentProvider:
                          and services.execution is self._execution
                          and type(services.queries) is DocumentQueries
                          and services.queries.document is services.document
-                         and services.queries.document.bundle.jobs is jobs)
+                         and services.queries.document.bundle.jobs is jobs
+                         and type(services.streams) is DocumentStreams
+                         and services.streams.document is services.document
+                         and services.streams.canonical_service is services.canonical
+                         and services.streams.execution is self._execution)
                 self._shared(metadata, catalog)
                 metadata.ensure_healthy()
                 # Publish only after construction and every identity/health check.
