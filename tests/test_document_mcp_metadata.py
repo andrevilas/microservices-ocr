@@ -1,5 +1,6 @@
 """Pure metadata registry contracts with synthetic DTOs; no authorization E2E."""
 import asyncio
+import json
 
 import pytest
 from mcp import Client
@@ -72,13 +73,16 @@ def test_metadata_schemas_annotations_and_descriptions():
         assert "required SHA-256" in description and "does not follow later HEAD" in description
 
 
+@pytest.mark.parametrize("return_kind", ["json", "dto"])
 @pytest.mark.parametrize("operation,model,required,defaults", SPECS)
-def test_exact_forwarding_and_typed_structured_output(operation, model, required, defaults):
+def test_exact_forwarding_and_typed_structured_output(operation, model, required, defaults, return_kind):
     async def scenario():
         seen = []
         async def invoke(ctx, method, *args):
             seen.append((method, *args))
-            return response_example(model)
+            fixture = response_example(model)
+            return (model.model_validate_json(json.dumps(fixture, ensure_ascii=False, allow_nan=False))
+                    if return_kind == "dto" else fixture)
         calls = [(required, defaults)]
         if defaults:
             high = 100 if operation.endswith("revisions") else 50
@@ -91,7 +95,13 @@ def test_exact_forwarding_and_typed_structured_output(operation, model, required
                 assert not result.is_error
                 fixture = response_example(model)
                 assert result.structured_content == fixture
-                assert isinstance(model.model_validate(result.structured_content), model)
+                parsed = model.model_validate_json(json.dumps(
+                    result.structured_content, ensure_ascii=False, allow_nan=False))
+                assert parsed.model_dump(mode="json", by_alias=True) == fixture
+                stamp = (parsed.created_at if isinstance(parsed, MetadataView) else
+                         parsed.revisions[0].created_at if isinstance(parsed, MetadataRevisionPage) else
+                         parsed.fields[0].provenance.recorded_at)
+                assert stamp.utcoffset().total_seconds() == 0
                 assert all(block.type == "text" for block in result.content)
                 if "next_cursor" in fixture:
                     assert result.structured_content["next_cursor"] is None
@@ -129,3 +139,34 @@ def test_invalid_arguments_never_reach_invoke(operation, arguments):
             assert (await client.call_tool("ocr_" + operation, arguments)).is_error
     asyncio.run(scenario())
     assert seen == []
+
+
+@pytest.mark.parametrize("kind", ["shape", "utc", "naive", "type", "constructed", "mutated"])
+@pytest.mark.parametrize("operation,model,required,defaults", SPECS)
+def test_invalid_api_outputs_are_sanitized(operation, model, required, defaults, kind):
+    marker = "PRIVATE_RESPONSE_MARKER"
+    value = response_example(model)
+    if kind == "shape":
+        value = [marker]
+    elif kind in ("utc", "naive"):
+        target = (value if model is MetadataView else value["revisions"][0]
+                  if model is MetadataRevisionPage else value["fields"][0]["provenance"])
+        key = "recorded_at" if model is MetadataFieldPage else "created_at"
+        target[key] = marker if kind == "utc" else "2026-10-19T12:00:00"
+    elif kind == "mutated":
+        value = model.model_validate_json(json.dumps(value))
+        object.__setattr__(value, "job_id", [marker])
+    else:
+        value["job_id"] = [marker]
+        if kind == "constructed":
+            value = model.model_construct(**value)
+    async def scenario():
+        async def invoke(*args):
+            return value
+        async with Client(server(invoke)) as client:
+            result = await client.call_tool("ocr_" + operation, required)
+            assert result.is_error
+            text = "\n".join(block.text for block in result.content if block.type == "text")
+            assert "invalid_api_response: API returned an invalid document metadata response." in text
+            assert marker not in text
+    asyncio.run(scenario())
