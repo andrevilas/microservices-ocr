@@ -4,6 +4,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, Query, Request
 
 from app.application import Principal
+from app.document_canonical_models import (
+    CanonicalManifest, CanonicalPageChunk, CanonicalPageText,
+)
 from app.document_http_examples import response_example
 from app.document_transport_models import MetadataRevisionPage, MetadataView
 from app.http_contract import error_responses, example, operation
@@ -37,6 +40,26 @@ def metadata_services(
 
 Reader = Annotated[Principal, Depends(metadata_principal)]
 Services = Annotated[DocumentServices, Depends(metadata_services)]
+
+
+def canonical_principal(
+    principal: Annotated[Principal, Depends(require_principal)],
+) -> Principal:
+    for scope in ("jobs:read", "artifacts:read"):
+        principal.require(scope)
+    return principal
+
+
+def canonical_services(
+    request: Request,
+    principal: Annotated[Principal, Depends(canonical_principal)],
+) -> DocumentServices:
+    # Resolve the shared provider only after both canonical scopes pass.
+    return get_document_services(request)
+
+
+CanonicalReader = Annotated[Principal, Depends(canonical_principal)]
+CanonicalServices = Annotated[DocumentServices, Depends(canonical_services)]
 
 
 @router.get(
@@ -87,4 +110,57 @@ async def get_metadata_revision(
         lambda control: services.queries.get_revision(
             principal, job_id, revision_id, sha256=sha256,
             checkpoint=control.checkpoint),
+    )
+
+
+@router.get(
+    "/canonical/manifest", response_model=CanonicalManifest,
+    operation_id="ocr_get_document_canonical_manifest",
+    responses=example(response_example(CanonicalManifest)),
+    openapi_extra=operation("jobs:read", "artifacts:read"),
+)
+async def get_canonical_manifest(
+    job_id: ID, principal: CanonicalReader, services: CanonicalServices,
+):
+    return await services.execution.run(
+        principal,
+        lambda control: services.queries.get_canonical_manifest(
+            principal, job_id, checkpoint=control.checkpoint),
+    )
+
+
+@router.get(
+    "/canonical/pages", response_model=CanonicalPageChunk,
+    operation_id="ocr_get_document_canonical_chunk",
+    responses=example(response_example(CanonicalPageChunk)),
+    openapi_extra=operation("jobs:read", "artifacts:read"),
+)
+async def get_canonical_chunk(
+    job_id: ID, principal: CanonicalReader, services: CanonicalServices,
+    page: Annotated[int, Query(ge=1, le=300)] = 1,
+    offset: Annotated[int, Query(ge=0, le=500000)] = 0,
+    max_chars: Annotated[int, Query(ge=1, le=20000)] = 8000,
+):
+    return await services.execution.run(
+        principal,
+        lambda control: services.queries.get_canonical_chunk(
+            principal, job_id, page=page, offset=offset, max_chars=max_chars,
+            checkpoint=control.checkpoint),
+    )
+
+
+@router.get(
+    "/canonical/pages/{page}", response_model=CanonicalPageText,
+    operation_id="ocr_get_document_canonical_page",
+    responses=example(response_example(CanonicalPageText)),
+    openapi_extra=operation("jobs:read", "artifacts:read"),
+)
+async def get_canonical_page(
+    job_id: ID, page: Annotated[int, Path(ge=1, le=300)],
+    principal: CanonicalReader, services: CanonicalServices,
+):
+    return await services.execution.run(
+        principal,
+        lambda control: services.queries.get_canonical_page(
+            principal, job_id, page, checkpoint=control.checkpoint),
     )
