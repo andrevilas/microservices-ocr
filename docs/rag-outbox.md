@@ -2,7 +2,9 @@
 
 O schema aditivo `rag_outbox` e a auditoria mínima são criados no banco
 do JobStore, sem modificar jobs legados ou presumir entregas anteriores.
-Não há worker automático, rota ou ferramenta MCP ativada neste incremento.
+Não há worker, rota ou ferramenta MCP ativada no startup. O componente
+`RagDeliveryWorker` está disponível para inicialização explícita, conforme
+[rag-worker.md](rag-worker.md).
 
 `RagOutbox` recebe uma `DeliveryPolicy` explícita, sem valores de produção
 predefinidos: quantidade máxima de registros, bytes dos pacotes, prazo do
@@ -26,8 +28,9 @@ concluem uma tentativa substituída ou vencida.
 
 Timeout mantém a incerteza e o hold. Recibo pending/failed não libera arquivos.
 Recibo inválido, rejeição definitiva ou limite de tentativas exige resolução.
-A consulta/execução/admissão reconcilia prazos vencidos; não há monitor
-automático de alertas neste incremento.
+A consulta/execução/admissão e o ciclo do worker reconciliam prazos vencidos.
+O snapshot do worker fornece alertas agregados locais; não há envio
+automático de notificações nem interface pública de monitoramento.
 
 Após recibo indexed correspondente, persistem-se recibo, estado e prazo
 pós-recebimento na mesma transação. O prazo nunca encurta a retenção já
@@ -53,7 +56,8 @@ Essa escolha limita crescimento e pode bloquear novas entregas.
 O estado resolution evita perda silenciosa, mas não é resolução automática
 do acervo vencido. Antes de ativar, definir política operacional aprovada
 de exportação/cancelamento, monitoramento e alertas, quota total de disco,
-valores de prazo, rotação de credenciais, worker e API/MCP. Não declarar
+valores de prazo, integração do worker ao runtime e API/MCP. A troca de
+credenciais em memória já é suportada pelo worker. Não declarar
 retenção temporal plenamente resolvida enquanto essas peças faltarem.
 
 Também pendentes: revisão independente do código, revalidação do receptor,
