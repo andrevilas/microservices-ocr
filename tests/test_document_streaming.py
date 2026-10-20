@@ -483,10 +483,10 @@ def test_terminal_handoff_waits_for_actual_outcome(env, monkeypatch, stage, kind
     if stage == "before_header":
         gate.set()
 
-        def fail_preparation():
+        def fail_preparation(_bundle):
             raise failure
 
-        monkeypatch.setattr(e.bundle, "ensure_healthy", fail_preparation)
+        monkeypatch.setattr(type(e.bundle), "ensure_healthy", fail_preparation)
     elif stage == "after_prefix":
         read = PreparedCanonicalText._read_checked
 
@@ -575,12 +575,12 @@ def test_terminal_marker_is_rechecked_when_receive_checkpoint_raises(
     started, finish_source, waiting, observed = Event(), Event(), Event(), Event()
     failure = ApplicationError(422, "invalid_metadata_input", "PRIVATE source failure")
 
-    def fail_preparation():
+    def fail_preparation(_bundle):
         started.set()
         assert finish_source.wait(5), "test failed to release source preparation"
         raise failure
 
-    monkeypatch.setattr(e.bundle, "ensure_healthy", fail_preparation)
+    monkeypatch.setattr(type(e.bundle), "ensure_healthy", fail_preparation)
     receive = _Transfer.receive
 
     async def racing_receive(transfer):
@@ -644,10 +644,10 @@ def test_terminal_handoff_remains_deadline_bounded_and_cancellable(
     streams = streams_for(e, DocumentExecution(timeout_seconds=1))
     entered, release, transfers = terminal_barrier(streams, monkeypatch)
 
-    def fail_preparation():
+    def fail_preparation(_bundle):
         raise ApplicationError(403, "insufficient_scope", "PRIVATE source failure")
 
-    monkeypatch.setattr(e.bundle, "ensure_healthy", fail_preparation)
+    monkeypatch.setattr(type(e.bundle), "ensure_healthy", fail_preparation)
     receive = _Transfer.receive
 
     async def gated_receive(transfer):
