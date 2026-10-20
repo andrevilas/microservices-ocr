@@ -20,6 +20,8 @@
     unexpected: "Não foi possível concluir a operação.",
   };
   let token = null, epoch = 0, manifest = null, chunk = null, head = null, shown = null, revisions = [], cursor = null;
+  // `lock` is the id of the one high-level document operation (initialization or a user read) in progress; 0 = idle.
+  let lock = 0, lockSeq = 0, canMeta = false;
   const inflight = new Map();
 
   const obj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -39,11 +41,21 @@
     $("rv-retry").hidden = !retry;
     $("rv-login").hidden = !login;
   }
+  // The single place that decides which controls are enabled, from token/manifest/scopes/chunk/cursor and `lock`.
+  function sync() {
+    const ready = !lock && !!token && !!manifest;
+    $("rv-page").disabled = !ready;
+    $("rv-next").disabled = !(ready && chunk && chunk.next_page !== null);
+    $("rv-head").disabled = !(ready && canMeta);
+    $("rv-more").hidden = cursor === null;
+    $("rv-more").disabled = !(ready && canMeta && cursor !== null);
+    $("rv-retry").disabled = !!lock;
+    for (const button of $("rv-revs").querySelectorAll("button")) button.disabled = !(ready && canMeta);
+  }
   function wipe() {
-    manifest = chunk = head = shown = cursor = null; revisions = [];
+    manifest = chunk = head = shown = cursor = null; revisions = []; canMeta = false;
     for (const name of ["rv-manifest", "rv-chunk-meta", "rv-text", "rv-meta-note", "rv-meta", "rv-segments", "rv-revs", "rv-page"]) $(name).replaceChildren();
-    for (const name of ["rv-page", "rv-next", "rv-head"]) $(name).disabled = true;
-    $("rv-more").hidden = true;
+    sync();
   }
   function halt() {
     epoch++;
@@ -65,7 +77,22 @@
     if (closed) halt();
     say(error.kind ? error.message : MESSAGES.unexpected, "error", {retry: !closed});
   }
-  const run = async (operation) => { try { await operation(); } catch (error) { report(error); } };
+  const current = (mine) => { if (mine !== epoch) throw fault("stale"); };
+  // Runs one high-level operation at a time; any trigger while another is running (even a programmatic event) is ignored.
+  async function run(operation) {
+    if (lock || !token || !manifest) { if (chunk) $("rv-page").value = String(chunk.page); sync(); return; }
+    const mine = lock = ++lockSeq, focused = document.activeElement, revision = focused?.dataset?.revision;
+    sync();
+    try { await operation(epoch); } catch (error) { report(error); } finally { release(mine, focused, revision); }
+  }
+  function release(mine, focused, revision) {
+    if (lock !== mine) return; // a restart superseded this operation
+    lock = 0;
+    sync();
+    if (document.activeElement && document.activeElement !== document.body) return;
+    const back = (focused?.id && $(focused.id)) || (revision && $("rv-revs").querySelector(`button[data-revision="${revision}"]`));
+    if (back && !back.disabled && !back.hidden) back.focus();
+  }
 
   // ------------------------------------------------------------ requests
   async function get(path, params = {}, key = path) {
@@ -110,7 +137,6 @@
     $("rv-manifest").textContent = `${ui.count(m.page_count, "página")} · ${m.total_characters} caracteres (pontos de código) · SHA-256 do texto canônico ${m.sha256.slice(0, 12)}…`;
     $("rv-manifest").title = `SHA-256: ${m.sha256}`;
     $("rv-page").replaceChildren(...Array.from({length: m.page_count}, (_, i) => el("option", {value: String(i + 1), text: `Página ${i + 1}`})));
-    $("rv-page").disabled = false;
   }
   function nextOk(c) {
     if (c.truncated && c.end_offset <= c.offset) return false;
@@ -120,7 +146,7 @@
   async function loadChunk(page, offset = 0) {
     if (!manifest) return;
     chunk = null; // a page change always restarts the cursor
-    $("rv-next").disabled = true;
+    sync();
     $("rv-text").replaceChildren();
     $("rv-chunk-meta").textContent = "Carregando texto…";
     const c = await get(`${base}/canonical/pages`, {page, offset, max_chars: CHUNK}, "chunk");
@@ -136,18 +162,25 @@
     $("rv-text").textContent = c.text || "(sem texto neste trecho)";
     $("rv-chunk-meta").textContent = `Página ${c.page} de ${c.page_count} · pontos de código ${c.offset}–${c.end_offset} de ${c.page_character_count} · hash da página ${c.text_sha256.slice(0, 12)}…`;
     $("rv-chunk-meta").title = `SHA-256 da página completa: ${c.text_sha256}`;
-    $("rv-next").disabled = c.next_page === null;
+    sync();
     $("rv-next").textContent = c.next_page === null ? "Fim do texto" : c.next_page === c.page ? "Próximo trecho" : "Próxima página";
   }
 
   // ------------------------------------------------------------ metadata
   const segmentOk = (s) => obj(s) && isId(s.segment_id) && isId(s.type_id) && isId(s.context_id) && int(s.page_start, 1, MAX_PAGES)
     && int(s.page_end, s.page_start, MAX_PAGES) && int(s.type_version, 1, 1e6) && int(s.field_count, 0, 100) && isHash(s.schema_sha256);
-  const viewOk = (v, want) => obj(v) && v.job_id === jobId && v.document_id === jobId && isId(v.revision_id) && isHash(v.sha256)
+  // Segments must be ordered, non-overlapping, unique and inside the real page count; the view must describe
+  // the very canonical text and PDFs the manifest announced.
+  const segmentsOk = (list, pages) => Array.isArray(list) && list.length >= 1 && list.length <= 16 && list.every(segmentOk)
+    && new Set(list.map((s) => s.segment_id)).size === list.length
+    && list.every((s, i) => s.page_end <= pages && (i === 0 || s.page_start > list[i - 1].page_end))
+    && list.reduce((sum, s) => sum + s.field_count, 0) <= 200;
+  const viewOk = (v, want) => obj(v) && !!manifest && v.job_id === jobId && v.document_id === jobId && isId(v.revision_id) && isHash(v.sha256)
     && (!want || (v.revision_id === want.revision_id && v.sha256 === want.sha256))
-    && (v.parent_revision_id === null || isId(v.parent_revision_id)) && isHash(v.canonical_sha256) && Object.hasOwn(STATES, v.state)
-    && int(v.page_count, 1, MAX_PAGES) && str(v.created_at, 64) && Array.isArray(v.segments) && v.segments.length >= 1
-    && v.segments.length <= 16 && v.segments.every(segmentOk);
+    && (v.parent_revision_id === null || isId(v.parent_revision_id)) && Object.hasOwn(STATES, v.state)
+    && v.artifact_version === 1 && v.text_version === 1
+    && v.canonical_sha256 === manifest.sha256 && v.input_pdf_sha256 === manifest.input_pdf_sha256 && v.output_pdf_sha256 === manifest.output_pdf_sha256
+    && v.page_count === manifest.page_count && str(v.created_at, 64) && segmentsOk(v.segments, manifest.page_count);
   const revisionOk = (r) => obj(r) && isId(r.revision_id) && isHash(r.sha256) && Object.hasOwn(STATES, r.state) && str(r.created_at, 64)
     && int(r.size_bytes, 1, 1 << 30) && (r.parent_revision_id === null || isId(r.parent_revision_id));
 
@@ -167,7 +200,6 @@
     renderRevisions();
   }
   async function loadHead() {
-    $("rv-head").disabled = false;
     try {
       const v = await get(`${base}/metadata`, {}, "meta");
       if (!viewOk(v)) throw fault("shape");
@@ -178,7 +210,7 @@
       if (error.status !== 404 || error.code !== "metadata_not_found") throw error;
       head = shown = null; revisions = []; cursor = null;
       for (const name of ["rv-meta", "rv-segments", "rv-revs"]) $(name).replaceChildren();
-      $("rv-more").hidden = true;
+      sync();
       $("rv-meta-note").textContent = MESSAGES.noMetadata;
       return false;
     }
@@ -197,7 +229,7 @@
         el("button", {type: "button", className: "button button-small", "aria-pressed": isShown ? "true" : "false",
           dataset: {revision: r.revision_id}, text: isShown ? "Em exibição" : "Ver esta revisão"})]);
     }));
-    $("rv-more").hidden = cursor === null;
+    sync();
   }
   async function loadRevisions(more) {
     const page = await get(`${base}/metadata/revisions`, {limit: 25, ...(more && cursor ? {after: cursor} : {})}, "revisions");
@@ -210,43 +242,49 @@
   }
 
   // ------------------------------------------------------------ lifecycle
+  // Restarting (retry, bfcache restore) supersedes whatever was running: halt() bumps the epoch and aborts it.
   async function start() {
     halt();
-    const mine = epoch;
+    const mine = epoch, owner = lock = ++lockSeq;
+    sync();
     say("Recuperando a sessão…");
     try {
-      const session = await ui.browserToken();
-      if (mine !== epoch) return;
-      token = session.access_token;
-    } catch (error) {
-      if (mine === epoch) say(error.message, "error", {retry: true, login: true});
-      return;
-    }
-    try {
+      try {
+        const session = await ui.browserToken();
+        current(mine);
+        token = session.access_token;
+      } catch (error) {
+        if (mine === epoch) say(error.message, "error", {retry: true, login: true});
+        return;
+      }
       const me = await get("/api/v1/me", {}, "me");
+      current(mine);
       if (!obj(me) || !Array.isArray(me.scopes) || me.scopes.length > 64 || !me.scopes.every((s) => str(s, 64))) throw fault("shape");
       const scopes = new Set(me.scopes);
       const canon = scopes.has("jobs:read") && scopes.has("artifacts:read");
       if (!canon) { wipe(); say(MESSAGES.scope, "error"); return; }
-      const metadata = scopes.has("metadata:read");
+      canMeta = scopes.has("metadata:read");
       say("Carregando o documento…");
-      if (!metadata) $("rv-meta-note").textContent = MESSAGES.noMetadataScope;
+      if (!canMeta) $("rv-meta-note").textContent = MESSAGES.noMetadataScope;
       await loadManifest();
+      current(mine);
       // Sequential on purpose: the backend admits one concurrent read per owner.
       await loadChunk(1, 0);
-      if (metadata && await loadHead()) await loadRevisions(false);
-      if (mine === epoch) say("Documento carregado. Visualização somente leitura.", "success");
-    } catch (error) { report(error); }
+      current(mine);
+      if (canMeta && await loadHead()) { current(mine); await loadRevisions(false); }
+      current(mine);
+      say("Documento carregado. Visualização somente leitura.", "success");
+    } catch (error) { report(error); } finally { release(owner); }
   }
 
   $("rv-page").onchange = () => run(() => loadChunk(Number($("rv-page").value), 0));
   $("rv-next").onclick = () => chunk && chunk.next_page !== null && run(() => loadChunk(chunk.next_page, chunk.next_offset));
-  $("rv-head").onclick = () => run(async () => { if (await loadHead()) await loadRevisions(false); });
-  $("rv-more").onclick = () => run(() => loadRevisions(true));
-  $("rv-retry").onclick = start;
+  $("rv-head").onclick = () => canMeta && run(async (mine) => { if (await loadHead()) { current(mine); await loadRevisions(false); } });
+  $("rv-more").onclick = () => canMeta && cursor !== null && run(() => loadRevisions(true));
+  $("rv-retry").onclick = () => { if (!lock) start(); };
   $("rv-revs").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-revision]");
-    const summary = button && revisions.find((r) => r.revision_id === button.dataset.revision);
+    const summary = canMeta && button && revisions.find((r) => r.revision_id === button.dataset.revision);
     if (summary) run(() => selectRevision(summary));
   });
   addEventListener("pagehide", halt);
