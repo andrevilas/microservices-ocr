@@ -2,14 +2,14 @@
 import asyncio
 import hashlib
 import os
-from threading import Event
+from threading import Event, get_ident
 
 import pytest
 
 from app.application import ApplicationError
 from app.services.canonical_text_service import CanonicalTextService, PreparedCanonicalText
 from app.services.document_execution import DocumentExecution
-from app.services.document_streaming import DocumentStreams
+from app.services.document_streaming import DocumentStreams, _Transfer
 from app.metadata_models import snapshot_bytes
 from test_document_metadata import BASE, env, persisted, save, who
 
@@ -440,5 +440,241 @@ def test_constructor_and_worker_reject_changed_shared_identities(env):
                 pytest.fail("changed shared identity exposed a header")
         assert caught.value.code == "metadata_unavailable"
         await idle(e, streams)
+
+    asyncio.run(scenario())
+
+
+def terminal_barrier(streams, monkeypatch):
+    """Hold the real worker after permit close but before its future completes."""
+    entered, release, transfers = Event(), Event(), []
+    forget = streams._forget
+
+    def delayed_forget(transfer):
+        transfers.append(transfer)
+        entered.set()
+        try:
+            assert release.wait(5), "test failed to release terminal handoff"
+        finally:
+            forget(transfer)
+
+    monkeypatch.setattr(streams, "_forget", delayed_forget)
+    return entered, release, transfers
+
+
+@pytest.mark.parametrize("stage,kind", [
+    ("eof", None),
+    *[(stage, kind) for stage in ("before_header", "after_prefix")
+      for kind in ("application", "unknown", "keyboard", "system")],
+])
+def test_terminal_handoff_waits_for_actual_outcome(env, monkeypatch, stage, kind):
+    e, streams = env, streams_for(env)
+    entered, release, transfers = terminal_barrier(streams, monkeypatch)
+    gate, waiting, observed = Event(), Event(), Event()
+    failure = None
+    if kind == "application":
+        failure = ApplicationError(
+            403 if stage == "before_header" else 503,
+            "insufficient_scope" if stage == "before_header" else "result_integrity_error",
+            "PRIVATE synthetic source failure")
+    elif kind is not None:
+        failure = {"unknown": ValueError, "keyboard": KeyboardInterrupt,
+                   "system": SystemExit}[kind]("PRIVATE synthetic source failure")
+
+    if stage == "before_header":
+        gate.set()
+
+        def fail_preparation():
+            raise failure
+
+        monkeypatch.setattr(e.bundle, "ensure_healthy", fail_preparation)
+    elif stage == "after_prefix":
+        read = PreparedCanonicalText._read_checked
+
+        def fail_second_page(prepared, info):
+            if info.page == 2:
+                raise failure
+            return read(prepared, info)
+
+        monkeypatch.setattr(PreparedCanonicalText, "_read_checked", fail_second_page)
+
+    receive = _Transfer.receive
+
+    async def gated_receive(transfer):
+        if gate.is_set():
+            await until(entered.is_set)
+            assert transfer is transfers[0]
+            assert not transfer.future.done()
+            waiting.set()
+        return await receive(transfer)
+
+    monkeypatch.setattr(_Transfer, "receive", gated_receive)
+
+    async def consume():
+        async with streams.open_canonical(e.owner, e.job.job_id) as download:
+            assert stage != "before_header", "source failure exposed a header"
+            iterator = download.iter_bytes()
+            assert await anext(iterator)
+            if stage == "eof":
+                assert await anext(iterator)
+            gate.set()
+            if stage == "eof":
+                with pytest.raises(StopAsyncIteration):
+                    await anext(iterator)
+            else:
+                await anext(iterator)
+
+    async def complete_handoff():
+        await until(waiting.is_set)
+        transfer = transfers[0]
+        assert streams.execution.active_count == 0
+        assert not e.jobs._artifact_leases
+        assert transfer in streams._workers
+        assert not transfer.future.done()
+        observed.set()
+        release.set()
+
+    async def scenario():
+        observer = asyncio.create_task(complete_handoff())
+        try:
+            if failure is None:
+                await consume()
+            else:
+                expected = (ApplicationError if isinstance(failure, Exception)
+                            else type(failure))
+                # Control exceptions are caught in the awaiting caller, never
+                # allowed to escape a detached asyncio Task.
+                with pytest.raises(expected) as caught:
+                    await consume()
+                if isinstance(failure, Exception):
+                    error = caught.value
+                    assert error.status == (failure.status if kind == "application" else 503)
+                    assert error.code == (failure.code if kind == "application"
+                                          else "document_operations_unavailable")
+                    assert error.message == ("Document operation failed." if kind == "application"
+                                             else "Document operations are unavailable.")
+                    assert error.__cause__ is None and error.__context__ is None
+                else:
+                    assert caught.value is failure
+            assert observed.is_set(), "terminal phase was mistaken for worker completion"
+            await observer
+            assert transfers[0].future.result().error is failure
+        finally:
+            release.set()
+            observer.cancel()
+            await asyncio.gather(observer, return_exceptions=True)
+            await idle(e, streams)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("path", ["entry", "notification"])
+def test_terminal_marker_is_rechecked_when_receive_checkpoint_raises(
+        env, monkeypatch, path):
+    e, streams = env, streams_for(env)
+    entered, release, transfers = terminal_barrier(streams, monkeypatch)
+    started, finish_source, waiting, observed = Event(), Event(), Event(), Event()
+    failure = ApplicationError(422, "invalid_metadata_input", "PRIVATE source failure")
+
+    def fail_preparation():
+        started.set()
+        assert finish_source.wait(5), "test failed to release source preparation"
+        raise failure
+
+    monkeypatch.setattr(e.bundle, "ensure_healthy", fail_preparation)
+    receive = _Transfer.receive
+
+    async def racing_receive(transfer):
+        await until(started.is_set)
+        checkpoint = transfer.permit.control.checkpoint
+        caller_thread, calls = get_ident(), 0
+
+        def racing_checkpoint():
+            nonlocal calls
+            if get_ident() == caller_thread:
+                calls += 1
+                if calls == (1 if path == "entry" else 2):
+                    # Advance the worker between receive's phase observation
+                    # and the checkpoint's observation of closed-permit control.
+                    finish_source.set()
+                    assert entered.wait(3), "worker did not release its permit"
+                    assert not transfer.future.done()
+                    waiting.set()
+            return checkpoint()
+
+        monkeypatch.setattr(transfer.permit.control, "checkpoint", racing_checkpoint)
+        if path == "notification":
+            transfer._ready.set()  # A stale notification reaches the second checkpoint.
+        return await receive(transfer)
+
+    monkeypatch.setattr(_Transfer, "receive", racing_receive)
+
+    async def complete_handoff():
+        await until(waiting.is_set)
+        assert not transfers[0].future.done()
+        observed.set()
+        release.set()
+
+    async def scenario():
+        observer = asyncio.create_task(complete_handoff())
+        try:
+            with pytest.raises(ApplicationError) as caught:
+                async with streams.open_canonical(e.owner, e.job.job_id):
+                    pytest.fail("source failure exposed a header")
+            assert caught.value.status == 422
+            assert caught.value.code == "invalid_metadata_input"
+            assert caught.value.message == "Document operation failed."
+            assert caught.value.__cause__ is None and caught.value.__context__ is None
+            assert observed.is_set()
+            await observer
+            assert transfers[0].future.result().error is failure
+        finally:
+            finish_source.set()
+            release.set()
+            observer.cancel()
+            await asyncio.gather(observer, return_exceptions=True)
+            await idle(e, streams)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("abandon", ["timeout", "cancel"])
+def test_terminal_handoff_remains_deadline_bounded_and_cancellable(
+        env, monkeypatch, abandon):
+    e = env
+    streams = streams_for(e, DocumentExecution(timeout_seconds=1))
+    entered, release, transfers = terminal_barrier(streams, monkeypatch)
+
+    def fail_preparation():
+        raise ApplicationError(403, "insufficient_scope", "PRIVATE source failure")
+
+    monkeypatch.setattr(e.bundle, "ensure_healthy", fail_preparation)
+    receive = _Transfer.receive
+
+    async def gated_receive(transfer):
+        await until(entered.is_set)
+        assert not transfer.future.done()
+        if abandon == "cancel":
+            asyncio.get_running_loop().call_soon(asyncio.current_task().cancel)
+        return await receive(transfer)
+
+    monkeypatch.setattr(_Transfer, "receive", gated_receive)
+
+    async def scenario():
+        try:
+            expected = asyncio.CancelledError if abandon == "cancel" else ApplicationError
+            with pytest.raises(expected) as caught:
+                async with streams.open_canonical(e.owner, e.job.job_id):
+                    pytest.fail("unfinished handoff exposed a header")
+            if abandon == "timeout":
+                assert caught.value.status == 408
+                assert caught.value.code == "operation_timeout"
+            transfer = transfers[0]
+            assert not transfer.future.done() and not transfer.future.cancelled()
+            assert transfer in streams._workers
+            assert streams.execution.active_count == 0
+            assert not e.jobs._artifact_leases
+        finally:
+            release.set()
+            await idle(e, streams)
 
     asyncio.run(scenario())

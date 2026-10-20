@@ -80,6 +80,9 @@ class _Transfer:
         self._lock = Lock()
         self._message = None
         self._ready = asyncio.Event()
+        # Set only after source cleanup, before releasing the permit. This is
+        # a finalization phase marker, not evidence that the worker is done.
+        self._terminal = Event()
 
     def offer(self, value):
         control = self.permit.control
@@ -109,13 +112,44 @@ class _Transfer:
         if message is not None:
             message.acknowledged.set()
 
+    def _producer_running(self):
+        if self._terminal.is_set():
+            return False
+        try:
+            self.permit.control.checkpoint()
+        except ApplicationError:
+            # Permit release can race the checkpoint itself. Its cancellation
+            # signal must not replace the worker's still-undelivered outcome.
+            if not self._terminal.is_set():
+                raise
+            return False
+        return not self._terminal.is_set()
+
+    async def _await_terminal(self):
+        # Only the actual executor future can establish EOF or deliver an error.
+        # Finalization gets the remaining deadline and remains task-cancellable.
+        control, future = self.permit.control, self.future
+        if not future.done():
+            worker = asyncio.shield(future)
+            worker.add_done_callback(_consume)
+            try:
+                await asyncio.wait((worker,), timeout=control.remaining_seconds)
+            finally:
+                worker.cancel()  # Never cancels the executor future.
+        if future.done():
+            _completed(future)
+            return _EOF
+        control._timeout()
+        raise _error("operation_timeout")
+
     async def receive(self):
         control, future = self.permit.control, self.future
         while True:
             if future.done():
                 _completed(future)
                 return _EOF
-            control.checkpoint()
+            if not self._producer_running():
+                return await self._await_terminal()
             ready = asyncio.create_task(self._ready.wait())
             worker = asyncio.shield(future)
             worker.add_done_callback(_consume)
@@ -128,7 +162,8 @@ class _Transfer:
                     _completed(future)
                     return _EOF
                 if ready in done:
-                    control.checkpoint()
+                    if not self._producer_running():
+                        return await self._await_terminal()
                     with self._lock:
                         message, self._message = self._message, None
                         self._ready.clear()
@@ -314,6 +349,10 @@ class DocumentStreams:
             # KeyboardInterrupt/SystemExit remain data until delivered to caller.
             return _Outcome(error=error)
         finally:
+            # Source contexts and iterator cleanup have already exited. Publish
+            # the phase before close() signals cancellation, but leave completion
+            # and outcome delivery to the actual executor future.
+            transfer._terminal.set()
             # Neither timeout nor cancellation in an awaiter can execute this.
             transfer.permit.close()
             self._forget(transfer)
