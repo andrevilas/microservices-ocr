@@ -148,9 +148,11 @@ def test_shared_document_protocol(backend, mode):
 
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
 def test_shared_permits_and_provider_rotation(backend, mode):
+    from app.services.document_runtime import DocumentProvider
+
     e, app = backend
     previous = None
-    for _ in range(2):
+    with TestClient(app) as lifespan:
         provider = app.state.document_provider
 
         async def scenario():
@@ -190,8 +192,19 @@ def test_shared_permits_and_provider_rotation(backend, mode):
                     assert (await ok(client, "get_document_canonical_chunk", {"job_id": e.job.job_id}))["text"] == PAGES[0][:1000]
             return execution
 
-        with TestClient(app) as lifespan:
-            previous = lifespan.portal.call(scenario)
-        assert previous.active_count == 0
-        assert app.state.document_provider is not provider
-        assert app.state.runtime_lease._file is None
+        previous = lifespan.portal.call(scenario)
+
+        # Controlled provider rotation within one lifespan, not support for
+        # restarting the SDK session manager across multiple lifespans.
+        async def rotate():
+            await provider.shutdown()
+            return DocumentProvider(
+                lambda: app.state.metadata_provider(),
+                lambda: app.state.catalog_provider())
+
+        provider = lifespan.portal.call(rotate)
+        app.state.document_provider = provider
+        previous = lifespan.portal.call(scenario)
+    assert previous.active_count == 0
+    assert app.state.document_provider is not provider
+    assert app.state.runtime_lease._file is None
