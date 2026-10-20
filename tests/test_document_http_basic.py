@@ -5,12 +5,11 @@ import os
 import pytest
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from app.application import ApplicationError, JobApplication
 from app.document_transport_models import MetadataRevisionPage, MetadataView
-from app.http_contract import V1Boundary, error_response, install_openapi, is_v1
+from app.http_contract import V1Boundary, error_response, install_openapi
 from app.routes.documents import router
 from app.security import require_principal
 from app.services.catalog_runtime import CatalogProvider
@@ -38,8 +37,7 @@ def http(env):
     async def validation_error(request, error):
         return error_response(request, 422, "validation_error", "Invalid request parameters.")
 
-    routes = [route for route in app.routes
-              if isinstance(route, APIRoute) and is_v1(route.path)]
+    routes = list(router.routes)
     app.add_middleware(V1Boundary, routes=routes)
     install_openapi(app, routes)
     services = provider()
