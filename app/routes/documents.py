@@ -1,22 +1,23 @@
 """Basic metadata reads over the shared document execution runtime."""
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi import APIRouter, Depends, Header, Path, Query, Request
 from starlette.responses import Response
 
 from app.application import Principal
 from app.document_canonical_models import (
     CanonicalManifest, CanonicalPageChunk, CanonicalPageText,
 )
-from app.document_http_examples import canonical_jsonl_example, response_example
+from app.document_http_examples import canonical_jsonl_example, request_example, response_example
 from app.document_http_streaming import DocumentDownloadResponse
-from app.metadata_models import MetadataSnapshot
+from app.metadata_models import MetadataSnapshot, SaveMetadataInput, SaveMetadataReceipt
 from app.document_content_models import (
     MetadataEvidencePage, MetadataSchemaChunk, MetadataStringChunk, MetadataValuePage,
 )
 from app.document_transport_models import MetadataFieldPage, MetadataRevisionPage, MetadataView
 from app.http_contract import error_responses, example, operation
 from app.security import require_principal
+from app.routes.uploads import json_contract, json_input
 from app.services.document_runtime import DocumentServices, get_document_services
 
 
@@ -46,6 +47,69 @@ def metadata_services(
 
 Reader = Annotated[Principal, Depends(metadata_principal)]
 Services = Annotated[DocumentServices, Depends(metadata_services)]
+
+
+def metadata_write_principal(
+    principal: Annotated[Principal, Depends(metadata_principal)],
+) -> Principal:
+    principal.require("metadata:write")
+    return principal
+
+
+def metadata_write_services(
+    request: Request,
+    principal: Annotated[Principal, Depends(metadata_write_principal)],
+) -> DocumentServices:
+    return get_document_services(request)
+
+
+Writer = Annotated[Principal, Depends(metadata_write_principal)]
+WriteServices = Annotated[DocumentServices, Depends(metadata_write_services)]
+SAVE_CONTRACT = json_contract(SaveMetadataInput)
+SAVE_CONTRACT.update(operation("jobs:read", "artifacts:read", "metadata:read", "metadata:write"))
+SAVE_CONTRACT["requestBody"]["content"]["application/json"]["schema"]["examples"] = [
+    request_example(SaveMetadataInput)]
+
+
+@router.put(
+    "/metadata", response_model=SaveMetadataReceipt, status_code=201,
+    operation_id="ocr_save_document_metadata",
+    openapi_extra=SAVE_CONTRACT,
+    responses={
+        **error_responses(410, 415),
+        **{status: {
+            **example(response_example(SaveMetadataReceipt), status)[status],
+            "model": SaveMetadataReceipt,
+            "description": "Historical receipt replay." if status == 200 else "Draft revision created.",
+            "headers": {"Idempotency-Replayed": {
+                "description": "Whether the original persisted receipt was replayed.",
+                "schema": {"type": "string", "enum": ["true", "false"]},
+            }},
+        } for status in (200, 201)},
+    },
+)
+async def save_metadata(
+    job_id: ID, request: Request, response: Response,
+    principal: Writer, services: WriteServices,
+    idempotency_key: Annotated[str, Header(
+        min_length=8, max_length=128, pattern=r"^[\x00-\x7f]+$")],
+):
+    """Save a manual draft with exact HEAD preconditions.
+
+    contexts:read is required only for new or changed catalog bindings.
+    After an uncertain outcome, retry with the same Idempotency-Key and body.
+    A replay can return a historical receipt after HEAD has advanced.
+    """
+    body = await json_input(request, SaveMetadataInput, max_bytes=512 * 1024)
+    receipt, replayed = await services.execution.run(
+        principal,
+        lambda control: services.document.save(
+            principal, job_id, body, key=idempotency_key,
+            checkpoint=control.checkpoint),
+    )
+    response.status_code = 200 if replayed else 201
+    response.headers["Idempotency-Replayed"] = "true" if replayed else "false"
+    return receipt
 
 
 def canonical_principal(
