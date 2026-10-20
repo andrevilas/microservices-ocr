@@ -410,8 +410,12 @@ def test_receipt_race_at_reservation_skips_writer(ready, monkeypatch):
     idle(e, 2)
 
 
-@pytest.mark.parametrize("change,status", [("ttl", 410), ("grant", 403), ("head", 409)])
-def test_changes_after_publication_are_rejected_and_cleaned(ready, monkeypatch, change, status):
+@pytest.mark.parametrize("change,status,code", [
+    ("ttl", 410, "artifacts_expired"),
+    ("grant", 403, "insufficient_scope"),
+    ("corrupt_head", 503, "metadata_unavailable"),
+])
+def test_changes_after_publication_are_rejected_and_cleaned(ready, monkeypatch, change, status, code):
     e = ready
     read, head = e.bundle.files.read, e.bundle.index._head
     changed = []
@@ -437,7 +441,7 @@ def test_changes_after_publication_are_rejected_and_cleaned(ready, monkeypatch, 
     original_scopes = e.approver.scopes
     monkeypatch.setattr(e.bundle.files, "read", changed_read)
     try:
-        failure(lambda: approve(e), status)
+        failure(lambda: approve(e), status, code)
     finally:
         if change == "grant":
             object.__setattr__(e.approver, "scopes", original_scopes)
