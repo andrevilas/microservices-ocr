@@ -59,9 +59,10 @@
   }
   function report(error) {
     if (error.kind === "stale") return;
-    // Mismatches and lost access remove everything sensitive; transient failures keep what is shown.
+    // Mismatches and lost access end the epoch, abort pending calls and forget the token, so no late
+    // response can repopulate the page; transient failures keep what is shown.
     const closed = error.kind === "shape" || [403, 404, 410].includes(error.status);
-    if (closed) wipe();
+    if (closed) halt();
     say(error.kind ? error.message : MESSAGES.unexpected, "error", {retry: !closed});
   }
   const run = async (operation) => { try { await operation(); } catch (error) { report(error); } };
@@ -231,10 +232,9 @@
       say("Carregando o documento…");
       if (!metadata) $("rv-meta-note").textContent = MESSAGES.noMetadataScope;
       await loadManifest();
-      const jobs = [loadChunk(1, 0)];
-      if (metadata) jobs.push(loadHead().then((found) => found && loadRevisions(false)));
-      const failed = (await Promise.allSettled(jobs)).find((r) => r.status === "rejected");
-      if (failed) throw failed.reason;
+      // Sequential on purpose: the backend admits one concurrent read per owner.
+      await loadChunk(1, 0);
+      if (metadata && await loadHead()) await loadRevisions(false);
       if (mine === epoch) say("Documento carregado. Visualização somente leitura.", "success");
     } catch (error) { report(error); }
   }

@@ -97,6 +97,36 @@ def open_review(ui, job_id):
     return page
 
 
+class Reads:
+    """Records active document GETs (job canonical/metadata only) without keeping any credential."""
+
+    def __init__(self, page, job_id):
+        self.marker = f'/api/v1/jobs/{job_id}/'
+        self.active, self.urls, self.authorized, self.peak = set(), [], [], 0
+        page.on('request', self.begin)
+        page.on('requestfinished', self.end)
+        page.on('requestfailed', self.end)
+
+    def counts(self, request):
+        return self.marker in request.url and ('/canonical/' in request.url or '/metadata' in request.url)
+
+    def begin(self, request):
+        if not self.counts(request):
+            return
+        assert request.method == 'GET'
+        self.urls.append(request.url)
+        self.authorized.append((request.header_value('authorization') or '').startswith('Bearer '))
+        self.active.add(request)
+        self.peak = max(self.peak, len(self.active))
+
+    def end(self, request):
+        self.active.discard(request)
+
+    def assert_serial(self):
+        assert self.urls and all(self.authorized)
+        assert self.peak == 1, f'document reads overlapped (peak {self.peak})'
+
+
 def fits(page):
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth') is True
 
@@ -105,7 +135,9 @@ def test_workspace_link_reads_canonical_current_history_and_pinned_revision(ui):
     data = seeded(ui)
     page = ui.context.new_page()
     calls = []
-    page.on('request', lambda request: calls.append((request.method, request.url, request.header_value('authorization'))))
+    page.on('request', lambda request: calls.append(
+        (request.method, request.url, (request.header_value('authorization') or '').startswith('Bearer '))))
+    reads = Reads(page, data.job_id)
     page.goto(ui.runtime.origin + '/')
     card = page.locator(f'[data-card-id="{data.job_id}"]')
     expect(card).to_have_class(re.compile('status-completed'), timeout=20000)
@@ -119,6 +151,9 @@ def test_workspace_link_reads_canonical_current_history_and_pinned_revision(ui):
     expect(page.locator('#rv-manifest')).to_contain_text('2 páginas')
     expect(page.locator('#rv-text')).to_contain_text('Synthetic upload page 0')
     expect(page.locator('#rv-next')).to_have_text('Próxima página')
+    reads.assert_serial()  # initialization: chunk, then HEAD, then revisions, one at a time
+    assert [u.split('?')[0].rsplit(data.job_id, 1)[1] for u in reads.urls] == [
+        '/canonical/manifest', '/canonical/pages', '/metadata', '/metadata/revisions']
     page.locator('#rv-next').click()
     expect(page.locator('#rv-chunk-meta')).to_contain_text('Página 2 de 2')
     expect(page.locator('#rv-text')).to_contain_text('Synthetic upload page 1')
@@ -148,7 +183,8 @@ def test_workspace_link_reads_canonical_current_history_and_pinned_revision(ui):
     pinned = f'/metadata/revisions/{data.first["revision_id"]}?sha256={data.first["sha256"]}'
     assert any(url.endswith(pinned) for _, url, _ in calls)
     api = [(method, url, auth) for method, url, auth in calls if '/api/' in url]
-    assert api and all(method == 'GET' and auth and auth.startswith('Bearer ') for method, _, auth in api)
+    assert api and all(method == 'GET' and auth for method, _, auth in api)
+    assert reads.peak == 1
     assert not any(ui.accounts.owner in url or 'access_token' in url for _, url, _ in calls)
     assert 'PDF/A' not in page.locator('#rv-root').inner_text()
     fits(page)
@@ -161,8 +197,11 @@ def test_workspace_link_reads_canonical_current_history_and_pinned_revision(ui):
 
 def test_job_without_metadata_stays_honest_and_other_owner_sees_nothing(ui):
     job_id = seed_job(ui)
-    page = open_review(ui, job_id)
+    page = ui.context.new_page()
+    reads = Reads(page, job_id)
+    page.goto(f'{ui.runtime.origin}/documents/{job_id}/review')
     loaded(page)
+    reads.assert_serial()
     expect(page.locator('#rv-text')).to_contain_text('Synthetic upload page 0')
     expect(page.locator('#rv-meta-note')).to_contain_text('Nenhum metadado salvo')
     expect(page.locator('#rv-revs li')).to_have_count(0)
@@ -193,12 +232,33 @@ def test_token_without_metadata_scope_reads_text_but_never_calls_metadata(ui, mo
     page = ui.context.new_page()
     paths = []
     page.on('request', lambda request: paths.append(request.url))
+    reads = Reads(page, data.job_id)
     page.goto(f'{ui.runtime.origin}/documents/{data.job_id}/review')
     loaded(page)
+    reads.assert_serial()
     expect(page.locator('#rv-text')).to_contain_text('Synthetic upload page 0')
     expect(page.locator('#rv-meta-note')).to_contain_text('metadata:read')
     expect(page.locator('#rv-revs li')).to_have_count(0)
     expect(page.locator('#rv-head')).to_be_disabled()
     assert not any('/metadata' in url for url in paths)
     assert data.second['sha256'] not in page.locator('#rv-root').inner_text()
+    private(page)
+
+
+def test_lost_access_after_load_clears_everything_on_the_next_explicit_request(ui):
+    data = seeded(ui)
+    page = open_review(ui, data.job_id)
+    loaded(page)
+    expect(page.locator('#rv-text')).to_contain_text('Synthetic upload page 0')
+    assert ui.api.delete(f'/api/v1/jobs/{data.job_id}/artifacts').status_code == 200
+    page.locator('#rv-next').click()
+    expect(page.locator('#rv-status')).to_contain_text('expiraram ou foram excluídos', timeout=15000)
+    expect(page.locator('#rv-text')).to_be_empty()
+    expect(page.locator('#rv-meta')).to_be_empty()
+    expect(page.locator('#rv-revs li')).to_have_count(0)
+    expect(page.locator('#rv-next')).to_be_disabled()
+    expect(page.locator('#rv-page')).to_be_disabled()
+    visible = page.locator('body').inner_text()
+    for leaked in (*data.quotes, 'Synthetic upload page', data.second['revision_id'], data.second['sha256']):
+        assert leaked not in visible
     private(page)
