@@ -45,6 +45,15 @@ uma solicitação remota já transmitida e permite novamente a retenção
 legada; arquivos vencidos podem ser removidos pelo próximo coletor.
 Não expor cancelamento como ação implícita da interface.
 
+`recovery_package` permite ao proprietário com `jobs:read` e
+`artifacts:read` recuperar os bytes imutáveis do pacote pendente, inclusive
+após o vencimento normal dos artefatos. A operação não libera o hold nem
+confirma armazenamento externo. Após cancelamento ou recibo indexed, a
+cópia da fila já removida não pode ser recuperada por essa operação.
+`receipt` exige proprietário e `jobs:read`, devolve o último recibo validado
+e permanece disponível após reinício e liberação da cópia temporária.
+Estas operações de serviço ainda precisam de transporte API/MCP.
+
 ## Limites e pendências antes de produção
 
 O limite atual mede quantidade de registros e bytes do pacote na fila.
@@ -60,8 +69,9 @@ valores de prazo, integração do worker ao runtime e API/MCP. A troca de
 credenciais em memória já é suportada pelo worker. Não declarar
 retenção temporal plenamente resolvida enquanto essas peças faltarem.
 
-Também pendentes: revisão independente do código, revalidação do receptor,
-aceitação de páginas vazias no RAG e homologação de implantação/rollback.
+Também pendentes: revisão independente do código, revalidação do receptor
+e homologação de implantação/rollback. Páginas vazias já são preservadas
+nos candidatos locais do adaptador e do receptor, com testes de numeração.
 Nenhum acervo real foi migrado.
 
 ## Evidências exigidas

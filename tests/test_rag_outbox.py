@@ -37,6 +37,64 @@ def set_fields(outbox, delivery_id, **values):
                    (*values.values(), delivery_id))
 
 
+def test_recovery_preserves_expired_hold_and_exact_package_after_restart(outbox):
+    queue, job, dest = outbox
+    delivery_id = queue.enqueue(OWNER, job.job_id, dest)
+    expected = queue.recovery_package(OWNER, delivery_id)
+    assert dest.token.encode() not in expected
+    expire_source(queue.store, job)
+    set_fields(queue, delivery_id, deadline=time.time() - 1)
+    assert queue.status(OWNER, delivery_id)["state"] == "resolution"
+    restarted = JobStore(root_dir=queue.store.root_dir)
+    try:
+        restored = RagOutbox(restarted, queue.policy)
+        assert restored.recovery_package(OWNER, delivery_id) == expected
+        assert restored.status(OWNER, delivery_id)["state"] == "resolution"
+        assert restarted.cleanup_expired() == []
+    finally:
+        restarted._conn.close()
+    queue.cancel(DELETE_OWNER, delivery_id)
+    with pytest.raises(ApplicationError) as exc:
+        queue.recovery_package(OWNER, delivery_id)
+    assert exc.value.code == "rag_package_unavailable"
+
+
+@pytest.mark.parametrize("method", ["receipt", "recovery_package"])
+def test_delivery_reads_require_owner_and_scope(outbox, method):
+    queue, job, dest = outbox
+    delivery_id = queue.enqueue(OWNER, job.job_id, dest)
+    read = getattr(queue, method)
+    with pytest.raises(ApplicationError) as exc:
+        read(replace(OWNER, subject="user:2", user_id=2), delivery_id)
+    assert exc.value.status == 404
+    with pytest.raises(ApplicationError) as exc:
+        read(replace(OWNER, scopes=frozenset()), delivery_id)
+    assert exc.value.status == 403
+    if method == "recovery_package":
+        with pytest.raises(ApplicationError) as exc:
+            read(replace(OWNER, scopes=frozenset({"jobs:read"})), delivery_id)
+        assert exc.value.status == 403
+
+
+def test_verified_receipt_remains_available_after_package_release(outbox):
+    queue, job, dest = outbox
+    delivery_id = queue.enqueue(OWNER, job.job_id, dest)
+    with pytest.raises(ApplicationError) as exc:
+        queue.receipt(OWNER, delivery_id)
+    assert exc.value.code == "rag_receipt_unavailable"
+    expected = receipt_for(queue.recovery_package(OWNER, delivery_id))
+    queue.run_one(delivery_id, dest, transport=httpx2.MockTransport(lambda r: response(expected)))
+    assert queue.receipt(OWNER, delivery_id) == expected
+    with pytest.raises(ApplicationError) as exc:
+        queue.recovery_package(OWNER, delivery_id)
+    assert exc.value.code == "rag_package_unavailable"
+    restarted = JobStore(root_dir=queue.store.root_dir)
+    try:
+        assert RagOutbox(restarted, queue.policy).receipt(OWNER, delivery_id) == expected
+    finally:
+        restarted._conn.close()
+
+
 def test_hold_survives_restart_and_all_cleanup_paths(outbox):
     queue, job, dest = outbox
     delivery_id = queue.enqueue(OWNER, job.job_id, dest)

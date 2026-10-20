@@ -144,6 +144,34 @@ class RagOutbox:
                 raise ApplicationError(404, "rag_delivery_not_found", "Delivery not found.")
             return {k: row[k] for k in ("id", "job_id", "state", "deadline", "attempts", "next_attempt", "error")}
 
+    def receipt(self, principal, delivery_id):
+        """Read the last verified receiver receipt, including pending indexing."""
+        principal.require("jobs:read")
+        with self.transaction() as conn:
+            row = self.row(conn, delivery_id)
+            if row["owner"] != principal.subject:
+                raise ApplicationError(404, "rag_delivery_not_found", "Delivery not found.")
+            if row["receipt"] is None:
+                raise ApplicationError(409, "rag_receipt_unavailable", "No verified receipt is available.")
+            return json.loads(row["receipt"])
+
+    def recovery_package(self, principal, delivery_id):
+        """Export the immutable pending package without releasing its hold.
+
+        This remains readable after the normal artifact deadline. It is a
+        separate recovery capability, never a bypass of the artifact reader.
+        Download completion is not proof of durable external storage.
+        """
+        principal.require("jobs:read")
+        principal.require("artifacts:read")
+        with self.transaction() as conn:
+            row = self.row(conn, delivery_id)
+            if row["owner"] != principal.subject:
+                raise ApplicationError(404, "rag_delivery_not_found", "Delivery not found.")
+            if row["payload"] is None:
+                raise ApplicationError(409, "rag_package_unavailable", "No recovery package is retained.")
+            return bytes(row["payload"])
+
     def run_one(self, delivery_id, destination, *, transport=None):
         """Trusted operator/worker entrypoint; credentials are supplied, never persisted."""
         destination.validate()
