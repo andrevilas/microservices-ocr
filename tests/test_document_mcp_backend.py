@@ -147,20 +147,24 @@ def test_shared_document_protocol(backend, mode):
 
 
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
-def test_shared_permits_and_provider_rotation(backend, mode):
+def test_shared_permits_and_pre_start_provider_replacement(backend, mode):
+    """Pre-start replacement uses normal captured shutdown; live swaps are unsupported."""
     from app.services.document_runtime import DocumentProvider
 
     e, app = backend
-    previous = None
+    original_provider = app.state.document_provider
+    # Close the unused coordinator and replace it before the single lifespan.
+    asyncio.run(original_provider.shutdown())
+    provider = DocumentProvider(
+        lambda: app.state.metadata_provider(),
+        lambda: app.state.catalog_provider())
+    app.state.document_provider = provider
     with TestClient(app) as lifespan:
-        provider = app.state.document_provider
+        # Startup captures this replacement; HTTP and MCP resolve it lazily.
+        assert app.state.document_provider is provider
 
         async def scenario():
             execution = provider().execution
-            if previous is not None:
-                with pytest.raises(ApplicationError) as closed:
-                    await previous.run(e.owner, lambda control: None)
-                assert closed.value.status == 503
             release, tasks = Event(), []
             try:
                 # Discover the real bounded capacity without assuming its configured size.
@@ -192,19 +196,15 @@ def test_shared_permits_and_provider_rotation(backend, mode):
                     assert (await ok(client, "get_document_canonical_chunk", {"job_id": e.job.job_id}))["text"] == PAGES[0][:1000]
             return execution
 
-        previous = lifespan.portal.call(scenario)
+        execution = lifespan.portal.call(scenario)
 
-        # Controlled provider rotation within one lifespan, not support for
-        # restarting the SDK session manager across multiple lifespans.
-        async def rotate():
-            await provider.shutdown()
-            return DocumentProvider(
-                lambda: app.state.metadata_provider(),
-                lambda: app.state.catalog_provider())
+    # Normal lifespan shutdown drains the captured replacement and rotates state.
+    async def assert_closed():
+        with pytest.raises(ApplicationError) as closed:
+            await execution.run(e.owner, lambda control: None)
+        assert closed.value.status == 503
 
-        provider = lifespan.portal.call(rotate)
-        app.state.document_provider = provider
-        previous = lifespan.portal.call(scenario)
-    assert previous.active_count == 0
+    asyncio.run(assert_closed())
+    assert execution.active_count == 0
     assert app.state.document_provider is not provider
     assert app.state.runtime_lease._file is None
