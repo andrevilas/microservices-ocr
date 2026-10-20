@@ -4,9 +4,10 @@ from copy import deepcopy
 import pytest
 
 from app.metadata_models import SaveMetadataInput, SaveMetadataReceipt
+from app.routes.documents import router
 from app.security import require_principal
 from test_document_http_basic import base, http
-from test_document_metadata import BASE, KEY, body, env, idle, persisted, who
+from test_document_metadata import BASE, KEY, body, env, idle, persisted, pytestmark, who
 
 
 def put(client, e, request, key=KEY):
@@ -141,7 +142,7 @@ def test_busy_execution_releases_permit(http):
 def test_openapi_preserves_null_examples_and_is_detached(http):
     e, app, client, services = http
     path = "/api/v1/jobs/{job_id}/metadata"
-    route = next(route for route in app.routes
+    route = next(route for route in router.routes
                  if getattr(route, "path", None) == path and "PUT" in route.methods)
     declared = deepcopy(route.openapi_extra)
     expected = client.get("/openapi.json").json()
