@@ -1,4 +1,5 @@
 """Real-storage coverage for authorized synchronous document queries."""
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import os
@@ -426,7 +427,18 @@ def test_bad_checkpoint_rejected_before_admission(saved, monkeypatch, operation)
 @pytest.mark.parametrize("kind", ["timeout", "keyboard", "exit"])
 def test_checkpoint_errors_and_controls_release_lease(saved, monkeypatch, stage, kind):
     e, q, receipt, _ = saved
-    state = dict(authorized=False, read=False, projected=False)
+    state = dict(authorized=False, read=False, projected=False, leased=False)
+    artifact_lease = e.jobs.artifact_lease
+
+    @contextmanager
+    def tracked_lease(*args, **kwargs):
+        try:
+            with artifact_lease(*args, **kwargs) as job:
+                state["leased"] = True
+                yield job
+        finally:
+            state["leased"] = False
+
     get_head, read, project = e.bundle.index.get_head, e.bundle.files.read, projection.metadata_view
     error = {"timeout": ApplicationError(408, "document_execution_timeout", "sensitive timeout"),
              "keyboard": KeyboardInterrupt("sensitive interruption"),
@@ -449,7 +461,7 @@ def test_checkpoint_errors_and_controls_release_lease(saved, monkeypatch, stage,
         return result
 
     def checkpoint():
-        unlocked(e, leased=state["read"])
+        unlocked(e, leased=state["leased"])
         reached = {
             "before_admission": not state["authorized"],
             "after_authorization": state["authorized"] and not state["read"],
@@ -459,6 +471,7 @@ def test_checkpoint_errors_and_controls_release_lease(saved, monkeypatch, stage,
         if reached:
             raise error
 
+    monkeypatch.setattr(e.jobs, "artifact_lease", tracked_lease)
     monkeypatch.setattr(e.bundle.index, "get_head", admitted)
     monkeypatch.setattr(e.bundle.files, "read", read_snapshot)
     monkeypatch.setattr(projection, "metadata_view", projected)
