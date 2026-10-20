@@ -12,6 +12,11 @@ from pydantic import TypeAdapter
 
 from app.application import ApplicationError
 from app.metadata_models import PersistentID, SHA256
+from app.document_canonical_models import (
+    CanonicalManifest, CanonicalPageChunk, CanonicalPageText,
+)
+from app.results import MAX_PAGE_CHARS
+from app.services.canonical_text_service import MAX_CHUNK_CHARS
 from app.services import document_content_projection as content_projection
 from app.services import document_projection as projection
 from app.services.document_service import DocumentMetadataService
@@ -74,6 +79,27 @@ def _job_call(function, principal, job_id):
         raise
     _coordinate(_ID, job_id)
     return result
+
+
+def _canonical_integrity():
+    return ApplicationError(
+        503, "result_integrity_error", "Stored result failed validation.")
+
+
+def _canonical_dto(model, value):
+    try:
+        validated = model.model_validate(value, strict=True)
+        # Revalidate original instances, then detach even an already typed source.
+        return model.model_validate(
+            validated.model_dump(mode="python", warnings="error"), strict=True)
+    except Exception:
+        pass
+    raise _canonical_integrity()
+
+
+def _text_range_integer(value, minimum, maximum):
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise _failure(422, "invalid_text_range")
 
 
 class DocumentQueries:
@@ -220,3 +246,66 @@ class DocumentQueries:
             lambda snapshot: content_projection.schema_chunk(
                 owner, snapshot, digest, query.schema_sha256,
                 offset=query.offset, max_chars=query.max_chars))
+
+    def _canonical_read(self, principal, job_id, *, view, page, offset,
+                        max_chars, checkpoint):
+        # Canonical access has no metadata or catalog scope requirement.
+        principal.require("jobs:read")
+        principal.require("artifacts:read")
+        self._ready(checkpoint)
+        job_id = _coordinate(_ID, job_id)
+        if view != "manifest":
+            _text_range_integer(page, 1, 300)
+        if view == "chunk":
+            _text_range_integer(offset, 0, MAX_PAGE_CHARS)
+            _text_range_integer(max_chars, 1, MAX_CHUNK_CHARS)
+        _tick(checkpoint)
+        # The existing canonical service owns authorization and ONE lease.
+        # Preparation reads all pages; cancellation is checked when it returns.
+        with self.document.canonical.open(principal, job_id) as prepared:
+            _tick(checkpoint)
+            manifest = _canonical_dto(CanonicalManifest, prepared.manifest)
+            if manifest.job_id != job_id:
+                raise _canonical_integrity()
+            if view == "manifest":
+                result = manifest
+            else:
+                if page > manifest.page_count:
+                    raise _failure(422, "invalid_text_range")
+                if view == "page":
+                    source = prepared.read_page_text(page)
+                    _tick(checkpoint)
+                    result = _canonical_dto(CanonicalPageText, source)
+                else:
+                    source = prepared.page_chunk(page, offset, max_chars)
+                    _tick(checkpoint)
+                    result = _canonical_dto(CanonicalPageChunk, source)
+                if (result.document_id != job_id or result.page != page
+                        or result.canonical_sha256 != manifest.sha256):
+                    raise _canonical_integrity()
+                if view == "chunk" and (
+                        result.page_count != manifest.page_count
+                        or result.offset != offset or len(result.text) > max_chars):
+                    raise _canonical_integrity()
+            # DTO validation and identity checks remain inside the artifact lease.
+            _tick(checkpoint)
+            return result
+
+    @_safe
+    def get_canonical_manifest(self, principal, job_id, *, checkpoint=None):
+        return self._canonical_read(
+            principal, job_id, view="manifest", page=None, offset=None,
+            max_chars=None, checkpoint=checkpoint)
+
+    @_safe
+    def get_canonical_page(self, principal, job_id, page, *, checkpoint=None):
+        return self._canonical_read(
+            principal, job_id, view="page", page=page, offset=None,
+            max_chars=None, checkpoint=checkpoint)
+
+    @_safe
+    def get_canonical_chunk(self, principal, job_id, *, page=1, offset=0,
+                            max_chars=8000, checkpoint=None):
+        return self._canonical_read(
+            principal, job_id, view="chunk", page=page, offset=offset,
+            max_chars=max_chars, checkpoint=checkpoint)
