@@ -29,8 +29,10 @@ O destino é configuração interna confiável, não parâmetro de cliente.
 
 ## Antes de ativar
 
-O próximo incremento deve reunir outbox persistente e hold no mesmo
-mecanismo transacional de retenção do JobStore. Não ativar apenas o sender.
+O incremento local descrito em [rag-outbox.md](rag-outbox.md) reúne a fila e
+o hold no banco do JobStore. Não ativar apenas o sender: a lista abaixo
+permanece critério de produção, com limites e pendências detalhados nesse
+documento.
 
 1. Admitir entrega somente após autorização, quota e prazo máximo de hold.
    Persistir destino/manifesto/identidade antes de permitir a limpeza.

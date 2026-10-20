@@ -221,6 +221,12 @@ def test_real_receiver_handoff(source, tmp_path):
             downloaded = client.get(f"/v1/documents/{citation['document_id']}/artifacts/pdf", headers=auth)
             assert downloaded.content == job.output_pdf_path.read_bytes()
             assert hashlib.sha256(downloaded.content).hexdigest() == citation["pdf_sha256"]
+            from app.services.rag_outbox import RagOutbox, DeliveryPolicy
+            queue = RagOutbox(store, DeliveryPolicy(4, 32 * 1024 * 1024, 3600, 300, 3, 10, 60))
+            delivery_id = queue.enqueue(OWNER, job.job_id, dest)
+            assert queue.run_one(delivery_id, dest) == "indexed"
+            assert queue.status(OWNER, delivery_id)["state"] == "indexed"
+            assert store.cleanup_expired() == []
             remote_store.revoke(token)
             with pytest.raises(ApplicationError) as exc:
                 send_delivery(prepared, dest)
