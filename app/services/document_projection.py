@@ -59,7 +59,7 @@ _ERRORS = {
 
 def _error(code):
     status, message = _ERRORS[code]
-    return ApplicationError(status_code=status, code=code, message=message)
+    return ApplicationError(status=status, code=code, message=message)
 
 
 class _Scope(_ClosedModel):

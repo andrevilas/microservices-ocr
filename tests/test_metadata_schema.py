@@ -1,4 +1,4 @@
-"""Real SQLite schema dependency tests; approval workflows remain unavailable."""
+"""Real SQLite schema dependency tests; approval preflight and reservation are available."""
 import os
 import sqlite3
 
@@ -105,7 +105,9 @@ def test_fresh_database_uses_widened_checks_and_no_approval_rows(h):
                         "CHECK(operation IN ('save-v1','approve-v1'))")
             assert expected in actual
             assert conn.execute("SELECT COUNT(*) FROM " + table).fetchone()[0] == 0
-    assert not any(hasattr(h.svc, name) for name in ("approve", "approve_metadata", "reserve_approval"))
+    assert all(callable(getattr(h.svc, name, None))
+               for name in ("preflight_approval", "reserve_approval"))
+    assert not any(hasattr(h.svc, name) for name in ("approve", "approve_metadata"))
 
 
 @pytest.mark.parametrize("pending_state", ["active", "cleanup"])
