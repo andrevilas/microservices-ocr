@@ -118,6 +118,25 @@ def test_hold_survives_restart_and_all_cleanup_paths(outbox):
         assert dest.token not in " ".join(row)
 
 
+def test_low_disk_space_refuses_new_packet_without_hold_but_allows_replay(outbox, monkeypatch):
+    from types import SimpleNamespace
+    import app.services.rag_outbox as module
+    queue, job, dest = outbox
+    original = module.shutil.disk_usage
+    monkeypatch.setattr(module.shutil, "disk_usage", lambda _: SimpleNamespace(free=0))
+    with pytest.raises(ApplicationError) as exc:
+        queue.enqueue(OWNER, job.job_id, dest)
+    assert exc.value.code == "rag_storage_pressure"
+    with queue.store._lock:
+        assert not queue.store._delivery_hold_locked(job.job_id)
+        assert queue.store._get_conn().execute("SELECT count(*) FROM rag_outbox").fetchone()[0] == 0
+    monkeypatch.setattr(module.shutil, "disk_usage", original)
+    delivery_id = queue.enqueue(OWNER, job.job_id, dest)
+    monkeypatch.setattr(module.shutil, "disk_usage", lambda _: SimpleNamespace(free=0))
+    assert queue.enqueue(OWNER, job.job_id, dest) == delivery_id
+    assert job.output_pdf_path.is_file()
+
+
 def test_indexed_receipt_releases_hold_and_extends_ttl_atomically(outbox):
     queue, job, dest = outbox
     delivery_id = queue.enqueue(OWNER, job.job_id, dest)

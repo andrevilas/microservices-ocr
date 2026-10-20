@@ -34,6 +34,27 @@ def test_construct_does_not_start_and_snapshot_has_no_secrets(outbox):
     assert job.output_pdf_path.is_file()
 
 
+def test_aggregate_alerts_only_on_transitions_and_no_secrets(outbox, caplog, monkeypatch):
+    from types import SimpleNamespace
+    import app.services.rag_worker as module
+    queue, job, dest = outbox
+    delivery_id = queue.enqueue(OWNER, job.job_id, dest)
+    service = worker(queue, [dest])
+    caplog.set_level("INFO", logger=module.__name__)
+    monkeypatch.setattr(module.shutil, "disk_usage", lambda _: SimpleNamespace(free=0))
+    set_fields(queue, delivery_id, deadline=time.time() + 60)
+    assert service.observe()["storage_pressure"]
+    service.observe()
+    assert len(caplog.records) == 1
+    set_fields(queue, delivery_id, deadline=time.time() - 1)
+    assert service.observe()["requires_resolution"] == 1
+    service.observe()
+    assert len(caplog.records) == 2
+    assert dest.token not in caplog.text and job.job_id not in caplog.text
+    assert dest.url not in caplog.text and delivery_id not in caplog.text
+    assert job.output_pdf_path.is_file()
+
+
 def test_bounded_batch_and_replay(outbox):
     queue, job, dest = outbox
     queue.enqueue(OWNER, job.job_id, dest)

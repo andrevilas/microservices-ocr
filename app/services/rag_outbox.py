@@ -1,12 +1,14 @@
 """Durable staged delivery queue. No worker or API is activated by importing this."""
 import json
 import secrets
+import shutil
 import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 
 from app.application import ApplicationError
+from app.config import settings
 from app.services.rag_delivery import PreparedDelivery, prepare_delivery, send_delivery
 from app.services.rag_delivery_contract import parse_manifest
 
@@ -128,6 +130,11 @@ class RagOutbox:
                 if (unresolved or count >= self.policy.max_entries
                         or size + len(prepared.payload) > self.policy.max_payload_bytes):
                     raise ApplicationError(429, "rag_queue_full", "Delivery capacity requires operator resolution.")
+                # Backpressure before duplicating the packet into SQLite/WAL.
+                # This is a conservative admission margin, not a filesystem quota.
+                required_free = 3 * len(prepared.payload) + settings.upload_min_free_mb * 1024 * 1024
+                if shutil.disk_usage(self.store.root_dir).free < required_free:
+                    raise ApplicationError(429, "rag_storage_pressure", "Storage capacity requires operator resolution.")
                 conn.execute("""INSERT INTO rag_outbox VALUES(?,?,?,?,?,'queued',?,?,0,?,NULL,NULL,NULL,NULL,?)""",
                              (manifest.delivery_id, job_id, principal.subject, binding(destination),
                               prepared.payload, now, now + self.policy.hold_seconds, now,

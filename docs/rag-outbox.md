@@ -57,6 +57,11 @@ Estas operações estão expostas pelos transportes descritos em [API/MCP](rag-a
 ## Limites e pendências antes de produção
 
 O limite atual mede quantidade de registros e bytes do pacote na fila.
+Admissões novas também verificam o espaço livre do filesystem do JobStore,
+exigindo margem de três vezes o pacote para SQLite/WAL, além de
+`upload_min_free_mb`. Isso é backpressure, não reserva atômica de espaço
+entre todos os escritores; a quota do filesystem continua necessária.
+Replays existentes não criam outra cópia e não são recusados por essa verificação.
 Não representa quota global de originais, derivados, metadados, SQLite/WAL
 e backups. Registros concluídos continuam contando para a capacidade:
 faltam política de arquivo/expiração de recibos e rotina de manutenção.

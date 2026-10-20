@@ -44,6 +44,13 @@ Este método é interno ao operador e agrega todos os proprietários.
 Não expor diretamente como API/MCP de usuário sem autorização própria.
 Não existe envio de notificações por e-mail, WhatsApp ou outro canal.
 
+`observe()` acrescenta pressão de disco e emite avisos agregados no log
+somente quando muda a combinação de resolução pendente, prazo próximo e
+espaço abaixo da margem. A limpeza desses sinais emite uma mensagem informativa.
+O ciclo periódico chama essa observação; falha inesperada encerra o worker
+com aviso fixo, sem conteúdo da exceção. Logs precisam ser coletados pelo operador;
+isso não comprova entrega de alerta a uma pessoa ou sistema externo.
+
 ## Validação e pendências
 
 Testes cobrem ausência de início implícito, limite do lote, replay,
@@ -52,7 +59,8 @@ segredos, ciclos concorrentes, parada durante HTTP e queda inesperada.
 O ensaio com servidor RAG real também executa `collect()` sobre a fila de
 um PDF sintético processado pelo OCR e verifica o estado indexed.
 
-Continuam pendentes revisão independente, integração governada ao lifespan,
-API/MCP, notificação operacional, política de resolução/exportação,
-quota total de disco e arquivo de recibos. Nenhuma publicação em produção
-foi realizada.
+O candidato já integra lifespan/API/MCP. Continuam pendentes revisão independente,
+qualificação da política de resolução/exportação, coleta operacional dos avisos
+e arquivo de recibos. O controle persistente TrueNAS está descrito em
+[armazenamento RAG](rag-storage-operations.md); temporários fora desse volume
+precisam ser considerados no release. A nova aplicação ainda não foi publicada.

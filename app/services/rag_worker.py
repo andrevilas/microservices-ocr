@@ -1,9 +1,14 @@
 """Explicitly started, bounded delivery worker; never starts during import."""
 import math
+import logging
+import shutil
 import time
 from threading import Event, Lock, Thread
 
 from app.services.rag_outbox import binding
+from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class RagDeliveryWorker:
@@ -25,6 +30,7 @@ class RagDeliveryWorker:
         self._stop = Event()
         self._thread = None
         self._failure = None
+        self._notice_state = None
 
     def replace_destinations(self, destinations):
         """Trusted operator configuration; no URL or token from tool arguments."""
@@ -96,13 +102,28 @@ class RagDeliveryWorker:
         finally:
             self._collect_lock.release()
 
+    def observe(self):
+        """Local aggregate alerts only; never messages to external recipients."""
+        snapshot = self.snapshot()
+        pressure = shutil.disk_usage(self.outbox.store.root_dir).free < settings.upload_min_free_mb * 1024 * 1024
+        flags = (snapshot["requires_resolution"] > 0, snapshot["near_deadline"] > 0, pressure)
+        if flags != self._notice_state:
+            if any(flags):
+                logger.warning("RAG operational attention: resolution=%s near_deadline=%s storage_pressure=%s", *flags)
+            elif self._notice_state is not None:
+                logger.info("RAG operational attention cleared")
+            self._notice_state = flags
+        return {**snapshot, "storage_pressure": pressure}
+
     def _run(self):
         while not self._stop.is_set():
             try:
                 self.collect()
+                self.observe()
             except Exception:
                 # Fail closed on unexpected storage/control errors. Never log payloads.
                 self._failure = "worker_failed"
+                logger.error("RAG delivery worker stopped; operator recovery required")
                 self._stop.set()
                 break
             self._stop.wait(self.interval_seconds)
