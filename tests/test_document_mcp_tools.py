@@ -32,7 +32,7 @@ from mcp.server import MCPServer
 from app.document_mcp_tools import register_document_tools
 server = MCPServer('pure-document-test')
 register_document_tools(server, lambda *args: None)
-assert len(asyncio.run(server.list_tools())) == 2
+assert len(asyncio.run(server.list_tools())) == 6
 blocked = ('app.main', 'app.config', 'app.application', 'app.runtime',
            'app.services', 'app.routes', 'app.document_http_examples')
 assert not [name for name in sys.modules
@@ -45,13 +45,19 @@ assert not [name for name in sys.modules
     assert result.returncode == 0, result.stderr
 
 
-def test_registry_schemas_annotations_and_only_two_tools():
+def test_registry_schemas_annotations_and_six_tools():
     async def scenario():
         async with Client(server(lambda *args: None)) as client:
             return (await client.list_tools()).tools
     tools = {tool.name: tool for tool in asyncio.run(scenario())}
-    assert set(tools) == set(MODELS)
-    assert DOCUMENT_OPERATIONS == frozenset(name.removeprefix("ocr_") for name in tools)
+    operations = frozenset({
+        "get_document_canonical_manifest", "get_document_canonical_chunk",
+        "get_document_metadata", "list_document_metadata_revisions",
+        "get_document_metadata_revision", "list_document_metadata_fields",
+    })
+    assert set(tools) == {"ocr_" + operation for operation in operations}
+    assert DOCUMENT_OPERATIONS == operations
+    tools = {name: tools[name] for name in MODELS}
     for name, tool in tools.items():
         schema = tool.input_schema
         expected = {"job_id"} if name == MANIFEST else {"job_id", "page", "offset", "max_chars"}
