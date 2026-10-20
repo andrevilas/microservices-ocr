@@ -14,7 +14,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from app.document_mcp_tools import register_document_tools
 from app.mcp_stdio import ApiClient
 from app.mcp_tools import MCP_VERSION, OcrMCPServer
-from app.metadata_models import SaveMetadataInput
+from app.metadata_models import SaveMetadataInput, SaveMetadataReceipt
 from app.security import require_principal
 from test_document_http_basic import http
 from test_document_metadata import QUOTE, body, env, persisted, who
@@ -95,8 +95,9 @@ def test_sdk_all_twelve_operations_and_historical_replay(http):
                 assert (await tool(sdk, "get_document_metadata", **job))["revision_id"] == approved["revision_id"]
             permit = services.execution.acquire(e.owner)
             try:
-                with pytest.raises(ToolError, match=r"^document_busy:|^metadata_busy:|^execution_busy:|^rate_limited:|^too_many_requests:"):
+                with pytest.raises(ToolError, match=r"^document_operations_busy:") as caught:
                     await adapter.invoke(None, "get_document_metadata", e.job.job_id)
+                assert "API rejected the operation (HTTP 429)" in str(caught.value)
             finally:
                 permit.close()
             for principal, status in ((who("user:2"), 404), (who(scopes=set()), 403)):
@@ -118,7 +119,8 @@ def test_write_bytes_headers_and_invalid_arguments_send_nothing():
             segments=[dict(client_key="main", segment_id=None, page_start=1, page_end=1,
                            type_id=ID, type_version=1, fields=[])]))
         dumped = request.model_dump(mode="json", by_alias=True, exclude_none=False)
-        receipt = dict(job_id=ID, revision_id=RID, sha256=DIGEST, segment_ids={"main": SID})
+        receipt = dict(revision_id=RID, sha256=DIGEST, segment_ids={"main": SID})
+        SaveMetadataReceipt.model_validate(receipt)
         seen = []
 
         def handler(outgoing):
