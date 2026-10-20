@@ -1,5 +1,6 @@
 """Fixed mapping contracts, import purity, and real HTTP read integration."""
 import asyncio
+import os
 import subprocess
 import sys
 
@@ -84,8 +85,8 @@ def test_wrong_argument_container_or_count(args):
 
 
 @pytest.mark.parametrize("op", [None, [], "GET", "get_document_canonical_page",
-    "download_document_metadata", "get_document_metadata/content", "save_document_metadata",
-    "approve_document_metadata", "https://example.test", "/jobs/../secret", "%2e%2e%2f"])
+    "download_document_metadata", "get_document_metadata/content",
+    "https://example.test", "/jobs/../secret", "%2e%2e%2f"])
 def test_unknown_operations(op):
     with pytest.raises(ToolError) as caught:
         document_request(op, [J])
@@ -109,6 +110,7 @@ assert document_request('get_document_metadata', ['a' * 32])[0] == 'GET'
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.skipif(os.name != "posix", reason="MetadataFiles requires POSIX")
 def test_real_http_reads(http):
     e, app, client, services = http
     receipt, _ = save(e)

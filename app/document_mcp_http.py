@@ -1,16 +1,20 @@
-"""Pure, fixed HTTP mapping for bounded document MCP reads.
+"""Pure, fixed HTTP mapping for bounded document MCP reads and writes.
 
 Paths are relative to the API version prefix. This module performs no I/O,
 reference fetching, pagination, retries, or client/registry registration.
 """
+import json
 import re
 
 from mcp.server.mcpserver.exceptions import ToolError
+
+from .metadata_models import MAX_REQUEST_BYTES, ApprovalInput, SaveMetadataInput
 
 
 _ID = re.compile(r"[0-9a-f]{32}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _FIELD = re.compile(r"[a-z][a-z0-9_]{0,63}")
+_KEY = re.compile(r"[A-Za-z0-9._:-]{8,128}")
 _ROOT = "/jobs/{job_id}"
 _REVISION = _ROOT + "/metadata/revisions/{revision_id}"
 _FIELD_ROOT = _REVISION + "/segments/{segment_id}/fields"
@@ -99,16 +103,81 @@ def _valid(name, value, operation):
     return False
 
 
+_WRITES = {
+    "save_document_metadata": ("PUT", _ROOT + "/metadata", SaveMetadataInput),
+    "approve_document_metadata": (
+        "POST", _ROOT + "/metadata/approve", ApprovalInput,
+    ),
+}
+
+
+def document_body(body):
+    """Encode a JSON dictionary once, within the shared request byte limit."""
+    if body is None:
+        return None
+    error = "invalid_request: Invalid document body."
+    try:
+        if type(body) is not dict:
+            raise ValueError
+        encoder = json.JSONEncoder(
+            ensure_ascii=False, separators=(",", ":"), allow_nan=False,
+        )
+        result = bytearray()
+        for chunk in encoder.iterencode(body):
+            remaining = MAX_REQUEST_BYTES - len(result)
+            # Check codepoint count before allocating encoded chunk bytes.
+            if len(chunk) > remaining:
+                error = "request_too_large: Document body exceeds its byte limit."
+                break
+            encoded = chunk.encode("utf-8", errors="strict")
+            if len(encoded) > remaining:
+                error = "request_too_large: Document body exceeds its byte limit."
+                break
+            result.extend(encoded)
+        else:
+            return bytes(result)
+    except Exception:
+        pass
+    raise ToolError(error) from None
+
+
+def _write_request(operation, args):
+    method, path, model = _WRITES[operation]
+    try:
+        if type(args) not in (list, tuple) or len(args) != 3:
+            raise ValueError
+        job_id, body, key = args
+        if not _matches(job_id, _ID) or not _matches(key, _KEY):
+            raise ValueError
+        if type(body) is not dict and not isinstance(body, model):
+            raise ValueError
+        # Validate original nested instances before any serializer can coerce.
+        validated = model.model_validate(body, strict=True)
+        detached = validated.model_dump(mode="python", by_alias=True, warnings="error")
+        validated = model.model_validate(detached, strict=True)
+        body = validated.model_dump(
+            mode="json", by_alias=True, exclude_none=False, warnings="error",
+        )
+    except Exception:
+        pass
+    else:
+        document_body(body)
+        return method, path.format(job_id=job_id), {}, body, {"Idempotency-Key": key}
+    raise ToolError("validation_error: Invalid document request.") from None
+
+
 def document_request(operation, args):
-    """Return (method, relative_path, query, body, headers) for one read.
+    """Return (method, relative_path, query, body, headers) for one operation.
 
     args must be a positional list or tuple in document_mcp_tools signature
     order. Omitted trailing optional arguments receive the tool defaults.
     Only None query values are omitted; continuations remain caller-controlled.
     Errors are fixed messages and never include caller-supplied content.
     """
-    if type(operation) is not str or operation not in _OPERATIONS:
+    if type(operation) is not str or operation not in (*_OPERATIONS, *_WRITES):
         raise ToolError("unknown_operation: Unsupported document operation.") from None
+    if operation in _WRITES:
+        return _write_request(operation, args)
     path, names, required, defaults, query_names = _OPERATIONS[operation]
     if type(args) not in (list, tuple) or not required <= len(args) <= len(names):
         raise ToolError("validation_error: Invalid document request.") from None
