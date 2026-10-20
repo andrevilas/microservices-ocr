@@ -23,8 +23,8 @@ permanece na versão anterior; não existe entrega automática habilitada.
 
 Limites compatíveis com o piloto RAG: pacote de artefatos de até 8 MiB,
 pages de até 2 MiB, texto de até 200 mil caracteres por página. Páginas
-vazias são rejeitadas explicitamente; não são removidas nem renumeradas.
-É necessário resolver essa limitação do receptor antes de documentos reais.
+vazias são preservadas, sem texto inventado e sem renumeração das citações.
+O receptor deve aceitar páginas vazias antes da ativação deste adaptador.
 O destino é configuração interna confiável, não parâmetro de cliente.
 
 ## Antes de ativar

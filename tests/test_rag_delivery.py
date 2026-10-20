@@ -86,22 +86,32 @@ def test_source_ownership_and_scopes(source):
     assert exc.value.status == 403
 
 
-@pytest.mark.parametrize("artifact", ["pdf", "page", "blank"])
+@pytest.mark.parametrize("artifact", ["pdf", "page"])
 def test_source_integrity(source, artifact):
     store, job, dest = source
     if artifact == "pdf":
         job.output_pdf_path.write_bytes(b"corrupt")
     elif artifact == "page":
         page_path(job.working_dir, 2).write_text("corrupt")
-    else:
-        other = store.create("blank.pdf", pdf(["first", ""]), owner_user_id=1)
-        orchestrator(store).process_job(other.job_id)
-        job = other
     with pytest.raises(ApplicationError) as exc:
         prepare_delivery(store, OWNER, job.job_id, dest)
-    assert exc.value.code == ("rag_page_unsupported" if artifact == "blank" else "rag_source_integrity")
+    assert exc.value.code == "rag_source_integrity"
     assert store._artifact_leases == {}
     assert job.artifacts_removed_at is None
+
+
+def test_blank_page_preserves_pdf_numbering(source):
+    import base64
+    store, _, dest = source
+    job = store.create("blank.pdf", pdf(["first", "", "last"]), owner_user_id=1)
+    orchestrator(store).process_job(job.job_id)
+    prepared = prepare_delivery(store, OWNER, job.job_id, dest)
+    body = json.loads(prepared.payload)
+    pages = [json.loads(line) for line in base64.b64decode(body["artifacts"]["pages"]).splitlines()]
+    assert [page["page"] for page in pages] == [1, 2, 3]
+    assert not pages[1]["text"].strip()
+    assert "last" in pages[2]["text"]
+    assert base64.b64decode(body["artifacts"]["pdf"]) == job.output_pdf_path.read_bytes()
 
 
 @pytest.mark.parametrize("status", [301, 307, 400, 401, 403, 409, 429, 500, 503])

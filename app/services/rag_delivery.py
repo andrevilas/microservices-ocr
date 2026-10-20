@@ -92,8 +92,8 @@ def prepare_delivery(store, principal: Principal, job_id: str,
             page_bytes = 0
             for info in report.pages:
                 text = read_page(job.working_dir, info)
-                # Current receiver rejects empty pages. Do not renumber or invent text.
-                if not text.strip() or len(text) > 200000 or "\x00" in text:
+                # Preserve blank pages so subsequent citations keep PDF numbering.
+                if len(text) > 200000 or "\x00" in text:
                     raise ApplicationError(422, "rag_page_unsupported", "A page cannot be represented by the RAG pilot.")
                 line = _json({"page": info.page, "text": text}) + b"\n"
                 page_bytes += len(line)
