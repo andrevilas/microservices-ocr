@@ -378,7 +378,8 @@ def test_producer_error_after_prefix_aborts_without_leaking(env, monkeypatch, fa
             assert caught.value.status == 503
             assert caught.value.code == ("result_integrity_error" if failure == "integrity"
                                          else "document_operations_unavailable")
-            assert caught.value.message == "Document operation failed."
+            assert caught.value.message == ("Document operation failed." if failure == "integrity"
+                                            else "Document operations are unavailable.")
             assert caught.value.__cause__ is None and caught.value.__context__ is None
         await idle(e, streams)
 
