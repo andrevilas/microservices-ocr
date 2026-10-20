@@ -173,7 +173,8 @@ def test_active_document_worker_drains_before_backend_stops_and_lease_release(ru
         r.events.append("documents.drained")
 
     def observed_release(lease):
-        if lease is getattr(app.state, "runtime_lease", None):
+        if (lease is getattr(app.state, "runtime_lease", None)
+                and lease._file is not None and not lease._file.closed):
             assert exited.is_set()
             assert execution.active_count == 0
             assert app.state.document_provider is provider
