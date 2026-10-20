@@ -1,5 +1,5 @@
 """Basic metadata reads over the shared document execution runtime."""
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Path, Query, Request
 
@@ -8,7 +8,9 @@ from app.document_canonical_models import (
     CanonicalManifest, CanonicalPageChunk, CanonicalPageText,
 )
 from app.document_http_examples import response_example
-from app.document_content_models import MetadataSchemaChunk
+from app.document_content_models import (
+    MetadataEvidencePage, MetadataSchemaChunk, MetadataStringChunk, MetadataValuePage,
+)
 from app.document_transport_models import MetadataFieldPage, MetadataRevisionPage, MetadataView
 from app.http_contract import error_responses, example, operation
 from app.security import require_principal
@@ -132,6 +134,75 @@ async def list_metadata_fields(
         lambda control: services.queries.list_fields(
             principal, job_id, revision_id, segment_id, sha256=sha256,
             limit=limit, after=after, checkpoint=control.checkpoint),
+    )
+
+
+@router.get(
+    "/metadata/revisions/{revision_id}/segments/{segment_id}/fields/{field_name}/values",
+    response_model=MetadataValuePage,
+    operation_id="ocr_list_document_metadata_values",
+    responses=example(response_example(MetadataValuePage)),
+    openapi_extra=operation("jobs:read", "artifacts:read", "metadata:read"),
+)
+async def list_metadata_values(
+    job_id: ID, revision_id: ID, segment_id: ID,
+    field_name: Annotated[str, Path(pattern=r"^[a-z][a-z0-9_]{0,63}$")],
+    sha256: Digest, principal: Reader, services: Services,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    after: Annotated[str | None, Query(max_length=2048)] = None,
+):
+    return await services.execution.run(
+        principal,
+        lambda control: services.queries.list_values(
+            principal, job_id, revision_id, segment_id, field_name, sha256=sha256,
+            limit=limit, after=after, checkpoint=control.checkpoint),
+    )
+
+
+@router.get(
+    "/metadata/revisions/{revision_id}/segments/{segment_id}/fields/{field_name}/evidence",
+    response_model=MetadataEvidencePage,
+    operation_id="ocr_list_document_metadata_evidence",
+    responses=example(response_example(MetadataEvidencePage)),
+    openapi_extra=operation("jobs:read", "artifacts:read", "metadata:read"),
+)
+async def list_metadata_evidence(
+    job_id: ID, revision_id: ID, segment_id: ID,
+    field_name: Annotated[str, Path(pattern=r"^[a-z][a-z0-9_]{0,63}$")],
+    sha256: Digest, principal: Reader, services: Services,
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    after: Annotated[str | None, Query(max_length=2048)] = None,
+):
+    return await services.execution.run(
+        principal,
+        lambda control: services.queries.list_evidence(
+            principal, job_id, revision_id, segment_id, field_name, sha256=sha256,
+            limit=limit, after=after, checkpoint=control.checkpoint),
+    )
+
+
+@router.get(
+    "/metadata/revisions/{revision_id}/segments/{segment_id}/fields/{field_name}/strings/{part}",
+    response_model=MetadataStringChunk,
+    operation_id="ocr_get_document_metadata_string",
+    responses=example(response_example(MetadataStringChunk)),
+    openapi_extra=operation("jobs:read", "artifacts:read", "metadata:read"),
+)
+async def get_metadata_string(
+    job_id: ID, revision_id: ID, segment_id: ID,
+    field_name: Annotated[str, Path(pattern=r"^[a-z][a-z0-9_]{0,63}$")],
+    part: Literal["raw", "normalized"],
+    sha256: Digest, principal: Reader, services: Services,
+    item_index: Annotated[int | None, Query(ge=0, le=99)] = None,
+    offset: Annotated[int, Query(ge=0, le=262144)] = 0,
+    max_chars: Annotated[int, Query(ge=1, le=1000)] = 1000,
+):
+    return await services.execution.run(
+        principal,
+        lambda control: services.queries.get_string(
+            principal, job_id, revision_id, segment_id, field_name, sha256=sha256,
+            part=part, item_index=item_index, offset=offset, max_chars=max_chars,
+            checkpoint=control.checkpoint),
     )
 
 
