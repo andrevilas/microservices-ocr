@@ -417,6 +417,7 @@
         items.push(actionButton("retry", id, j.options_requested ? "Reprocessar com as mesmas opções" : "Reprocessar com as opções atuais"));
         if (j.options_requested) items.push(actionButton("retry-current", id, "Reprocessar com as opções atuais"));
       }
+      if (j.status === "completed" && !gone(j) && /^[0-9a-f]{32}$/.test(id)) items.push(el("a", {className: "button", href: `/documents/${id}/review`, text: "Revisar metadados"}));
       items.push(actionButton("hide", id, "Ocultar desta lista", {className: "button button-quiet", hint: "Apenas nesta aba; não altera o servidor."}));
       actionsBox.replaceChildren(...items);
       $("detail-danger").hidden = !terminalKept;
