@@ -129,7 +129,7 @@ def test_safe_authority_errors(data, case, suffix, method, model, operation_id, 
     response = fetch(d, suffix)
     assert response.status_code == caught.value.status
     assert response.json()["error"]["code"] == caught.value.code
-    assert response.json()["error"]["message"] == "Document metadata query failed."
+    assert response.json()["error"]["message"] == caught.value.message == "Document operation failed."
 
 
 @pytest.mark.parametrize("suffix,params,bad_field", [
