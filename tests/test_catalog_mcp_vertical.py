@@ -13,6 +13,7 @@ import pytest
 
 from app.context_templates import ContextTemplateList, TemplateCloneReceipt
 from app.catalog_models import ContextInput, TypeInput
+from catalog_tool_expectations import EXPECTED_TOOL_COUNT, EXPECTED_TOOL_NAMES
 from test_mcp_vertical import connected, runtime  # noqa: F401  (runtime is a pytest fixture)
 
 ADMIN_EMAIL = "admin@localhost"
@@ -137,8 +138,9 @@ class Tools:
 
 def check_discovery(listing):
     tools = {t.name: t for t in listing.tools}
-    assert len(listing.tools) == len(tools) == 34
-    assert set(tools) == LEGACY_TOOLS | CATALOG_TOOLS
+    assert len(listing.tools) == len(tools) == EXPECTED_TOOL_COUNT
+    assert set(tools) == EXPECTED_TOOL_NAMES
+    assert LEGACY_TOOLS | CATALOG_TOOLS <= set(tools)
     assert all(t.output_schema for t in tools.values())
     assert all(t.input_schema["additionalProperties"] is False for t in tools.values())
     for name in CATALOG_TOOLS:

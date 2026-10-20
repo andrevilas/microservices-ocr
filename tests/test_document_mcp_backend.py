@@ -1,6 +1,6 @@
 """Real MCP protocol with synthetic authentication, not OAuth or six-client qualification.
 
-Document registration is staged here only; production's 34-tool registry stays unchanged.
+Document tools use the real global 46-tool registry.
 """
 import asyncio
 from dataclasses import replace
@@ -24,21 +24,7 @@ READ = frozenset({"jobs:read", "artifacts:read", "metadata:read"})
 
 
 @pytest.fixture
-def staged_registration(monkeypatch):
-    # Temporary until the next registry slice: remove this fixture then.
-    import app.mcp_server as backend
-    from app.document_mcp_tools import register_document_tools
-    original = backend.register_tools
-
-    def register(server, invoke):
-        original(server, invoke)
-        register_document_tools(server, invoke)
-
-    monkeypatch.setattr(backend, "register_tools", register)
-
-
-@pytest.fixture
-def backend(env, monkeypatch, staged_registration):
+def backend(env, monkeypatch):
     import app.main as main
     from app.config import settings
     from app.services.upload_service import get_upload_service
