@@ -10,7 +10,9 @@ from starlette.responses import JSONResponse
 
 from app.application import ApplicationError, get_job_application
 from app.catalog_mcp_tools import CATALOG_OPERATIONS
-from app.mcp_tools import INSTRUCTIONS, OcrMCPServer, register_tools
+from app.mcp_tools import INSTRUCTIONS, MCP_VERSION, OcrMCPServer, register_tools
+from app.document_mcp_tools import DOCUMENT_OPERATIONS
+from app.document_mcp_runtime import execute_document
 from app.security import authenticate_bearer
 from app.services.admission_service import submit_and_enqueue
 from app.services.job_queue import get_job_queue_processor
@@ -102,8 +104,9 @@ class BearerAuth:
 def build_mcp_server(service_provider=get_job_application, upload_provider=get_upload_service,
                      queue_provider=get_job_queue_processor, batch_provider=get_batch_service,
                      export_provider=get_export_service, control_provider=get_control_service,
-                     *, request_authenticator=None, transport_security=None, catalog_provider=None):
-    server = OcrMCPServer("OCR Recognizer", version="0.5.0", instructions=INSTRUCTIONS)
+                     *, request_authenticator=None, transport_security=None, catalog_provider=None,
+                     document_provider=None):
+    server = OcrMCPServer("OCR Recognizer", version=MCP_VERSION, instructions=INSTRUCTIONS)
     if catalog_provider is None:
         # Imported only here so the pure registry and stdio never load the runtime. Resolved lazily per call.
         from app.services.catalog_runtime import CatalogProvider
@@ -139,6 +142,8 @@ def build_mcp_server(service_provider=get_job_application, upload_provider=get_u
             return getattr(service_provider(), operation)(principal, *args)
 
         try:
+            if operation in DOCUMENT_OPERATIONS:
+                return await execute_document(document_provider, principal, operation, args)
             # Shield admission/queue handoff from request cancellation. The job's
             # persisted lifecycle is independent of the MCP connection.
             return await run_in_threadpool(execute)
