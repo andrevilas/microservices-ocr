@@ -287,6 +287,7 @@ def test_mounted_document_exchanges(mounted_document, method, suffix, status):
     elif method == "post":
         snapshot = persisted(e, head)
         kwargs["json"] = dict(
+            revision_id=head.revision_id,
             expected_head=head.revision_id, expected_sha256=head.sha256,
             reviewed_fields=[dict(segment_id=segment.segment_id, field_name=field.field_name)
                              for segment in snapshot.segments for field in segment.fields])
