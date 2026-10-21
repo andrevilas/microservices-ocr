@@ -52,8 +52,8 @@ tokens ou identidades nos logs. O operador deve coletar esses avisos.
 
 Continuam pendentes a qualificação operacional desses procedimentos, os valores
 da política de entrega para produção e o arquivamento/expiração de recibos.
-Registros concluídos contam no limite de entradas para impedir crescimento
-ilimitado; ao atingir a capacidade, novas admissões param.
+Somente entregas ativas contam no limite de entradas; recibos concluídos
+não bloqueiam novas admissões.
 
 ## Evidências e reversão
 

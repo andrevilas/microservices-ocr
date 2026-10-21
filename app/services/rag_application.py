@@ -1,12 +1,14 @@
 """Shared HTTP/MCP application facade. Configuration is operator-owned."""
 import hashlib
 from app.application import ApplicationError
-from app.rag_models import DeliveryStatus, DestinationList, DestinationView, RecoveryLink
+from app.rag_models import (DeliveryList, DeliveryOperations, DeliveryStatus, DestinationList,
+                            DestinationView, RecoveryLink)
 
 
 class RagApplication:
-    def __init__(self, outbox, destinations):
+    def __init__(self, outbox, destinations, worker=None):
         self.outbox = outbox
+        self.worker = worker
         self.destinations = dict(destinations)
         if len(self.destinations) > 100:
             raise ValueError("too many RAG destinations")
@@ -40,6 +42,26 @@ class RagApplication:
     def cancel_rag_delivery(self, principal, delivery_id):
         self.outbox.cancel(principal, delivery_id)
         return self.get_rag_delivery(principal, delivery_id)
+
+    def retry_rag_delivery(self, principal, delivery_id):
+        self.outbox.retry(principal, delivery_id)
+        return self.get_rag_delivery(principal, delivery_id)
+
+    def list_rag_deliveries(self, principal, state=None, limit=50):
+        return DeliveryList(items=[DeliveryStatus(**row) for row in self.outbox.list(principal, state, limit)])
+
+    def get_rag_operations(self, principal):
+        if not (principal.kind == "user" and principal.is_admin):
+            raise ApplicationError(403, "admin_required", "A human administrator identity is required.")
+        snapshot = self.worker.snapshot() if self.worker is not None else None
+        if snapshot is None:
+            raise ApplicationError(503, "rag_unavailable", "RAG delivery worker is not configured.")
+        thread = getattr(self.worker, "_thread", None)
+        return DeliveryOperations(
+            enabled=True, worker_running=bool(thread and thread.is_alive()),
+            worker_failure=snapshot["worker_failure"], states=snapshot["states"], due=snapshot["due"],
+            near_deadline=snapshot["near_deadline"], requires_resolution=snapshot["requires_resolution"],
+            queued_payload_bytes=snapshot["queued_payload_bytes"])
 
     def get_rag_recovery(self, principal, delivery_id):
         raw = self.outbox.recovery_package(principal, delivery_id)

@@ -12,6 +12,9 @@ from app.config import settings
 from app.services.rag_delivery import PreparedDelivery, prepare_delivery, send_delivery
 from app.services.rag_delivery_contract import parse_manifest
 
+ACTIVE = "state NOT IN ('indexed','canceled')"
+MIN_CLAIM_SECONDS = 60
+
 
 def initialize(conn):
     conn.execute("""CREATE TABLE IF NOT EXISTS rag_outbox(
@@ -35,12 +38,24 @@ class DeliveryPolicy:
     max_attempts: int
     backoff_seconds: int
     claim_seconds: int
+    # Active (not indexed/canceled) entries one owner may hold; None = max_entries.
+    max_entries_per_owner: int | None = None
 
     def __post_init__(self):
-        if any(type(v) is not int or not 1 <= v <= 2**31 - 1 for v in asdict(self).values()):
+        values = {k: v for k, v in asdict(self).items()
+                  if not (k == "max_entries_per_owner" and v is None)}
+        if any(type(v) is not int or not 1 <= v <= 2**31 - 1 for v in values.values()):
             raise ValueError("invalid delivery policy")
-        if self.max_attempts > 100 or self.claim_seconds > self.hold_seconds:
+        # A claim shorter than one bounded HTTP attempt would discard successful
+        # receipts as superseded and exhaust attempts.
+        if (self.max_attempts > 100 or self.claim_seconds > self.hold_seconds
+                or self.claim_seconds < MIN_CLAIM_SECONDS
+                or (self.max_entries_per_owner or 0) > self.max_entries):
             raise ValueError("invalid delivery policy")
+
+    @property
+    def owner_entries(self):
+        return self.max_entries_per_owner or self.max_entries
 
 
 def binding(destination):
@@ -113,21 +128,29 @@ class RagOutbox:
             with self.transaction() as conn:
                 self.expire(conn, now)
                 old = conn.execute("SELECT id FROM rag_outbox WHERE job_id=?", (job_id,)).fetchone()
+                requeue = False
                 if old:
                     row = self.row(conn, old[0])
                     if (row["id"] != manifest.delivery_id or row["destination"] != binding(destination)
                             or row["owner"] != principal.subject):
                         raise ApplicationError(409, "rag_delivery_conflict", "Job already has a different delivery.")
-                    return row["id"]
+                    if row["state"] != "canceled":
+                        return row["id"]
+                    # A canceled delivery may be submitted again; the receiver's
+                    # idempotency returns the same receipt if it was stored.
+                    requeue = True
                 job = self.store.jobs[job_id]
                 self.store.check_retained(job)
                 if job.artifacts_removed_at is not None or job.status != "completed":
                     raise ApplicationError(409, "rag_source_unavailable", "Result became unavailable.")
                 count, size = conn.execute(
-                    "SELECT count(*),coalesce(sum(length(payload)),0) FROM rag_outbox").fetchone()
-                # Unresolved deadlines/failures block further admissions.
-                unresolved = conn.execute("SELECT 1 FROM rag_outbox WHERE state='resolution' LIMIT 1").fetchone()
-                if (unresolved or count >= self.policy.max_entries
+                    f"SELECT count(*),coalesce(sum(length(payload)),0) FROM rag_outbox WHERE {ACTIVE}").fetchone()
+                owned = conn.execute(f"SELECT count(*) FROM rag_outbox WHERE owner=? AND {ACTIVE}",
+                                     (principal.subject,)).fetchone()[0]
+                # The owner's unresolved deadlines/failures block only that owner.
+                unresolved = conn.execute("SELECT 1 FROM rag_outbox WHERE state='resolution' AND owner=? LIMIT 1",
+                                          (principal.subject,)).fetchone()
+                if (unresolved or count >= self.policy.max_entries or owned >= self.policy.owner_entries
                         or size + len(prepared.payload) > self.policy.max_payload_bytes):
                     raise ApplicationError(429, "rag_queue_full", "Delivery capacity requires operator resolution.")
                 # Backpressure before duplicating the packet into SQLite/WAL.
@@ -135,11 +158,19 @@ class RagOutbox:
                 required_free = 3 * len(prepared.payload) + settings.upload_min_free_mb * 1024 * 1024
                 if shutil.disk_usage(self.store.root_dir).free < required_free:
                     raise ApplicationError(429, "rag_storage_pressure", "Storage capacity requires operator resolution.")
-                conn.execute("""INSERT INTO rag_outbox VALUES(?,?,?,?,?,'queued',?,?,0,?,NULL,NULL,NULL,NULL,?)""",
-                             (manifest.delivery_id, job_id, principal.subject, binding(destination),
-                              prepared.payload, now, now + self.policy.hold_seconds, now,
-                              json.dumps(asdict(self.policy))))
-                self.audit(conn, manifest.delivery_id, "queued", now)
+                if requeue:
+                    conn.execute("UPDATE rag_outbox SET payload=?,state='queued',created=?,deadline=?,attempts=0,"
+                                 "next_attempt=?,claim=NULL,claim_until=NULL,receipt=NULL,error=NULL,policy=? "
+                                 "WHERE id=?",
+                                 (prepared.payload, now, now + self.policy.hold_seconds, now,
+                                  json.dumps(asdict(self.policy)), manifest.delivery_id))
+                    self.audit(conn, manifest.delivery_id, f"requeued@{now:.6f}", now)
+                else:
+                    conn.execute("""INSERT INTO rag_outbox VALUES(?,?,?,?,?,'queued',?,?,0,?,NULL,NULL,NULL,NULL,?)""",
+                                 (manifest.delivery_id, job_id, principal.subject, binding(destination),
+                                  prepared.payload, now, now + self.policy.hold_seconds, now,
+                                  json.dumps(asdict(self.policy))))
+                    self.audit(conn, manifest.delivery_id, "queued", now)
             return manifest.delivery_id
 
     def status(self, principal, delivery_id):
@@ -147,9 +178,30 @@ class RagOutbox:
         with self.transaction() as conn:
             self.expire(conn, time.time())
             row = self.row(conn, delivery_id)
-            if row["owner"] != principal.subject:
-                raise ApplicationError(404, "rag_delivery_not_found", "Delivery not found.")
+            self._accessible(principal, row)
             return {k: row[k] for k in ("id", "job_id", "state", "deadline", "attempts", "next_attempt", "error")}
+
+    def list(self, principal, state=None, limit=50):
+        principal.require("jobs:read")
+        if state is not None and state not in ("queued", "sending", "retry", "indexed", "resolution", "canceled"):
+            raise ApplicationError(422, "validation_error", "Invalid delivery state.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ApplicationError(422, "validation_error", "Invalid limit.")
+        clauses, params = [], []
+        if not self._operator(principal):
+            clauses.append("owner=?")
+            params.append(principal.subject)
+        if state is not None:
+            clauses.append("state=?")
+            params.append(state)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        with self.transaction() as conn:
+            self.expire(conn, time.time())
+            cursor = conn.execute(
+                "SELECT id,job_id,state,deadline,attempts,next_attempt,error FROM rag_outbox"
+                + where + " ORDER BY created DESC,id LIMIT ?", (*params, limit))
+            names = [d[0] for d in cursor.description]
+            return [dict(zip(names, row)) for row in cursor.fetchall()]
 
     def receipt(self, principal, delivery_id):
         """Read the last verified receiver receipt, including pending indexing."""
@@ -249,20 +301,55 @@ class RagOutbox:
             return "indexed"
         return state
 
+    @staticmethod
+    def _operator(principal):
+        return principal.kind == "user" and bool(getattr(principal, "is_admin", False))
+
+    def _accessible(self, principal, row):
+        # Owners act on their deliveries; a human administrator may resolve any
+        # delivery so one stuck entry never depends on the owner's session.
+        if row["owner"] != principal.subject and not self._operator(principal):
+            raise ApplicationError(404, "rag_delivery_not_found", "Delivery not found.")
+        return row["owner"] != principal.subject
+
+    def retry(self, principal, delivery_id):
+        """Return a delivery in resolution to the retry queue with a fresh budget.
+
+        Requires the retained package. The hold deadline is renewed by the
+        delivery's own policy; nothing is deleted or released here.
+        """
+        principal.require("jobs:read")
+        principal.require("jobs:submit")
+        now = time.time()
+        with self.transaction() as conn:
+            self.expire(conn, now)
+            row = self.row(conn, delivery_id)
+            operator = self._accessible(principal, row)
+            if row["state"] != "resolution":
+                raise ApplicationError(409, "rag_delivery_not_in_resolution",
+                                       "Only deliveries in resolution can be retried.")
+            if row["payload"] is None:
+                raise ApplicationError(409, "rag_package_unavailable", "No recovery package is retained.")
+            policy = DeliveryPolicy(**json.loads(row["policy"]))
+            conn.execute("UPDATE rag_outbox SET state='retry',attempts=0,next_attempt=?,deadline=?,error=NULL,"
+                         "claim=NULL,claim_until=NULL WHERE id=?",
+                         (now, max(row["deadline"], now + policy.hold_seconds), delivery_id))
+            self.audit(conn, delivery_id, ("operator-" if operator else "") + f"retry@{now:.6f}", now)
+            return "retry"
+
     def cancel(self, principal, delivery_id):
-        """Explicit owner action only; release hold, do not physically delete here."""
+        """Explicit owner/administrator action; release hold, do not physically delete here."""
         principal.require("jobs:read")
         principal.require("artifacts:delete")
         now = time.time()
         with self.transaction() as conn:
             row = self.row(conn, delivery_id)
-            if row["owner"] != principal.subject:
-                raise ApplicationError(404, "rag_delivery_not_found", "Delivery not found.")
+            operator = self._accessible(principal, row)
             if (row["claim_until"] or 0) > now:
                 raise ApplicationError(409, "rag_delivery_busy", "Wait for the active attempt to finish.")
             if row["state"] in ("indexed", "canceled"):
                 return row["state"]
             conn.execute("UPDATE rag_outbox SET state='canceled',payload=NULL,claim=NULL,claim_until=NULL WHERE id=?",
                          (delivery_id,))
-            self.audit(conn, delivery_id, "canceled", now)
+            self.audit(conn, delivery_id, ("operator-" if operator else "") + f"canceled@{now:.6f}", now)
             return "canceled"

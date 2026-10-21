@@ -55,7 +55,7 @@ def validate_response(app, response, path, method="get"):
 def test_all_published_examples_and_security(contract):
     app, _, _, _ = contract
     schema = v1_schema(app)
-    assert schema["info"]["x-api-version"] == "1.8.0"
+    assert schema["info"]["x-api-version"] == "1.9.0"
     assert list(schema["components"]["securitySchemes"]) == ["PrincipalBearer"]
     operations = []
     for path, methods in schema["paths"].items():

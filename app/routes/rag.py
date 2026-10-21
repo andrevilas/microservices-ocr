@@ -1,10 +1,11 @@
 """Authenticated RAG delivery operations; package bytes only over HTTP."""
 import json
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
 from app.application import Principal
 from app.http_contract import error_responses, operation, example
-from app.rag_models import DeliveryId, DeliveryInput, DeliveryStatus, DestinationList, RecoveryLink
+from app.rag_models import (DeliveryId, DeliveryInput, DeliveryList, DeliveryOperations, DeliveryState,
+                            DeliveryStatus, DestinationList, RecoveryLink)
 from app.routes.uploads import json_contract, json_input
 from app.security import require_principal
 from app.services.rag_application import require_rag
@@ -38,6 +39,28 @@ async def submit(request: Request, principal: Principal = Depends(require_princi
     principal.require("artifacts:read")
     body = await json_input(request, DeliveryInput, max_bytes=4096)
     return await run_in_threadpool(require_rag(request).submit_rag_delivery, principal, body)
+
+
+@router.get("/deliveries", response_model=DeliveryList, responses=example({"items": [STATUS]}), openapi_extra=operation("jobs:read"))
+async def deliveries(request: Request, state: DeliveryState | None = None,
+                     limit: int = Query(50, ge=1, le=100),
+                     principal: Principal = Depends(require_principal)):
+    """List owned deliveries, newest first; a human administrator sees every owner."""
+    return await run_in_threadpool(require_rag(request).list_rag_deliveries, principal, state, limit)
+
+
+@router.get("/operations", response_model=DeliveryOperations, openapi_extra=operation("jobs:read"))
+async def operations(request: Request, principal: Principal = Depends(require_principal)):
+    """Aggregate delivery worker state for human administrators; no documents or credentials."""
+    return await run_in_threadpool(require_rag(request).get_rag_operations, principal)
+
+
+@router.post("/deliveries/{delivery_id}/retry", response_model=DeliveryStatus,
+             responses=example({**STATUS, "state": "retry"}),
+             openapi_extra=operation("jobs:read", "jobs:submit"))
+async def retry(request: Request, delivery_id: DeliveryId, principal: Principal = Depends(require_principal)):
+    """Return a delivery in resolution to the retry queue with a fresh attempt budget; requires the retained package."""
+    return await run_in_threadpool(require_rag(request).retry_rag_delivery, principal, delivery_id)
 
 
 @router.get("/deliveries/{delivery_id}", response_model=DeliveryStatus, responses=example(STATUS), openapi_extra=operation("jobs:read"))

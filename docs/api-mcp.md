@@ -50,9 +50,9 @@ permite preparar upload, submeter uma referência e recuperar texto e artefato.
 
 ### Catálogo (contextos e tipos documentais) — HTTP e MCP
 
-Contrato atual: HTTP `1.8.0` com exatamente 66 operações (44 anteriores, incluindo
-14 de catálogo, mais 15 de documentos e 7 de entrega RAG) e MCP `0.7.0` com exatamente 52 ferramentas:
-20 legadas, 14 de catálogo, 12 de documentos e 6 de [entrega RAG](rag-api-mcp.md); 33 leituras e 19 escritas. A tabela
+Contrato atual: HTTP `1.9.0` com exatamente 69 operações (44 anteriores, incluindo
+14 de catálogo, mais 15 de documentos e 10 de entrega RAG) e MCP `0.7.0` com exatamente 55 ferramentas:
+20 legadas, 14 de catálogo, 12 de documentos e 9 de [entrega RAG](rag-api-mcp.md); 35 leituras e 20 escritas. A tabela
 acima lista só o subconjunto legado (20 tools; histórico: 12 leituras e 8 escritas).
 As 14 operações de catálogo (tag `Catalog`) estão implementadas em HTTP e MCP, e a
 UI existente do catálogo continua disponível. Escopos:
@@ -105,7 +105,7 @@ O SDK MCP oficial está fixado em 2.3.0. `/openapi.json` declara Bearer, schemas
 operationId e erros da API v1. O download usa HTTP autenticado; PDFs não entram
 no JSON das ferramentas. Entre as 20 ferramentas legadas (subconjunto histórico),
 doze são de leitura; preparação de upload,
-submissão, criação de lote, exportação, retry, exclusão de arquivos e os dois cancelamentos são mutações (8). No total de 52 ferramentas, 29 são leituras e 19 escritas. Admissão e encaminhamento à fila usam o mesmo serviço
+submissão, criação de lote, exportação, retry, exclusão de arquivos e os dois cancelamentos são mutações (8). No total de 55 ferramentas, 35 são leituras e 20 escritas. Admissão e encaminhamento à fila usam o mesmo serviço
 em HTTP e MCP.
 
 ## Autenticação e compatibilidade

@@ -63,9 +63,10 @@ exigindo margem de três vezes o pacote para SQLite/WAL, além de
 entre todos os escritores; a quota do filesystem continua necessária.
 Replays existentes não criam outra cópia e não são recusados por essa verificação.
 Não representa quota global de originais, derivados, metadados, SQLite/WAL
-e backups. Registros concluídos continuam contando para a capacidade:
-faltam política de arquivo/expiração de recibos e rotina de manutenção.
-Essa escolha limita crescimento e pode bloquear novas entregas.
+e backups. Apenas entregas ativas contam para a capacidade; registros
+`indexed`/`canceled` não ocupam vagas e já não guardam o pacote (payload
+NULL), restando recibo e auditoria (poucos KiB por entrega). Arquivamento
+ou expiração desses recibos continua pendente como manutenção futura.
 
 O estado resolution evita perda silenciosa, mas não é resolução automática
 do acervo vencido. Antes de ativar, definir política operacional aprovada
@@ -74,8 +75,15 @@ valores de prazo e qualificação operacional da integração runtime/API/MCP. A
 credenciais em memória já é suportada pelo worker. Não declarar
 retenção temporal plenamente resolvida enquanto essas peças faltarem.
 
-Também pendentes: revisão independente do código, revalidação do receptor
-e homologação de implantação/rollback. Páginas vazias já são preservadas
+Revisão independente: realizada em 21/10/2026 por agente Claude com contexto
+isolado (não Codex); achados corrigidos em `feat/rag-delivery-hardening`
+(nova tentativa, reenvio após cancelamento, acesso de administrador, bloqueio
+por proprietário, capacidade só de ativas, 401/403/404 transitórios, claim
+mínimo e validação de vínculos no startup). Recibo `pending` ainda reenvia o
+pacote e consome tentativas; o receptor atual responde `indexed` de forma
+síncrona, então isso fica como limitação documentada. Rollback para versão
+anterior a d2311db ignora a outbox: os pacotes continuam no SQLite, mas
+arquivos retidos por hold poderiam ser limpos pela versão antiga. Páginas vazias já são preservadas
 nos candidatos locais do adaptador e do receptor, com testes de numeração.
 Nenhum acervo real foi migrado.
 

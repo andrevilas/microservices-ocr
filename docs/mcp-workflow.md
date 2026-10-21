@@ -1,8 +1,8 @@
 # Fluxo vertical MCP e transporte local
 
 Entrega OCR-AM-08, atividade LPM `AGSM6EEjt7GVvdCdQ6hb`.
-Contrato atual: HTTP 1.8.0 (66 operações) e MCP 0.7.0 (52 ferramentas: 33 leituras,
-19 escritas); veja [API/MCP](api-mcp.md), [contrato HTTP](http-contract.md) e, para as
+Contrato atual: HTTP 1.9.0 (69 operações) e MCP 0.7.0 (55 ferramentas: 35 leituras,
+20 escritas); veja [API/MCP](api-mcp.md), [contrato HTTP](http-contract.md) e, para as
 12 operações documentais, [metadados documentais](document-metadata-api.md).
 As vinte ferramentas do subconjunto OCR legado descrito aqui, incluindo [lotes/exportação da AM-09](batches-exports.md), [controle da AM-10](job-control.md) e [exclusão da AM-11](retention.md), têm contratos de entrada/saída comuns nos transportes
 Streamable HTTP e stdio. A API v1 continua sendo a autoridade para identidade,
