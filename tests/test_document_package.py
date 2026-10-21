@@ -100,6 +100,13 @@ def env(tmp_path, request):
                             str(e.job.input_pdf_path), str(output)], check=True, timeout=300)
         else:
             output.write_bytes(pdf_bytes(PAGES, xmp=True))
+        param = getattr(request, "param", None)
+        if isinstance(param, tuple) and param[0] == "xmp":
+            with pikepdf.open(output, allow_overwriting_input=True) as pdf:
+                pdf.Root.Metadata = pikepdf.Stream(pdf, param[1], Type=pikepdf.Name.Metadata,
+                                                   Subtype=pikepdf.Name.XML)
+                # pikepdf would otherwise replace unparsable XMP with an empty packet.
+                pdf.save(output, fix_metadata_version=False)
         out = digest_file(output)
         pages = persist_pages(e.job.working_dir, PAGES, "pdf_text")
         persist_report(e.job.working_dir, JobReport(
@@ -366,3 +373,28 @@ def test_real_verapdf_rejects_undeclared_xmp(env, monkeypatch):
 def read_xmp_bytes(data):
     with pikepdf.open(io.BytesIO(data)) as pdf:
         return pdf.Root.Metadata.read_bytes()
+
+
+
+@pytest.mark.parametrize("env", [("xmp", b"<x:xmpmeta xmlns:x='adobe:ns:meta/'><unclosed>"),
+                                 ("xmp", b"<!DOCTYPE x [<!ENTITY a 'b'>]><x>&a;</x>"),
+                                 ("xmp", b"no xml at all")], indirect=True)
+def test_hostile_or_malformed_source_xmp_is_a_clean_rejection(env):
+    failure(lambda: create(env), 422, "package_xmp_invalid")
+    assert env.validator.calls == []
+    assert not env.jobs._artifact_leases
+
+
+def test_oversized_source_xmp_is_rejected(env, monkeypatch):
+    import app.services.package_service as service
+    monkeypatch.setattr(service, "MAX_XMP_BYTES", 16)
+    failure(lambda: create(env), 422, "package_xmp_invalid")
+
+
+def test_tampered_written_xmp_is_inconsistent(env, monkeypatch):
+    import app.services.package_service as service
+    original = service.inject
+    monkeypatch.setattr(service, "inject", lambda packet, projection: original(packet, projection).replace(
+        b"123/2026", b"999/2026"))
+    failure(lambda: create(env), 422, "package_xmp_inconsistent")
+    assert env.validator.calls == []

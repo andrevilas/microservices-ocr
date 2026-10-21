@@ -1,6 +1,6 @@
 """Independent, literal expectations for the currently advertised MCP tools."""
 
-EXPECTED_TOOL_COUNT = 55
+EXPECTED_TOOL_COUNT = 58
 EXPECTED_TOOL_NAMES = frozenset({
     "ocr_list_rag_destinations", "ocr_submit_rag_delivery", "ocr_get_rag_delivery",
     "ocr_get_rag_receipt", "ocr_get_rag_recovery", "ocr_cancel_rag_delivery",

@@ -16,6 +16,7 @@ from app.services.document_service import DocumentMetadataService
 from app.services.document_streaming import DocumentStreams
 from app.services.metadata_runtime import MetadataServices
 from app.services.metadata_store import _error, _guard, _require
+from app.services.package_service import DocumentPackageService
 from app.services.storage_service import JobStore
 from app.services.type_service import TypeService
 
@@ -27,6 +28,7 @@ class DocumentServices:
     execution: DocumentExecution
     queries: DocumentQueries
     streams: DocumentStreams
+    packages: DocumentPackageService
 
     @property
     def jobs(self) -> JobStore:
@@ -75,10 +77,12 @@ class DocumentProvider:
                 cached = self._cache.get(key)
                 if cached is None:
                     document = DocumentMetadataService(metadata, catalog.types)
+                    packages = DocumentPackageService(document)
                     services = DocumentServices(
                         document, document.canonical, self._execution,
                         DocumentQueries(document),
-                        DocumentStreams(document, document.canonical, self._execution))
+                        DocumentStreams(document, document.canonical, self._execution, packages),
+                        packages)
                 else:
                     old_metadata, old_catalog, services = cached
                     _require(old_metadata is metadata and old_catalog is catalog)
@@ -94,7 +98,10 @@ class DocumentProvider:
                          and type(services.streams) is DocumentStreams
                          and services.streams.document is services.document
                          and services.streams.canonical_service is services.canonical
-                         and services.streams.execution is self._execution)
+                         and services.streams.execution is self._execution
+                         and type(services.packages) is DocumentPackageService
+                         and services.packages.document is services.document
+                         and services.streams.packages is services.packages)
                 self._shared(metadata, catalog)
                 metadata.ensure_healthy()
                 # Publish only after construction and every identity/health check.

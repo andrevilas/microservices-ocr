@@ -19,6 +19,7 @@ from threading import Lock
 from uuid import uuid4
 from zipfile import ZIP_STORED, ZipFile, ZipInfo
 
+from lxml import etree
 import pikepdf
 
 from app.application import ApplicationError, JobApplication, Principal
@@ -34,6 +35,8 @@ from app.services.package_xmp import FIELD_TYPE, PROPERTIES, XmpField, XmpProjec
 from app.services.pdfa_validator import PROFILE_2B, REASON_NOT_CONFIGURED, build_validator, unavailable_result
 
 MIB = 1024 * 1024
+VALIDATION_TIMEOUT_SECONDS = 90
+MAX_XMP_BYTES = 4 * MIB
 CHUNK = 256 * 1024
 _READ_SCOPES = ("jobs:read", "artifacts:read", "metadata:read")
 _MEDIA = {"document.pdf": "application/pdf", "original.pdf": "application/pdf",
@@ -100,7 +103,10 @@ def write_xmp(source: Path, target: Path, projection: XmpProjection) -> None:
         metadata = pdf.Root.get("/Metadata")
         if not isinstance(metadata, pikepdf.Stream):
             raise _failed(422, "package_xmp_missing", "The PDF/A result has no XMP metadata stream.")
-        packet = inject(metadata.read_bytes(), projection)
+        try:
+            packet = inject(_bounded(metadata.read_bytes()), projection)
+        except (ValueError, etree.LxmlError):
+            raise _failed(422, "package_xmp_invalid", "The PDF/A result has unusable XMP metadata.") from None
         pdf.Root.Metadata = pikepdf.Stream(pdf, packet, Type=pikepdf.Name.Metadata, Subtype=pikepdf.Name.XML)
         pdf.save(target, fix_metadata_version=False)
 
@@ -110,7 +116,13 @@ def read_xmp(path: Path) -> bytes:
         metadata = pdf.Root.get("/Metadata")
         if not isinstance(metadata, pikepdf.Stream) or "/Filter" in metadata:
             raise _failed(422, "package_xmp_invalid", "Packaged XMP stream is missing or filtered.")
-        return metadata.read_bytes()
+        return _bounded(metadata.read_bytes())
+
+
+def _bounded(packet: bytes) -> bytes:
+    if len(packet) > MAX_XMP_BYTES:
+        raise _failed(422, "package_xmp_invalid", "XMP metadata exceeds the size limit.")
+    return packet
 
 
 def _settings_validator(timeout_seconds):
@@ -132,8 +144,16 @@ class DocumentPackageService:
         self._validator_factory = validator_factory or _settings_validator
         self._building: set[str] = set()
         self._lock = Lock()
-        with self.jobs._lock, self.jobs._get_conn():
-            self.jobs._get_conn().execute(_DDL)
+        self._table = False
+
+    def _conn(self):
+        """Caller holds the JobStore lock; the table is created on first use, never by providers."""
+        conn = self.jobs._get_conn()
+        if not self._table:
+            with conn:
+                conn.execute(_DDL)
+            self._table = True
+        return conn
 
     # ── reads ────────────────────────────────────────────────────────────────
     def _job(self, principal: Principal, job_id: str):
@@ -143,7 +163,7 @@ class DocumentPackageService:
 
     def _rows(self, owner, job_id):
         with self.jobs._lock:
-            return self.jobs._get_conn().execute(
+            return self._conn().execute(
                 "SELECT package_id,package_version,metadata_revision_id,state,created_at,expires_at,size_bytes,"
                 "sha256,manifest_sha256,reason_codes,manifest FROM document_packages "
                 "WHERE owner=? AND job_id=? ORDER BY package_version", (owner, job_id)).fetchall()
@@ -159,7 +179,7 @@ class DocumentPackageService:
             package_id=package_id, job_id=job.job_id, package_version=version, state=state,
             created_at=datetime.fromisoformat(created_at), expires_at=expires, metadata_revision_id=revision_id,
             size_bytes=size, sha256=sha256, manifest_sha256=manifest_sha256, reason_codes=json.loads(reasons),
-            download_path=(f"/api/v1/jobs/{job.job_id}/document/packages/{package_id}/package.zip"
+            download_path=(f"/api/v1/jobs/{job.job_id}/packages/{package_id}/content"
                            if state == "ready" else None),
             manifest=PackageManifest.model_validate_json(manifest))
 
@@ -175,10 +195,11 @@ class DocumentPackageService:
         raise _failed(404, "package_not_found", "Package not found.")
 
     def _invalidate(self, package_id, reason):
-        with self.jobs._lock, self.jobs._get_conn():
-            self.jobs._get_conn().execute(
-                "UPDATE document_packages SET state='invalid', reason_codes=? WHERE package_id=?",
-                (json.dumps([reason]), package_id))
+        with self.jobs._lock:
+            conn = self._conn()
+            with conn:
+                conn.execute("UPDATE document_packages SET state='invalid', reason_codes=? WHERE package_id=?",
+                             (json.dumps([reason]), package_id))
 
     @contextmanager
     def open_download(self, principal: Principal, job_id: str, package_id: str):
@@ -206,7 +227,7 @@ class DocumentPackageService:
             yield view.size_bytes, view.sha256, chunks()
 
     # ── create ───────────────────────────────────────────────────────────────
-    def create(self, principal: Principal, job_id: str, body: CreatePackageInput, *, control=None) -> PackageReceipt:
+    def create(self, principal: Principal, job_id: str, body: CreatePackageInput, *, checkpoint=None) -> PackageReceipt:
         job = self._job(principal, job_id)
         owner = job.effective_owner
         revisions = self.document.list_revisions(principal, job_id)
@@ -231,16 +252,17 @@ class DocumentPackageService:
                 raise _failed(409, "package_build_in_progress", "Another package is being built for this job.")
             self._building.add(job_id)
         try:
-            return self._build(principal, job_id, owner, revision, body, rows, control)
+            return self._build(principal, job_id, owner, revision, body, rows, checkpoint)
         finally:
             with self._lock:
                 self._building.discard(job_id)
 
-    def _checkpoint(self, control):
-        if control is not None:
-            control.checkpoint()
+    @staticmethod
+    def _checkpoint(checkpoint):
+        if checkpoint is not None:
+            checkpoint()
 
-    def _build(self, principal, job_id, owner, revision, body, rows, control):
+    def _build(self, principal, job_id, owner, revision, body, rows, checkpoint):
         package_id = uuid4().hex
         with self.document.open_snapshot(principal, job_id, revision.revision_id, sha256=revision.sha256) as snapshot, \
                 self.canonical.open(principal, job_id) as prepared:
@@ -260,14 +282,14 @@ class DocumentPackageService:
             staging.mkdir(parents=True)
             try:
                 result = self._assemble(staging, job, report, snapshot, revision, prepared, canonical, output,
-                                        original, package_id, rows, body, control)
-                self._checkpoint(control)
+                                        original, package_id, rows, body, checkpoint)
+                self._checkpoint(checkpoint)
                 return self._publish(staging, packages / package_id, owner, job, result)
             finally:
                 shutil.rmtree(staging, ignore_errors=True)
 
     def _assemble(self, staging, job, report, snapshot, revision, prepared, canonical, output, original,
-                  package_id, rows, body, control):
+                  package_id, rows, body, checkpoint):
         version = 1 + max((row[1] for row in rows), default=0)
         previous = rows[-1][0] if rows else None
         metadata = snapshot_bytes(snapshot)
@@ -283,20 +305,23 @@ class DocumentPackageService:
             raise _failed(409, "package_source_mismatch", "Canonical text changed while packaging.")
         if body.include_original:
             shutil.copyfile(job.input_pdf_path, staging / "original.pdf")
-        self._checkpoint(control)
+        self._checkpoint(checkpoint)
 
         projection, excluded, projected = project(snapshot, version, canonical["sha256"], revision.sha256)
         pdf = staging / "document.pdf"
         write_xmp(job.output_pdf_path, pdf, projection)  # The last write to the PDF.
         packet = read_xmp(pdf)
-        if extract(packet) != projection or declared_properties(packet) != {n: t for n, t, _ in PROPERTIES}:
+        try:
+            consistent = (extract(packet) == projection
+                          and declared_properties(packet) == {n: t for n, t, _ in PROPERTIES})
+        except (ValueError, etree.LxmlError):
+            consistent = False
+        if not consistent:
             raise _failed(422, "package_xmp_inconsistent", "Written XMP does not match the approved snapshot.")
-        self._checkpoint(control)
+        self._checkpoint(checkpoint)
 
-        timeout = settings.verapdf_timeout_seconds
-        remaining = getattr(control, "remaining_seconds", None) if control is not None else None
-        if remaining is not None:
-            timeout = max(1.0, min(timeout, remaining - 5))
+        # Bounded below the shared document execution deadline (120 s).
+        timeout = min(settings.verapdf_timeout_seconds, VALIDATION_TIMEOUT_SECONDS)
         validator = self._validator_factory(timeout)
         before = digest_file(pdf)
         verdict = (validator.validate(pdf, PROFILE_2B) if validator is not None
@@ -359,19 +384,24 @@ class DocumentPackageService:
         for path in staging.iterdir():
             if path.name not in keep:
                 path.unlink()
-        with self.jobs._lock, self.jobs._get_conn():
-            conn = self.jobs._get_conn()
-            latest = conn.execute("SELECT COALESCE(MAX(package_version),0) FROM document_packages WHERE job_id=?",
-                                  (job.job_id,)).fetchone()[0]
-            if latest + 1 != manifest.package_version:
-                raise _failed(409, "package_version_conflict", "A concurrent package was published; retry.")
-            conn.execute("INSERT INTO document_packages VALUES (?,?,?,?,?,'ready',?,?,?,?,?,?,?)", (
-                manifest.package_id, owner, job.job_id, manifest.package_version,
-                manifest.lineage.metadata_revision_id, _iso(manifest.created_at), _iso(manifest.expires_at),
-                packed.size_bytes, packed.sha256, manifest_sha256, "[]", manifest.model_dump_json()))
-            # Still inside the transaction: a failed rename rolls the row back.
-            os.replace(staging, target)
+        with self.jobs._lock:
+            conn = self._conn()
+            with conn:  # Commits on success; any failure below rolls the row back.
+                self._insert(conn, staging, target, owner, job, manifest, manifest_sha256, packed)
         view = self._view(job, (manifest.package_id, manifest.package_version, manifest.lineage.metadata_revision_id,
                                 "ready", _iso(manifest.created_at), _iso(manifest.expires_at), packed.size_bytes,
                                 packed.sha256, manifest_sha256, "[]", manifest.model_dump_json()))
         return PackageReceipt(package=view, replayed=False)
+
+    @staticmethod
+    def _insert(conn, staging, target, owner, job, manifest, manifest_sha256, packed):
+        latest = conn.execute("SELECT COALESCE(MAX(package_version),0) FROM document_packages WHERE job_id=?",
+                              (job.job_id,)).fetchone()[0]
+        if latest + 1 != manifest.package_version:
+            raise _failed(409, "package_version_conflict", "A concurrent package was published; retry.")
+        conn.execute("INSERT INTO document_packages VALUES (?,?,?,?,?,'ready',?,?,?,?,?,?,?)", (
+            manifest.package_id, owner, job.job_id, manifest.package_version,
+            manifest.lineage.metadata_revision_id, _iso(manifest.created_at), _iso(manifest.expires_at),
+            packed.size_bytes, packed.sha256, manifest_sha256, "[]", manifest.model_dump_json()))
+        # Still inside the transaction: a failed rename rolls the row back.
+        os.replace(staging, target)

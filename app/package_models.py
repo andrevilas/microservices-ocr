@@ -88,6 +88,7 @@ class PackageManifest(_Closed):
 
 
 class CreatePackageInput(_Closed):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     metadata_revision_id: ID | None = Field(
         default=None, description="Approved revision to package; the latest approved one when omitted.")
     include_original: bool = Field(default=True, description="Embed the original input PDF unchanged.")

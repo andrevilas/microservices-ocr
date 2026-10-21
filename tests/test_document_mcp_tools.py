@@ -32,7 +32,7 @@ from mcp.server import MCPServer
 from app.document_mcp_tools import register_document_tools
 server = MCPServer('pure-document-test')
 register_document_tools(server, lambda *args: None)
-assert len(asyncio.run(server.list_tools())) == 12
+assert len(asyncio.run(server.list_tools())) == 15
 blocked = ('app.main', 'app.config', 'app.application', 'app.runtime',
            'app.services', 'app.routes', 'app.document_http_examples')
 assert not [name for name in sys.modules
@@ -45,7 +45,7 @@ assert not [name for name in sys.modules
     assert result.returncode == 0, result.stderr
 
 
-def test_registry_schemas_annotations_and_twelve_tools():
+def test_registry_schemas_annotations_and_fifteen_tools():
     async def scenario():
         async with Client(server(lambda *args: None)) as client:
             return (await client.list_tools()).tools
@@ -57,6 +57,7 @@ def test_registry_schemas_annotations_and_twelve_tools():
         "list_document_metadata_values", "list_document_metadata_evidence",
         "get_document_metadata_string", "get_document_metadata_schema",
         "save_document_metadata", "approve_document_metadata",
+        "create_document_package", "list_document_packages", "get_document_package",
     })
     assert set(tools) == {"ocr_" + operation for operation in operations}
     assert DOCUMENT_OPERATIONS == operations
