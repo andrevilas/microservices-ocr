@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     verapdf_executable: Path | None = None
     verapdf_timeout_seconds: int = Field(default=120, ge=1, le=3600)
     job_retention_seconds: int = Field(default=86400, ge=1)
+    # Document packages (E4a) never outlive their job artifacts.
+    package_ttl_seconds: int = Field(default=86400, ge=60)
+    package_max_total_mb: int = Field(default=512, ge=1, le=4096)
+    package_max_per_job: int = Field(default=20, ge=1, le=200)
     retention_interval_seconds: int = Field(default=60, ge=1, le=3600)
     worker_shutdown_timeout_seconds: int = 30
     user_db_path: Path | None = None
