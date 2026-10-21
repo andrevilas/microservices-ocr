@@ -164,6 +164,9 @@ def _field_blockers(segment_id, fields, records):
         if field.name in missing:
             pending.add(("required_missing", None))
         record = by_name.get(field.name)
+        if record is not None and record.status == "conflict":
+            # Extraction found contradictory values; a person must choose one first.
+            pending.add(("conflict_unresolved", None))
         if record is not None and record.normalized is not None:
             value = record.normalized
             if field.cardinality == "many":

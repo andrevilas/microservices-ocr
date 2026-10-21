@@ -366,8 +366,7 @@ def test_cannot_mark_absent_or_null_field_reviewed():
     ("conflict", "declared"),
     ("needs_review", "inherited"),
     ("reviewed", "inherited"),
-    ("needs_review", "extracted"),
-    ("reviewed", "extracted"),
+    ("conflict", "extracted"),
 ])
 def test_original_unsupported_record_semantics_fail_before_review_or_pages(
     selected, status, origin,

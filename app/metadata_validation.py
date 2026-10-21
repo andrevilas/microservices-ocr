@@ -138,17 +138,54 @@ def normalize_manual_values(fields, entries, provenance) -> list[FieldValueRecor
 
 
 def validate_value_records(fields, records) -> None:
-    """Validate E2 drafts, without requiring completeness or granting approval."""
+    """Validate E2/E3 drafts, without requiring completeness or granting approval.
+
+    E3 adds origin=extracted (bound to an execution by the record model) and
+    status=conflict, which only an extraction can produce: it carries no value
+    (the candidates stay in the extraction run) and always blocks approval.
+    """
     specs = _schema(fields)
     items = _entries(FieldValueRecord, records, specs)
     for item in items:
-        if item.origin not in ("manual", "declared"):
+        if item.origin not in ("manual", "declared", "extracted"):
             raise MetadataValidationError("unsupported_metadata_origin", item.field_name)
-        if item.status not in ("not_found", "needs_review", "reviewed"):
+        if item.status == "conflict" and (item.origin != "extracted" or item.raw is not None):
             raise MetadataValidationError("unsupported_metadata_state", item.field_name)
     normalized = _normalized(specs, items)
     for item in items:
         if not _same(item.normalized, normalized[item.field_name]):
             raise MetadataValidationError("metadata_invalid_value", item.field_name)
-        if (item.raw is None) != (item.status == "not_found"):
+        if (item.raw is None) != (item.status in ("not_found", "conflict")):
             raise MetadataValidationError("metadata_invalid_value", item.field_name)
+
+
+def extracted_records(fields, proposals, provenance) -> list[FieldValueRecord]:
+    """Copy checked extraction proposals into unapproved records, ordered by schema.
+
+    The provenance must carry the execution identity; statuses are limited to
+    needs_review, not_found and conflict, so nothing arrives already reviewed.
+    """
+    specs = _schema(fields)
+    source = _copy_model(ProvenanceRecord, provenance)
+    if source.execution_id is None:
+        raise MetadataValidationError("metadata_invalid_input")
+    by_name = {}
+    for proposal in proposals:
+        if proposal.field_name in by_name or proposal.status not in ("needs_review", "not_found", "conflict"):
+            raise MetadataValidationError("metadata_invalid_input")
+        by_name[proposal.field_name] = proposal
+    if not set(by_name) <= {field.name for field in specs}:
+        raise MetadataValidationError("metadata_invalid_input")
+    result = []
+    for field in specs:
+        proposal = by_name.get(field.name)
+        if proposal is None:
+            continue
+        result.append(_copy_model(FieldValueRecord, {
+            "field_name": field.name, "raw": proposal.raw, "normalized": proposal.normalized,
+            "origin": "extracted", "status": proposal.status,
+            "evidence": [e.model_dump(mode="python") for e in proposal.evidence],
+            "provenance": source.model_dump(mode="python"),
+        }))
+    validate_value_records(specs, result)
+    return result

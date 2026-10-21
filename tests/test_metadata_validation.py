@@ -186,21 +186,35 @@ def test_normalized_must_match_recursively_with_exact_types(raw, normalized, kin
     ))
 
 
-@pytest.mark.parametrize("origin", ["inherited", "extracted"])
-def test_reserved_origins_remain_structurally_readable_but_not_operational(origin):
-    source = provenance()
-    if origin == "extracted":
-        source = source.model_copy(update={"execution_id": "c" * 32})
-    value = record("x", "x", origin=origin, provenance=source)
+def test_inherited_origin_remains_structurally_readable_but_not_operational():
+    value = record("x", "x", origin="inherited")
     assert_error("unsupported_metadata_origin", lambda: validate_value_records([field()], [value]))
+
+
+@pytest.mark.parametrize("origin", ["inherited", "extracted"])
+def test_manual_input_cannot_claim_a_reserved_origin(origin):
     assert_error("metadata_invalid_input", lambda: normalize_manual_values(
         [field()], [{"field_name": "value", "raw": "x", "origin": origin}], provenance(),
     ))
 
 
-def test_conflict_reserved_and_reviewed_only_recognized():
+def test_extracted_origin_is_operational_with_its_execution():
+    source = provenance().model_copy(update={"execution_id": "c" * 32})
+    validate_value_records([field()], [record("x", "x", origin="extracted", provenance=source)])
+    validate_value_records([field()], [record(None, None, origin="extracted", status="conflict",
+                                              provenance=source)])
+
+
+def test_conflict_only_as_an_extracted_record_without_value():
+    source = provenance().model_copy(update={"execution_id": "c" * 32})
     assert_error("unsupported_metadata_state", lambda: validate_value_records(
         [field()], [record("x", "x", status="conflict")],
+    ))
+    assert_error("unsupported_metadata_state", lambda: validate_value_records(
+        [field()], [record(None, None, status="conflict")],
+    ))
+    assert_error("unsupported_metadata_state", lambda: validate_value_records(
+        [field()], [record("x", "x", origin="extracted", status="conflict", provenance=source)],
     ))
     validate_value_records([field()], [record("x", "x", status="reviewed")])
     assert normalize_manual_values([field()], [entry("x")], provenance())[0].status == "needs_review"
