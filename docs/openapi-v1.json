@@ -35624,6 +35624,19 @@
           "200": {
             "content": {
               "application/json": {
+                "example": {
+                  "due": 1,
+                  "enabled": true,
+                  "near_deadline": 0,
+                  "queued_payload_bytes": 245760,
+                  "requires_resolution": 0,
+                  "states": {
+                    "indexed": 3,
+                    "queued": 1
+                  },
+                  "worker_failure": null,
+                  "worker_running": true
+                },
                 "schema": {
                   "$ref": "#/components/schemas/DeliveryOperations"
                 }

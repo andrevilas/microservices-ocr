@@ -51,6 +51,7 @@ class RagApplication:
         return DeliveryList(items=[DeliveryStatus(**row) for row in self.outbox.list(principal, state, limit)])
 
     def get_rag_operations(self, principal):
+        principal.require("jobs:read")
         if not (principal.kind == "user" and principal.is_admin):
             raise ApplicationError(403, "admin_required", "A human administrator identity is required.")
         snapshot = self.worker.snapshot() if self.worker is not None else None

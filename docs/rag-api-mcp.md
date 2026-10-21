@@ -64,8 +64,10 @@ limitado a 64 KiB. Nunca versionar tokens. O arquivo contém:
   source_kind, process_reference e token; `destination_id`,
   `source_kind` e `process_reference` são validados no startup com as mesmas
   regras do manifesto `ocr-rag/1`. URL: HTTPS, HTTP em loopback ou HTTP para
-  nome de serviço Kubernetes `<svc>.<namespace>.svc.cluster.local` (rede
-  interna do nó). Hosts de LAN/Internet exigem HTTPS;
+  nome de serviço Kubernetes `<svc>.<namespace>.svc.cluster.local.` (rede
+  interna do nó). Usar a forma com ponto final: o nome é absoluto e não
+  passa pelos sufixos de busca do resolvedor (ndots:5), então só o DNS do
+  cluster responde. O OCR precisa rodar como pod do mesmo cluster. Hosts de LAN/Internet exigem HTTPS;
 - `interval_seconds`, `batch_size`, `warning_seconds`, `shutdown_seconds`:
   valores explícitos, sem prazos de produção assumidos pelo código.
 

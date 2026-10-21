@@ -1,4 +1,5 @@
 """Resolution paths: retry, resubmission after cancel, operator access, per-owner admission."""
+import json
 from dataclasses import replace
 
 import httpx2
@@ -135,6 +136,8 @@ def test_unauthorized_destination_is_retryable(outbox, status):
 
 @pytest.mark.parametrize("url,allowed", [
     ("http://document-rag.document-rag.svc.cluster.local:8092", True),
+    ("http://document-rag.document-rag.svc.cluster.local.:8092", True),
+    ("http://document-rag.document-rag.svc.cluster.local..:8092", False),
     ("http://svc.cluster.local", False),
     ("http://a.b.c.svc.cluster.local", False),
     ("http://evil.example/.svc.cluster.local", False),
@@ -166,3 +169,34 @@ def test_operations_require_administrator(outbox):
     assert exc.value.status == 403
     result = service.get_rag_operations(ADMIN)
     assert result.enabled and not result.worker_running and result.worker_failure is None
+
+
+def test_legacy_stored_policy_with_short_claim_still_runs(outbox):
+    queue, job, dest = outbox
+    delivery_id = queue.enqueue(OWNER, job.job_id, dest)
+    with queue.transaction() as db:
+        raw = json.loads(db.execute("SELECT policy FROM rag_outbox WHERE id=?", (delivery_id,)).fetchone()[0])
+        raw["claim_seconds"] = 10
+        raw.pop("max_entries_per_owner")
+        db.execute("UPDATE rag_outbox SET policy=? WHERE id=?", (json.dumps(raw), delivery_id))
+    assert DeliveryPolicy.stored(json.dumps(raw)).claim_seconds == 60
+    assert queue.run_one(delivery_id, dest, transport=httpx2.MockTransport(receive_ok)) == "indexed"
+
+
+def test_repeated_resolution_events_are_all_audited(outbox):
+    queue, job, dest = outbox
+    delivery_id = queue.enqueue(OWNER, job.job_id, dest)
+    to_resolution(queue, delivery_id, dest)
+    queue.retry(SUBMIT_OWNER, delivery_id)
+    to_resolution(queue, delivery_id, dest)
+    with queue.transaction() as db:
+        events = [r[0] for r in db.execute("SELECT event FROM rag_delivery_audit WHERE delivery_id=?", (delivery_id,))]
+    assert sum(e.startswith("resolution@") for e in events) == 2
+
+
+def test_operations_require_jobs_read_scope(outbox):
+    queue, job, dest = outbox
+    service = RagApplication(queue, {"normas": dest}, None)
+    with pytest.raises(ApplicationError) as exc:
+        service.get_rag_operations(replace(ADMIN, scopes=frozenset({"artifacts:read"})))
+    assert exc.value.status == 403

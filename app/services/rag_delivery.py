@@ -25,6 +25,10 @@ def _plain_http_allowed(hostname):
     network. Never a LAN/Internet host: those require HTTPS."""
     if hostname in ("127.0.0.1", "::1", "localhost"):
         return True
+    # The trailing-dot form is absolute: resolvers skip search suffixes, so the
+    # name can only be answered by the cluster DNS (pods use ndots:5).
+    if hostname.endswith(".svc.cluster.local."):
+        hostname = hostname[:-1]
     labels = hostname.split(".")
     return (hostname.endswith(".svc.cluster.local") and len(labels) == 5
             and all(label and len(label) <= 63 and all(c.isascii() and (c.isalnum() or c == "-")

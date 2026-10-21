@@ -53,6 +53,17 @@ class DeliveryPolicy:
                 or (self.max_entries_per_owner or 0) > self.max_entries):
             raise ValueError("invalid delivery policy")
 
+    @classmethod
+    def stored(cls, raw):
+        """Load a policy persisted with an older row. Claims below the current
+        minimum are raised to it (a longer claim is strictly safer), so legacy
+        rows never stop the worker."""
+        values = json.loads(raw)
+        claim = values.get("claim_seconds")
+        if type(claim) is int and 1 <= claim < MIN_CLAIM_SECONDS:
+            values["claim_seconds"] = MIN_CLAIM_SECONDS
+        return cls(**values)
+
     @property
     def owner_entries(self):
         return self.max_entries_per_owner or self.max_entries
@@ -117,7 +128,7 @@ class RagOutbox:
                 (now,)).fetchall():
             conn.execute("UPDATE rag_outbox SET state='resolution',claim=NULL,claim_until=NULL,"
                          "error='hold_deadline' WHERE id=?", (delivery_id,))
-            self.audit(conn, delivery_id, "resolution", now)
+            self.audit(conn, delivery_id, f"resolution@{now:.6f}", now)
 
     def enqueue(self, principal, job_id, destination):
         # The outer lease bridges packaging -> durable hold admission.
@@ -245,11 +256,11 @@ class RagOutbox:
                 return row["state"]
             if row["next_attempt"] > now or (row["claim_until"] or 0) > now:
                 return "busy"
-            policy = DeliveryPolicy(**json.loads(row["policy"]))
+            policy = DeliveryPolicy.stored(row["policy"])
             if row["attempts"] >= policy.max_attempts:
                 conn.execute("UPDATE rag_outbox SET state='resolution',error='attempt_limit',claim=NULL,"
                              "claim_until=NULL WHERE id=?", (delivery_id,))
-                self.audit(conn, delivery_id, "resolution", now)
+                self.audit(conn, delivery_id, f"resolution@{now:.6f}", now)
                 return "resolution"
             conn.execute("UPDATE rag_outbox SET state='sending',attempts=attempts+1,claim=?,claim_until=? WHERE id=?",
                          (claim, min(now + policy.claim_seconds, row["deadline"]), delivery_id))
@@ -295,7 +306,7 @@ class RagOutbox:
                              "claim=NULL,claim_until=NULL WHERE id=?",
                              (state, receipt, error or "index_pending", finished + delay, delivery_id))
                 if state == "resolution":
-                    self.audit(conn, delivery_id, "resolution", finished)
+                    self.audit(conn, delivery_id, f"resolution@{finished:.6f}", finished)
         # Cache mutation only after confirmed commit; on ambiguity store is quarantined.
         if result and result.indexed:
             return "indexed"
@@ -330,7 +341,7 @@ class RagOutbox:
                                        "Only deliveries in resolution can be retried.")
             if row["payload"] is None:
                 raise ApplicationError(409, "rag_package_unavailable", "No recovery package is retained.")
-            policy = DeliveryPolicy(**json.loads(row["policy"]))
+            policy = DeliveryPolicy.stored(row["policy"])
             conn.execute("UPDATE rag_outbox SET state='retry',attempts=0,next_attempt=?,deadline=?,error=NULL,"
                          "claim=NULL,claim_until=NULL WHERE id=?",
                          (now, max(row["deadline"], now + policy.hold_seconds), delivery_id))

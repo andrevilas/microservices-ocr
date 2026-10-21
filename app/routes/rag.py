@@ -49,7 +49,13 @@ async def deliveries(request: Request, state: DeliveryState | None = None,
     return await run_in_threadpool(require_rag(request).list_rag_deliveries, principal, state, limit)
 
 
-@router.get("/operations", response_model=DeliveryOperations, openapi_extra=operation("jobs:read"))
+OPERATIONS = DeliveryOperations(enabled=True, worker_running=True, worker_failure=None,
+                                states={"indexed": 3, "queued": 1}, due=1, near_deadline=0,
+                                requires_resolution=0, queued_payload_bytes=245760).model_dump()
+
+
+@router.get("/operations", response_model=DeliveryOperations, responses=example(OPERATIONS),
+            openapi_extra=operation("jobs:read"))
 async def operations(request: Request, principal: Principal = Depends(require_principal)):
     """Aggregate delivery worker state for human administrators; no documents or credentials."""
     return await run_in_threadpool(require_rag(request).get_rag_operations, principal)
