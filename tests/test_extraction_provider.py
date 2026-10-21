@@ -77,6 +77,11 @@ def test_successful_call_reports_usage_and_requests_deterministic_json():
     body = json.loads(handler.request.content)
     assert body["temperature"] == 0 and body["max_tokens"] == 64 and body["response_format"] == {
         "type": "json_object"} and body["stream"] is False
+    assert body["reasoning_effort"] == "none"
+    plain = reply()
+    ChatProvider("http://llm.lan:11434/v1", "m", LOCAL, transport=httpx2.MockTransport(plain),
+                 resolver=resolver("192.168.1.10"), reasoning_effort=None).complete([], max_tokens=5, timeout_seconds=5)
+    assert "reasoning_effort" not in json.loads(plain.request.content)
     assert handler.request.url.path == "/v1/chat/completions"
 
 

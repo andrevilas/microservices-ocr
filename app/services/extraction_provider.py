@@ -104,8 +104,11 @@ class ChatProvider:
     def __init__(self, base_url: str, model: str, allowed_hosts: frozenset[str],
                  access_hosts: frozenset[str] = frozenset(), access_token: AccessToken | None = None,
                  api_key: str | None = None, transport: httpx2.BaseTransport | None = None,
-                 resolver=socket.getaddrinfo):
+                 resolver=socket.getaddrinfo, reasoning_effort: str | None = "none"):
         self.base_url = base_url.rstrip("/")
+        # Reasoning models (qwen3) otherwise spend the output budget thinking, and Ollama does
+        # not report those tokens in usage; "none" keeps answers direct and usage accurate.
+        self.reasoning_effort = reasoning_effort
         self.model = model
         self.allowed_hosts = allowed_hosts
         self.access_hosts = access_hosts
@@ -128,6 +131,8 @@ class ChatProvider:
             headers["CF-Access-Client-Secret"] = self._access_token.client_secret
         body = {"model": self.model, "messages": messages, "temperature": 0, "max_tokens": max_tokens,
                 "stream": False, "response_format": {"type": "json_object"}}
+        if self.reasoning_effort:
+            body["reasoning_effort"] = self.reasoning_effort
         started = time.monotonic()
         try:
             with httpx2.Client(transport=self._transport, timeout=timeout_seconds, trust_env=False,

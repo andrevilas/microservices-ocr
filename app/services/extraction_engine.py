@@ -159,6 +159,10 @@ class _OutDocument(_Strict):
 
 
 def parse_value(item) -> _OutValue | None:
+    # The page is only a hint for locating the quote (other chunk pages are searched too),
+    # so a page number written as digits is accepted; nothing else is coerced.
+    if type(item) is dict and type(item.get("page")) is str and re.fullmatch(r"[0-9]{1,3}", item["page"]):
+        item = {**item, "page": int(item["page"])}
     try:
         return _OutValue.model_validate(item)
     except ValidationError:

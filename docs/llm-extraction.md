@@ -5,7 +5,11 @@ A extração assistida propõe valores de metadados, ou o tipo documental, a par
 ## Decisões do owner (21/10/2026)
 
 - **Modelo local.** O texto de documentos reais só vai para o runtime de modelo do próprio owner, nunca para provedores externos.
-- **Rota.** O Ollama do host `andrellm` (RTX 3060, `qwen3:14b`) é acessado pelo Cloudflare Tunnel + Access, o mesmo caminho do LicitaFlow, com um service token próprio do OCR. O owner considera essa rota dentro da política.
+- **Rota: tailnet.** O Ollama do host `andrellm` (RTX 3060, `qwen3:14b`) é acessado pela tailnet do owner, cifrada de ponta a ponta pelo WireGuard, sem terceiros terminando TLS. A decisão substitui a rota inicial pelo Cloudflare Access.
+  - No andrellm, o Ollama continua em `127.0.0.1:11435`.
+  - O serviço de usuário `ocr-ollama-tailnet` (`~/ocr-llm-bridge/bridge.py`) escuta só em `100.120.78.1:11434` e aceita conexões apenas dos pares na allowlist: o TrueNAS (`100.118.226.112`) e a estação de testes. Ele cumpre o papel de ACL e registra só endereços e bytes, nunca conteúdo.
+  - Para desfazer: `systemctl --user disable --now ocr-ollama-tailnet`.
+- **Prioridade.** O OCR tem prioridade no andrellm; o LicitaFlow não está em uso (owner, 21/10/2026).
 - **Desligada por padrão.** `EXTRACTION_ENABLED=false`. Enquanto estiver desligada, toda chamada retorna `503 extraction_disabled`.
 
 ## Configuração
@@ -19,6 +23,7 @@ A extração assistida propõe valores de metadados, ou o tipo documental, a par
 | `EXTRACTION_ACCESS_HOSTS` | vazio | Hostnames publicados pelo Cloudflare Tunnel + Access do owner. Exigem HTTPS e service token |
 | `EXTRACTION_ACCESS_TOKEN_FILE` | — | Arquivo JSON `{"client_id","client_secret"}` lido só no servidor, nunca de variável de ambiente, argv ou log |
 | `EXTRACTION_API_KEY_FILE` | — | Chave Bearer opcional do runtime |
+| `EXTRACTION_REASONING_EFFORT` | `none` | Enviado como `reasoning_effort`. Com `none`, o `qwen3` responde direto. Com o raciocínio ligado, ele gasta o orçamento de saída "pensando", e o Ollama não conta esses tokens em `usage`. Vazio omite o parâmetro |
 | `EXTRACTION_CALL_TIMEOUT_SECONDS` | 120 | Prazo por chamada |
 | `EXTRACTION_RUN_TIMEOUT_SECONDS` | 600 | Prazo total de uma execução (`run_timeout`) |
 | `EXTRACTION_MAX_CHUNK_CHARS` | 12000 | Caracteres por chamada |
@@ -99,11 +104,19 @@ Há também uma etapa determinística: num campo enum, se exatamente um valor pe
 
 O arquivo `tests/fixtures/extraction_corpus.json` traz 9 documentos inventados (contratos e matrículas), com injeções, conflitos, ruído de OCR e valores ausentes. O script `scripts/extraction_eval.py` mede, por campo e por divisão, precisão, revocação, abstenções corretas, conflitos, rejeições, latência e tokens.
 
-Em 21/10/2026, com `qwen2.5:7b-instruct` local, só CPU/GPU de estação e os 9 documentos: precisão 0,94 e revocação 0,94 (46 corretos, 3 errados, 3 omitidos e 8 abstenções corretas), com cerca de 30 s por documento. As regras de injeção e de decimal foram ajustadas depois de ver os erros do corpus inteiro, então esse número **não** é uma avaliação independente. Antes de ativar em produção:
+Divisões: `dev` e `eval` (9 documentos) foram vistas durante o ajuste das regras. `holdout` (8 documentos) foi escrito depois de congelar as regras e traz injeções com outra redação, tabela, aditivo com dois valores e documento sem dados. A única mudança feita depois de rodar o `holdout` foi de formato: aceitar número de página escrito como texto. Não houve mudança de conteúdo.
 
-- ampliar o corpus de avaliação separado;
-- medir com o `qwen3:14b` do andrellm;
-- fixar limites mínimos de qualidade por campo.
+Resultados de 21/10/2026, só com dados sintéticos:
+
+| Modelo | Divisão | Precisão | Revocação | Tempo/doc |
+|---|---|---|---|---|
+| `qwen3:14b` (andrellm, tailnet) | holdout | 0,95 | 0,93 | ~12 s |
+| `qwen3:14b` (andrellm, tailnet) | todas (17) | 0,94 | 0,96 | ~12 s |
+| `qwen2.5:7b-instruct` (estação) | holdout | 0,90 | 0,87 | ~29 s |
+
+No `qwen3:14b`, nenhuma injeção produziu valor aprovável: as linhas marcadas foram recusadas (`suspicious_source`), e uma injeção com outra redação virou `conflict`, que bloqueia a aprovação. O ponto fraco são listas (`proprietarios`), com precisão de 0,6: nomes unidos num item só ou listas incompletas. A revisão deve conferir cada item.
+
+**Critério de ativação adotado:** no `holdout`, precisão geral de pelo menos 0,90 e revocação de pelo menos 0,85, e nenhum valor injetado proposto como `needs_review`. Abaixo disso, a extração fica desligada. Os campos com precisão abaixo de 0,8 ficam sinalizados na documentação para atenção redobrada na revisão. O critério é técnico e foi fixado pelo agente sob a delegação do owner; mesmo atendido, a aprovação continua sempre humana.
 
 ## Fora do escopo
 

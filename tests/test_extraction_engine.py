@@ -221,7 +221,7 @@ def test_model_and_deterministic_agreement_is_merged():
 
 def test_malformed_items_are_rejected_alone_and_floats_only_feed_decimals():
     collector, results = collect(answer(
-        ("numero", [{"value": "123/2026", "page": "1", "quote": "CONTRATO Nº 123/2026"},
+        ("numero", [{"value": "123/2026", "page": "one", "quote": "CONTRATO Nº 123/2026"},
                     {"value": "123/2026", "page": 1, "quote": "CONTRATO Nº 123/2026", "confidence": 0.9}, "x"]),
         ("valor", [{"value": 1234.56, "page": 1, "quote": "Valor global: R$ 1.234,56"}]),
         ("data", [{"value": 15.5, "page": 1, "quote": "Data: 15/03/2026"}]),
@@ -231,3 +231,8 @@ def test_malformed_items_are_rejected_alone_and_floats_only_feed_decimals():
     assert results["data"].status == "not_found"
     reasons = {(r["field_name"], r["reason"]): r["count"] for r in collector.rejection_list()}
     assert reasons[("numero", "malformed_value")] == 3 and reasons[("data", "invalid_value")] == 1
+
+
+def test_page_number_written_as_digits_is_accepted_as_a_hint():
+    _, results = collect(answer(("numero", [{"value": "123/2026", "page": "1", "quote": "CONTRATO Nº 123/2026"}])))
+    assert results["numero"].status == "needs_review"

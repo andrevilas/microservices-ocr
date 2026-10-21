@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     # JSON {"client_id": ..., "client_secret": ...}; server-only file, never in env or argv.
     extraction_access_token_file: Path | None = None
     extraction_api_key_file: Path | None = None
+    # Sent as reasoning_effort; empty omits it for runtimes that reject the parameter.
+    extraction_reasoning_effort: str = "none"
     extraction_call_timeout_seconds: int = Field(default=120, ge=5, le=900)
     extraction_run_timeout_seconds: int = Field(default=600, ge=10, le=3600)
     extraction_max_chunk_chars: int = Field(default=12000, ge=1000, le=200000)

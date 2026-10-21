@@ -118,19 +118,21 @@ def main():
     parser.add_argument("--allowed-host", action="append", default=[])
     parser.add_argument("--access-host", action="append", default=[])
     parser.add_argument("--access-token-file", type=Path)
-    parser.add_argument("--split", choices=["dev", "eval", "all"], default="eval")
+    parser.add_argument("--split", choices=["dev", "eval", "holdout", "all"], default="eval")
     parser.add_argument("--max-chunk-chars", type=int, default=12000)
     parser.add_argument("--max-calls", type=int, default=6)
     parser.add_argument("--max-tokens", type=int, default=1500)
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--reasoning-effort", default="none")
     args = parser.parse_args()
     token = None
     if args.access_token_file:
         data = json.loads(args.access_token_file.read_text(encoding="utf-8"))
         token = AccessToken(data["client_id"], data["client_secret"])
     provider = ChatProvider(args.base_url, args.model, frozenset(h.lower() for h in args.allowed_host),
-                            frozenset(h.lower() for h in args.access_host), token)
+                            frozenset(h.lower() for h in args.access_host), token,
+                            reasoning_effort=args.reasoning_effort or None)
     report = evaluate(provider, json.loads(CORPUS.read_text(encoding="utf-8")), args.split, args.max_chunk_chars,
                       args.max_calls, args.max_tokens, args.timeout)
     text = json.dumps(report, ensure_ascii=False, indent=1)

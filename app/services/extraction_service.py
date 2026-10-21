@@ -88,7 +88,8 @@ def settings_provider() -> ChatProvider | None:
         token = AccessToken(str(data["client_id"]), str(data["client_secret"]))
     return ChatProvider(settings.extraction_base_url, settings.extraction_model,
                         _csv(settings.extraction_allowed_hosts), _csv(settings.extraction_access_hosts),
-                        token, _read_secret(settings.extraction_api_key_file))
+                        token, _read_secret(settings.extraction_api_key_file),
+                        reasoning_effort=settings.extraction_reasoning_effort or None)
 
 
 @dataclass(frozen=True)
