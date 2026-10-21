@@ -5886,8 +5886,8 @@
   "info": {
     "description": "OCR HTTP API. Versioned operations use Bearer user or individual service credentials; legacy routes retain separate contracts.",
     "title": "Fluxo OCR",
-    "version": "1.9.0",
-    "x-api-version": "1.9.0"
+    "version": "1.10.0",
+    "x-api-version": "1.10.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -30233,6 +30233,109 @@
           "200": {
             "content": {
               "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "created_at": "2026-10-21T12:00:00Z",
+                      "download_path": "/api/v1/jobs/11111111111111111111111111111111/packages/22222222222222222222222222222222/content",
+                      "expires_at": "2026-10-22T12:00:00Z",
+                      "job_id": "11111111111111111111111111111111",
+                      "manifest": {
+                        "artifacts": [
+                          {
+                            "media_type": "application/pdf",
+                            "path": "document.pdf",
+                            "role": "pdf",
+                            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                            "size_bytes": 48213
+                          },
+                          {
+                            "media_type": "application/pdf",
+                            "path": "original.pdf",
+                            "role": "original",
+                            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                            "size_bytes": 30112
+                          },
+                          {
+                            "media_type": "application/json",
+                            "path": "metadata.json",
+                            "role": "metadata",
+                            "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                            "size_bytes": 2048
+                          },
+                          {
+                            "media_type": "application/x-ndjson",
+                            "path": "pages.jsonl",
+                            "role": "pages",
+                            "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                            "size_bytes": 1024
+                          },
+                          {
+                            "media_type": "application/json",
+                            "path": "validation.json",
+                            "role": "validation",
+                            "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                            "size_bytes": 310
+                          }
+                        ],
+                        "contract_version": "ocr-document-package/1",
+                        "created_at": "2026-10-21T12:00:00Z",
+                        "expires_at": "2026-10-22T12:00:00Z",
+                        "lineage": {
+                          "canonical_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                          "document_id": "11111111111111111111111111111111",
+                          "final_pdf_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                          "job_id": "11111111111111111111111111111111",
+                          "metadata_revision_id": "33333333333333333333333333333333",
+                          "metadata_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                          "ocr_output_pdf_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+                          "original_pdf_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                          "parent_job_id": null,
+                          "previous_package_id": null,
+                          "schema_sha256": [
+                            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                          ]
+                        },
+                        "package_id": "22222222222222222222222222222222",
+                        "package_version": 1,
+                        "validation": {
+                          "profile": "2b",
+                          "reason_codes": [
+                            "compliant"
+                          ],
+                          "schema_version": "ocr-package-validation/1",
+                          "stats": {},
+                          "status": "passed",
+                          "validated_at": "2026-10-21T12:00:00Z",
+                          "validated_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                          "validator": "veraPDF",
+                          "validator_version": "1.30.2"
+                        },
+                        "xmp": {
+                          "consistent": true,
+                          "excluded": [
+                            {
+                              "field_name": "cpf",
+                              "reason": "restricted",
+                              "segment_id": "44444444444444444444444444444444"
+                            }
+                          ],
+                          "projected_fields": 2,
+                          "projected_values": 3,
+                          "schema_namespace": "https://ocr.andre.goiania.br/ns/ocrdoc/1.0/"
+                        }
+                      },
+                      "manifest_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+                      "metadata_revision_id": "33333333333333333333333333333333",
+                      "package_id": "22222222222222222222222222222222",
+                      "package_version": 1,
+                      "reason_codes": [],
+                      "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+                      "size_bytes": 83104,
+                      "state": "ready"
+                    }
+                  ]
+                },
                 "schema": {
                   "$ref": "#/components/schemas/PackageList"
                 }
@@ -30701,6 +30804,15 @@
             "application/json": {
               "schema": {
                 "additionalProperties": false,
+                "examples": [
+                  {
+                    "include_original": true
+                  },
+                  {
+                    "include_original": false,
+                    "metadata_revision_id": "33333333333333333333333333333333"
+                  }
+                ],
                 "properties": {
                   "include_original": {
                     "default": true,
@@ -30733,6 +30845,108 @@
           "200": {
             "content": {
               "application/json": {
+                "example": {
+                  "package": {
+                    "created_at": "2026-10-21T12:00:00Z",
+                    "download_path": "/api/v1/jobs/11111111111111111111111111111111/packages/22222222222222222222222222222222/content",
+                    "expires_at": "2026-10-22T12:00:00Z",
+                    "job_id": "11111111111111111111111111111111",
+                    "manifest": {
+                      "artifacts": [
+                        {
+                          "media_type": "application/pdf",
+                          "path": "document.pdf",
+                          "role": "pdf",
+                          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                          "size_bytes": 48213
+                        },
+                        {
+                          "media_type": "application/pdf",
+                          "path": "original.pdf",
+                          "role": "original",
+                          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                          "size_bytes": 30112
+                        },
+                        {
+                          "media_type": "application/json",
+                          "path": "metadata.json",
+                          "role": "metadata",
+                          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                          "size_bytes": 2048
+                        },
+                        {
+                          "media_type": "application/x-ndjson",
+                          "path": "pages.jsonl",
+                          "role": "pages",
+                          "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                          "size_bytes": 1024
+                        },
+                        {
+                          "media_type": "application/json",
+                          "path": "validation.json",
+                          "role": "validation",
+                          "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                          "size_bytes": 310
+                        }
+                      ],
+                      "contract_version": "ocr-document-package/1",
+                      "created_at": "2026-10-21T12:00:00Z",
+                      "expires_at": "2026-10-22T12:00:00Z",
+                      "lineage": {
+                        "canonical_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                        "document_id": "11111111111111111111111111111111",
+                        "final_pdf_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "job_id": "11111111111111111111111111111111",
+                        "metadata_revision_id": "33333333333333333333333333333333",
+                        "metadata_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                        "ocr_output_pdf_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+                        "original_pdf_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "parent_job_id": null,
+                        "previous_package_id": null,
+                        "schema_sha256": [
+                          "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                        ]
+                      },
+                      "package_id": "22222222222222222222222222222222",
+                      "package_version": 1,
+                      "validation": {
+                        "profile": "2b",
+                        "reason_codes": [
+                          "compliant"
+                        ],
+                        "schema_version": "ocr-package-validation/1",
+                        "stats": {},
+                        "status": "passed",
+                        "validated_at": "2026-10-21T12:00:00Z",
+                        "validated_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "validator": "veraPDF",
+                        "validator_version": "1.30.2"
+                      },
+                      "xmp": {
+                        "consistent": true,
+                        "excluded": [
+                          {
+                            "field_name": "cpf",
+                            "reason": "restricted",
+                            "segment_id": "44444444444444444444444444444444"
+                          }
+                        ],
+                        "projected_fields": 2,
+                        "projected_values": 3,
+                        "schema_namespace": "https://ocr.andre.goiania.br/ns/ocrdoc/1.0/"
+                      }
+                    },
+                    "manifest_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+                    "metadata_revision_id": "33333333333333333333333333333333",
+                    "package_id": "22222222222222222222222222222222",
+                    "package_version": 1,
+                    "reason_codes": [],
+                    "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+                    "size_bytes": 83104,
+                    "state": "ready"
+                  },
+                  "replayed": true
+                },
                 "schema": {
                   "$ref": "#/components/schemas/PackageReceipt"
                 }
@@ -30759,12 +30973,114 @@
           "201": {
             "content": {
               "application/json": {
+                "example": {
+                  "package": {
+                    "created_at": "2026-10-21T12:00:00Z",
+                    "download_path": "/api/v1/jobs/11111111111111111111111111111111/packages/22222222222222222222222222222222/content",
+                    "expires_at": "2026-10-22T12:00:00Z",
+                    "job_id": "11111111111111111111111111111111",
+                    "manifest": {
+                      "artifacts": [
+                        {
+                          "media_type": "application/pdf",
+                          "path": "document.pdf",
+                          "role": "pdf",
+                          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                          "size_bytes": 48213
+                        },
+                        {
+                          "media_type": "application/pdf",
+                          "path": "original.pdf",
+                          "role": "original",
+                          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                          "size_bytes": 30112
+                        },
+                        {
+                          "media_type": "application/json",
+                          "path": "metadata.json",
+                          "role": "metadata",
+                          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                          "size_bytes": 2048
+                        },
+                        {
+                          "media_type": "application/x-ndjson",
+                          "path": "pages.jsonl",
+                          "role": "pages",
+                          "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                          "size_bytes": 1024
+                        },
+                        {
+                          "media_type": "application/json",
+                          "path": "validation.json",
+                          "role": "validation",
+                          "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                          "size_bytes": 310
+                        }
+                      ],
+                      "contract_version": "ocr-document-package/1",
+                      "created_at": "2026-10-21T12:00:00Z",
+                      "expires_at": "2026-10-22T12:00:00Z",
+                      "lineage": {
+                        "canonical_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                        "document_id": "11111111111111111111111111111111",
+                        "final_pdf_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "job_id": "11111111111111111111111111111111",
+                        "metadata_revision_id": "33333333333333333333333333333333",
+                        "metadata_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                        "ocr_output_pdf_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+                        "original_pdf_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "parent_job_id": null,
+                        "previous_package_id": null,
+                        "schema_sha256": [
+                          "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                        ]
+                      },
+                      "package_id": "22222222222222222222222222222222",
+                      "package_version": 1,
+                      "validation": {
+                        "profile": "2b",
+                        "reason_codes": [
+                          "compliant"
+                        ],
+                        "schema_version": "ocr-package-validation/1",
+                        "stats": {},
+                        "status": "passed",
+                        "validated_at": "2026-10-21T12:00:00Z",
+                        "validated_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "validator": "veraPDF",
+                        "validator_version": "1.30.2"
+                      },
+                      "xmp": {
+                        "consistent": true,
+                        "excluded": [
+                          {
+                            "field_name": "cpf",
+                            "reason": "restricted",
+                            "segment_id": "44444444444444444444444444444444"
+                          }
+                        ],
+                        "projected_fields": 2,
+                        "projected_values": 3,
+                        "schema_namespace": "https://ocr.andre.goiania.br/ns/ocrdoc/1.0/"
+                      }
+                    },
+                    "manifest_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+                    "metadata_revision_id": "33333333333333333333333333333333",
+                    "package_id": "22222222222222222222222222222222",
+                    "package_version": 1,
+                    "reason_codes": [],
+                    "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+                    "size_bytes": 83104,
+                    "state": "ready"
+                  },
+                  "replayed": false
+                },
                 "schema": {
                   "$ref": "#/components/schemas/PackageReceipt"
                 }
               }
             },
-            "description": "Successful Response",
+            "description": "Package created.",
             "headers": {
               "Cache-Control": {
                 "description": "Authenticated responses are not cacheable.",
@@ -31272,6 +31588,105 @@
           "200": {
             "content": {
               "application/json": {
+                "example": {
+                  "created_at": "2026-10-21T12:00:00Z",
+                  "download_path": "/api/v1/jobs/11111111111111111111111111111111/packages/22222222222222222222222222222222/content",
+                  "expires_at": "2026-10-22T12:00:00Z",
+                  "job_id": "11111111111111111111111111111111",
+                  "manifest": {
+                    "artifacts": [
+                      {
+                        "media_type": "application/pdf",
+                        "path": "document.pdf",
+                        "role": "pdf",
+                        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "size_bytes": 48213
+                      },
+                      {
+                        "media_type": "application/pdf",
+                        "path": "original.pdf",
+                        "role": "original",
+                        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "size_bytes": 30112
+                      },
+                      {
+                        "media_type": "application/json",
+                        "path": "metadata.json",
+                        "role": "metadata",
+                        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                        "size_bytes": 2048
+                      },
+                      {
+                        "media_type": "application/x-ndjson",
+                        "path": "pages.jsonl",
+                        "role": "pages",
+                        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                        "size_bytes": 1024
+                      },
+                      {
+                        "media_type": "application/json",
+                        "path": "validation.json",
+                        "role": "validation",
+                        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                        "size_bytes": 310
+                      }
+                    ],
+                    "contract_version": "ocr-document-package/1",
+                    "created_at": "2026-10-21T12:00:00Z",
+                    "expires_at": "2026-10-22T12:00:00Z",
+                    "lineage": {
+                      "canonical_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                      "document_id": "11111111111111111111111111111111",
+                      "final_pdf_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "job_id": "11111111111111111111111111111111",
+                      "metadata_revision_id": "33333333333333333333333333333333",
+                      "metadata_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                      "ocr_output_pdf_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+                      "original_pdf_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "parent_job_id": null,
+                      "previous_package_id": null,
+                      "schema_sha256": [
+                        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                      ]
+                    },
+                    "package_id": "22222222222222222222222222222222",
+                    "package_version": 1,
+                    "validation": {
+                      "profile": "2b",
+                      "reason_codes": [
+                        "compliant"
+                      ],
+                      "schema_version": "ocr-package-validation/1",
+                      "stats": {},
+                      "status": "passed",
+                      "validated_at": "2026-10-21T12:00:00Z",
+                      "validated_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "validator": "veraPDF",
+                      "validator_version": "1.30.2"
+                    },
+                    "xmp": {
+                      "consistent": true,
+                      "excluded": [
+                        {
+                          "field_name": "cpf",
+                          "reason": "restricted",
+                          "segment_id": "44444444444444444444444444444444"
+                        }
+                      ],
+                      "projected_fields": 2,
+                      "projected_values": 3,
+                      "schema_namespace": "https://ocr.andre.goiania.br/ns/ocrdoc/1.0/"
+                    }
+                  },
+                  "manifest_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+                  "metadata_revision_id": "33333333333333333333333333333333",
+                  "package_id": "22222222222222222222222222222222",
+                  "package_version": 1,
+                  "reason_codes": [],
+                  "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+                  "size_bytes": 83104,
+                  "state": "ready"
+                },
                 "schema": {
                   "$ref": "#/components/schemas/PackageView"
                 }

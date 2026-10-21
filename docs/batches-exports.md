@@ -1,7 +1,7 @@
 # Lotes e exportação assíncrona
 
-Entrega OCR-AM-09, LPM `B6WE9dwgmEvlxm9JzbCO`. Contrato atual: HTTP 1.9.0
-(69 operações) e MCP 0.7.0 (55 ferramentas: 35 leituras, 20 escritas). As 20
+Entrega OCR-AM-09, LPM `B6WE9dwgmEvlxm9JzbCO`. Contrato atual: HTTP 1.10.0
+(73 operações) e MCP 0.8.0 (58 ferramentas: 37 leituras, 21 escritas). As 20
 ferramentas do subconjunto OCR legado (12 leituras e oito mutações) incluem o
 [controle de jobs da AM-10](job-control.md). As 12 operações documentais estão em
 [metadados documentais](document-metadata-api.md); veja o

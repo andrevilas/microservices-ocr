@@ -11,7 +11,8 @@ from fastapi import APIRouter, Path, Request
 from starlette.responses import Response
 
 from app.document_http_streaming import DocumentDownloadResponse
-from app.http_contract import error_responses, operation
+from app.http_contract import error_responses, example, operation
+from app.package_http_examples import package_list_example, package_receipt_example, package_view_example
 from app.package_models import CreatePackageInput, PackageList, PackageReceipt, PackageView
 from app.routes.documents import Reader, Services
 from app.routes.uploads import json_input
@@ -25,7 +26,8 @@ _SCOPES = ("jobs:read", "artifacts:read", "metadata:read")
 
 
 def _body_contract():
-    schema = CreatePackageInput.model_json_schema()
+    schema = {**CreatePackageInput.model_json_schema(),
+              "examples": [{"include_original": True}, {"metadata_revision_id": "3" * 32, "include_original": False}]}
     return {**operation(*_SCOPES), "requestBody": {
         "required": True, "content": {"application/json": {"schema": schema}}}}
 
@@ -33,7 +35,10 @@ def _body_contract():
 @router.post(
     "", response_model=PackageReceipt, status_code=201,
     operation_id="ocr_create_document_package", openapi_extra=_body_contract(),
-    responses={**error_responses(415), 200: {"model": PackageReceipt, "description": "Existing package replayed."}},
+    responses={**error_responses(415),
+               200: {"model": PackageReceipt, "description": "Existing package replayed.",
+                     **example(package_receipt_example(True))[200]},
+               201: {"description": "Package created.", **example(package_receipt_example(), 201)[201]}},
 )
 async def create_package(job_id: ID, request: Request, response: Response, principal: Reader, services: Services):
     """Build a PDF/A package from the latest (or the given) approved metadata snapshot.
@@ -54,14 +59,14 @@ async def create_package(job_id: ID, request: Request, response: Response, princ
 
 
 @router.get("", response_model=PackageList, operation_id="ocr_list_document_packages",
-            openapi_extra=operation(*_SCOPES))
+            responses=example(package_list_example()), openapi_extra=operation(*_SCOPES))
 async def list_packages(job_id: ID, principal: Reader, services: Services):
     """List every package version of a caller-owned job, oldest first, with its state and manifest."""
     return await services.execution.run(principal, lambda control: services.packages.list(principal, job_id))
 
 
 @router.get("/{package_id}", response_model=PackageView, operation_id="ocr_get_document_package",
-            openapi_extra=operation(*_SCOPES))
+            responses=example(package_view_example()), openapi_extra=operation(*_SCOPES))
 async def get_package(job_id: ID, package_id: ID, principal: Reader, services: Services):
     """Return one package: state (ready, invalid, expired), expiry, hashes and the full manifest."""
     return await services.execution.run(
