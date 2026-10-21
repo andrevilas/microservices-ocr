@@ -4,6 +4,7 @@ Exercises four transport/mode combinations against the real persisted uvicorn ru
 This does not qualify six desktop clients or production remote OIDC. All identities,
 PDFs and stores are synthetic and temporary; no live providers or external network.
 """
+from catalog_tool_expectations import EXPECTED_TOOL_COUNT
 import asyncio
 import copy
 import os
@@ -34,7 +35,7 @@ def test_document_twelve_tools_real_sdk_local_jwt(runtime, catalog_accounts, tra
             async with connected(runtime, transport, mode, catalog_accounts.owner) as client:
                 listing = await client.list_tools()
                 names = {tool.name for tool in listing.tools}
-                assert len(listing.tools) == len(names) == 46
+                assert len(listing.tools) == len(names) == EXPECTED_TOOL_COUNT
                 assert DOCUMENT_TOOLS <= names
                 assert all(tool.output_schema for tool in listing.tools)
                 tools = Tools(client, listing.tools)
