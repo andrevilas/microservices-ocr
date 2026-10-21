@@ -2,7 +2,7 @@
 import json
 import socket
 
-import httpx
+import httpx2
 import pytest
 
 from app.services.extraction_provider import AccessToken, ChatProvider, ProviderError, check_endpoint
@@ -22,15 +22,15 @@ def reply(content='{"fields": []}', status=200, finish="stop", usage=None):
     def handler(request):
         handler.request = request
         if status != 200:
-            return httpx.Response(status, json={"error": "x"})
-        return httpx.Response(200, json={"choices": [{"message": {"content": content}, "finish_reason": finish}],
+            return httpx2.Response(status, json={"error": "x"})
+        return httpx2.Response(200, json={"choices": [{"message": {"content": content}, "finish_reason": finish}],
                                          "usage": usage if usage is not None else {"prompt_tokens": 11,
                                                                                     "completion_tokens": 7}})
     return handler
 
 
 def provider(handler, url="http://llm.lan:11434/v1", addresses=("192.168.1.10",), token=None):
-    return ChatProvider(url, "qwen3:14b", LOCAL, ACCESS, token, transport=httpx.MockTransport(handler),
+    return ChatProvider(url, "qwen3:14b", LOCAL, ACCESS, token, transport=httpx2.MockTransport(handler),
                         resolver=resolver(*addresses))
 
 
@@ -85,10 +85,10 @@ def test_successful_call_reports_usage_and_requests_deterministic_json():
     (reply(status=500), "provider_error"),
     (reply(status=302), "provider_error"),
     (reply(finish="length"), "output_truncated"),
-    (lambda request: httpx.Response(200, text="not json"), "invalid_output"),
-    (lambda request: httpx.Response(200, json={"choices": []}), "invalid_output"),
-    (lambda request: (_ for _ in ()).throw(httpx.ReadTimeout("slow")), "provider_timeout"),
-    (lambda request: (_ for _ in ()).throw(httpx.ConnectError("down")), "provider_unavailable"),
+    (lambda request: httpx2.Response(200, text="not json"), "invalid_output"),
+    (lambda request: httpx2.Response(200, json={"choices": []}), "invalid_output"),
+    (lambda request: (_ for _ in ()).throw(httpx2.ReadTimeout("slow")), "provider_timeout"),
+    (lambda request: (_ for _ in ()).throw(httpx2.ConnectError("down")), "provider_unavailable"),
 ])
 def test_failures_map_to_fixed_codes(handler, code):
     with pytest.raises(ProviderError) as caught:
@@ -118,3 +118,13 @@ def test_policy_is_checked_before_every_call():
     with pytest.raises(ProviderError, match="provider_policy"):
         provider(handler, addresses=("93.184.216.34",)).complete([], max_tokens=10, timeout_seconds=5)
     assert not hasattr(handler, "request")
+
+
+def test_application_code_uses_only_the_declared_http_client():
+    # The image ships httpx2 (pyproject); plain httpx is only a test-environment accident.
+    from pathlib import Path
+    import re
+    root = Path(__file__).resolve().parents[1] / "app"
+    offenders = [str(p.relative_to(root)) for p in root.rglob("*.py")
+                 if re.search(r"^\s*(import httpx|from httpx)\b(?!2)", p.read_text(encoding="utf-8"), re.M)]
+    assert offenders == []

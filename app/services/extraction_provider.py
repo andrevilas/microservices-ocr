@@ -19,7 +19,7 @@ import socket
 import time
 from urllib.parse import urlsplit, urlunsplit
 
-import httpx
+import httpx2
 
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
@@ -103,7 +103,7 @@ class ChatProvider:
 
     def __init__(self, base_url: str, model: str, allowed_hosts: frozenset[str],
                  access_hosts: frozenset[str] = frozenset(), access_token: AccessToken | None = None,
-                 api_key: str | None = None, transport: httpx.BaseTransport | None = None,
+                 api_key: str | None = None, transport: httpx2.BaseTransport | None = None,
                  resolver=socket.getaddrinfo):
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -130,12 +130,12 @@ class ChatProvider:
                 "stream": False, "response_format": {"type": "json_object"}}
         started = time.monotonic()
         try:
-            with httpx.Client(transport=self._transport, timeout=timeout_seconds, trust_env=False,
+            with httpx2.Client(transport=self._transport, timeout=timeout_seconds, trust_env=False,
                               follow_redirects=False) as client:
                 response = client.post(url + "/chat/completions", json=body, headers=headers)
-        except httpx.TimeoutException:
+        except httpx2.TimeoutException:
             raise ProviderError("provider_timeout") from None
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             raise ProviderError("provider_unavailable") from None
         latency_ms = int((time.monotonic() - started) * 1000)
         if response.status_code == 429:
