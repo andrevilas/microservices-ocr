@@ -1,8 +1,10 @@
 """Independent, literal expectations for the currently advertised MCP tools."""
 
-EXPECTED_TOOL_COUNT = 58
+EXPECTED_TOOL_COUNT = 62
 EXPECTED_TOOL_NAMES = frozenset({
     "ocr_create_document_package", "ocr_list_document_packages", "ocr_get_document_package",
+    "ocr_create_metadata_extraction", "ocr_list_metadata_extractions", "ocr_get_metadata_extraction",
+    "ocr_apply_metadata_extraction",
     "ocr_list_rag_destinations", "ocr_submit_rag_delivery", "ocr_get_rag_delivery",
     "ocr_get_rag_receipt", "ocr_get_rag_recovery", "ocr_cancel_rag_delivery",
     "ocr_list_rag_deliveries", "ocr_get_rag_operations", "ocr_retry_rag_delivery",
@@ -92,6 +94,8 @@ OTHER_WRITE_TOOL_NAMES = frozenset({
     "ocr_save_document_metadata",
     "ocr_approve_document_metadata",
     "ocr_create_document_package",
+    "ocr_create_metadata_extraction",
+    "ocr_apply_metadata_extraction",
 })
 
 

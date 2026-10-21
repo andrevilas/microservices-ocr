@@ -3,6 +3,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.application import ApplicationError
 from app.document_mcp_tools import DOCUMENT_OPERATIONS
+from app.extraction_models import ApplyExtractionInput, CreateExtractionInput
 from app.package_models import CreatePackageInput
 from app.services.document_runtime import DocumentServices
 
@@ -89,6 +90,21 @@ def _dispatch(services, principal, operation, args, checkpoint):
     if operation == "get_document_package":
         job_id, package_id = args
         return services.packages.get(principal, job_id, package_id)
+    if operation == "create_metadata_extraction":
+        job_id, body = args
+        return services.extractions.create(
+            principal, job_id, CreateExtractionInput.model_validate(body, strict=True), checkpoint=checkpoint)
+    if operation == "list_metadata_extractions":
+        job_id, = args
+        return services.extractions.list(principal, job_id)
+    if operation == "get_metadata_extraction":
+        job_id, run_id = args
+        return services.extractions.get(principal, job_id, run_id)
+    if operation == "apply_metadata_extraction":
+        job_id, run_id, body, key = args
+        return services.extractions.apply(
+            principal, job_id, run_id, ApplyExtractionInput.model_validate(body, strict=True), key=key,
+            checkpoint=checkpoint)[0]
     raise ApplicationError(422, "unknown_operation", "Unknown document operation.")
 
 
@@ -109,6 +125,10 @@ async def execute_document(provider, principal, operation, args):
         principal.require("metadata:write")
     if operation == "approve_document_metadata":
         principal.require("metadata:approve")
+    if operation in ("create_metadata_extraction", "apply_metadata_extraction"):
+        principal.require("metadata:write")
+    if operation == "create_metadata_extraction":
+        principal.require("contexts:read")
     if not callable(provider):
         raise _unavailable()
     services = await run_in_threadpool(provider)
