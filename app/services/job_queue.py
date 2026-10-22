@@ -5,6 +5,7 @@ from queue import Empty, Queue
 from threading import Event, Lock, Thread
 
 from app.config import settings
+from app.observability import bound
 from app.services.metadata_runtime import _observe_health_on_control, assert_metadata_health
 from app.services.ocr_orchestrator import OcrOrchestrator
 from app.services.storage_service import JobStore, get_job_store
@@ -120,6 +121,9 @@ class JobQueueProcessor:
             if job is None or job.status != "queued":
                 return
             self._queued_ids.add(job_id)
+        with bound(job_id=job_id):
+            # Logged in the admitting request's context: request_id and job_id on one line.
+            logger.info("Job queued")
         self._queue.put(job_id)
 
     def clear_pending_jobs(self, owner_user_id: int | None = None, *, owner_principal_id: str | None = None) -> tuple[int, int]:
@@ -144,13 +148,16 @@ class JobQueueProcessor:
                 job_id = self._queue.get(timeout=0.5)
             except Empty:
                 continue
+            job = None
             try:
                 job = self.job_store.get(job_id)
                 if job and job.status == "canceled":
                     continue
-                self.orchestrator.process_job(job_id)
+                with bound(request_id=job.origin_request_id if job else None, job_id=job_id):
+                    self.orchestrator.process_job(job_id)
             except Exception:
-                logger.exception("Worker could not finish job %s; inspect persisted status", job_id)
+                with bound(request_id=job.origin_request_id if job else None, job_id=job_id):
+                    logger.exception("Worker could not finish job %s; inspect persisted status", job_id)
             finally:
                 with self._lock:
                     self._queued_ids.discard(job_id)

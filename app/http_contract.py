@@ -10,6 +10,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Match
 
 from app.application import ErrorResponse
+from app.observability import request_id_var
 
 logger = logging.getLogger(__name__)
 API_VERSION = "1.11.0"
@@ -38,8 +39,17 @@ class V1Boundary:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or not is_v1(scope["path"]):
             return await self.app(scope, receive, send)
+        request_id = uuid4().hex
+        scope.setdefault("state", {})["request_id"] = request_id
+        # The same ID reaches logs, threadpool handlers and any job this request admits.
+        token = request_id_var.set(request_id)
+        try:
+            return await self._dispatch(scope, receive, send)
+        finally:
+            request_id_var.reset(token)
+
+    async def _dispatch(self, scope, receive, send):
         from starlette.requests import Request
-        scope.setdefault("state", {})["request_id"] = uuid4().hex
         request = Request(scope)
         allowed, found = set(), False
         for route in self.routes:

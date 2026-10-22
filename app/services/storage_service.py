@@ -11,6 +11,7 @@ from typing import Dict, get_args
 from uuid import uuid4
 
 from app.config import settings
+from app.observability import current_request_id
 from app.models import JobResponse, JobStatus, QualityLabel
 from app.options import EffectiveOptions, ProcessingOptions
 from app.retention_models import retention_info
@@ -30,7 +31,7 @@ _JOB_RECORD_FIELDS: frozenset[str] | None = None
 def _allowed_update_fields() -> frozenset[str]:
     global _JOB_RECORD_FIELDS
     if _JOB_RECORD_FIELDS is None:
-        _JOB_RECORD_FIELDS = frozenset(f.name for f in dc_fields(JobRecord)) - {"job_id", "created_at", "owner_user_id", "owner_principal_id", "options_requested", "options_effective", "parent_job_id", "artifacts_expires_at", "artifacts_removed_at", "artifacts_removal_reason", "artifacts_purged_at"}
+        _JOB_RECORD_FIELDS = frozenset(f.name for f in dc_fields(JobRecord)) - {"job_id", "created_at", "owner_user_id", "owner_principal_id", "options_requested", "options_effective", "parent_job_id", "artifacts_expires_at", "artifacts_removed_at", "artifacts_removal_reason", "artifacts_purged_at", "origin_request_id"}
     return _JOB_RECORD_FIELDS
 
 
@@ -57,6 +58,8 @@ class JobRecord:
     artifacts_removed_at: datetime | None = None
     artifacts_removal_reason: str | None = None
     artifacts_purged_at: datetime | None = None
+    # Server request_id (HTTP v1 or MCP) that admitted the job; None for legacy and recovered rows.
+    origin_request_id: str | None = field(default_factory=current_request_id)
 
     @property
     def effective_owner(self) -> str | None:
@@ -162,7 +165,7 @@ class JobStore(ArtifactRetentionMixin):
             conn.execute("ALTER TABLE jobs ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0")
         if "owner_principal_id" not in columns:
             conn.execute("ALTER TABLE jobs ADD COLUMN owner_principal_id TEXT")
-        for column in ("options_requested", "options_effective", "error_code", "parent_job_id", "artifacts_expires_at", "artifacts_removed_at", "artifacts_removal_reason", "artifacts_purged_at"):
+        for column in ("options_requested", "options_effective", "error_code", "parent_job_id", "artifacts_expires_at", "artifacts_removed_at", "artifacts_removal_reason", "artifacts_purged_at", "origin_request_id"):
             if column not in columns:
                 conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} TEXT")
         conn.execute("""CREATE TABLE IF NOT EXISTS artifact_audit (
@@ -214,6 +217,7 @@ class JobStore(ArtifactRetentionMixin):
             artifacts_removed_at=datetime.fromisoformat(data["artifacts_removed_at"]) if data.get("artifacts_removed_at") else None,
             artifacts_removal_reason=data.get("artifacts_removal_reason"),
             artifacts_purged_at=datetime.fromisoformat(data["artifacts_purged_at"]) if data.get("artifacts_purged_at") else None,
+            origin_request_id=data.get("origin_request_id"),
         )
 
     def _persist(self, job: JobRecord, *, commit: bool = True) -> None:
@@ -224,8 +228,8 @@ class JobStore(ArtifactRetentionMixin):
             """
             INSERT OR REPLACE INTO jobs
                 (job_id, filename, working_dir, status, owner_user_id, progress_percent, created_at, updated_at,
-                 input_pdf_path, output_pdf_path, quality, error, owner_principal_id, options_requested, options_effective, error_code, parent_job_id, artifacts_expires_at, artifacts_removed_at, artifacts_removal_reason, artifacts_purged_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 input_pdf_path, output_pdf_path, quality, error, owner_principal_id, options_requested, options_effective, error_code, parent_job_id, artifacts_expires_at, artifacts_removed_at, artifacts_removal_reason, artifacts_purged_at, origin_request_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.job_id,
@@ -249,6 +253,7 @@ class JobStore(ArtifactRetentionMixin):
                 job.artifacts_removed_at.isoformat() if job.artifacts_removed_at else None,
                 job.artifacts_removal_reason,
                 job.artifacts_purged_at.isoformat() if job.artifacts_purged_at else None,
+                job.origin_request_id,
             ),
         )
         if commit:

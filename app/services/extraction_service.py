@@ -14,6 +14,7 @@ answers and page text are never stored or logged.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import contextvars
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -25,6 +26,7 @@ from uuid import uuid4
 
 from app.application import ApplicationError, JobApplication, Principal
 from app.config import settings
+from app.observability import bound
 from app.document_models import FieldSpec
 from app.extraction_models import (
     ApplyExtractionInput, CreateExtractionInput, ExtractionCandidate, ExtractionList, ExtractionReceipt,
@@ -269,7 +271,8 @@ class ExtractionService:
                 (run_id, owner, job_id, cache_key, kind, context_id, type_id, type_version, schema_sha256,
                  canonical_sha256, start, end, provider.model, prompt_version, _now().isoformat()))
             work = _Work(run_id, kind, tuple(pages), job_id, specs, candidates)
-            self._futures[run_id] = self._executor.submit(self._process, work, provider, owner)
+            # The run keeps the admitting request's request_id in its logs.
+            self._futures[run_id] = self._executor.submit(contextvars.copy_context().run, self._process, work, provider, owner)
         return ExtractionReceipt(run=self.get(principal, job_id, run_id), replayed=False)
 
     def _tokens_today(self, owner) -> int:
@@ -285,6 +288,10 @@ class ExtractionService:
 
     # ── worker ───────────────────────────────────────────────────────────────
     def _process(self, work: _Work, provider: ChatProvider, owner: str) -> None:
+        with bound(job_id=work.document_id):
+            self._process_bound(work, provider, owner)
+
+    def _process_bound(self, work: _Work, provider: ChatProvider, owner: str) -> None:
         usage = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "latency_ms": 0}
         self._execute("UPDATE extraction_runs SET state='running' WHERE run_id=?", (work.run_id,))
         outcome, result = "completed", None

@@ -33,9 +33,10 @@ class Principal:
 
 
 class ApplicationError(Exception):
-    def __init__(self, status: int, code: str, message: str):
+    def __init__(self, status: int, code: str, message: str, *, retry_after: int | None = None):
         super().__init__(message)
         self.status, self.code, self.message = status, code, message
+        self.retry_after = retry_after
 
 
 class ValidationDetail(BaseModel):

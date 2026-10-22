@@ -423,9 +423,5 @@ async def update_user(user_id: int, request: Request, user: dict = Depends(requi
             detail="Usuário não encontrado.",
         )
 
-    logger.info(
-        "Admin user %s updated account %s",
-        user.get("email"),
-        updated.get("email"),
-    )
+    logger.info("Admin user %s updated account %s", user.get("id"), updated.get("id"))
     return updated

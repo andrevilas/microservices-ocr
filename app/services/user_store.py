@@ -261,9 +261,9 @@ class UserStore:
 
         try:
             self.create_user(name=name, email=email, password=password, role="admin")
-            logger.info("Admin user created: %s <%s>", name, email)
+            logger.info("Admin user created")
         except ValueError:
-            logger.warning("Admin user email %s already taken, skipping.", email)
+            logger.warning("Configured admin email is already taken; skipping admin creation.")
 
 
 # ---------------------------------------------------------------------------
