@@ -21,7 +21,8 @@ from app.main import create_app
 from app.mcp_server import build_mcp_server
 from app.results import MAX_PAGE_CHARS, page_path, read_report
 from app.security import require_principal
-from app.services.ocr_orchestrator import OcrOrchestrator
+from app.config import settings
+from app.services.ocr_orchestrator import OcrOrchestrator, legacy_output_format
 from app.services.storage_service import JobStore
 from app.services.tesseract_service import PrimaryOcrService
 from test_http_contract import validate_response
@@ -38,6 +39,14 @@ def pdf(pages):
         doc.showPage()
     doc.save()
     return buffer.getvalue()
+
+
+@pytest.fixture(autouse=True)
+def searchable_output(monkeypatch):
+    # Jobs here carry no recorded options, so the format comes from the legacy setting:
+    # "pdf" -> "pdf_searchable". These tests cover text/results, not PDF/A conformance.
+    monkeypatch.setattr(settings, "final_output_type", "pdf")
+    assert legacy_output_format(settings.final_output_type) == "pdf_searchable"
 
 
 def orchestrator(store, fallback=None):
@@ -209,9 +218,18 @@ def test_failure_does_not_publish_partial_results(results, monkeypatch, failure)
         fallback.process_pages.side_effect = RuntimeError("synthetic extraction failure")
     assert orchestrator(store, fallback).process_job(job.job_id) is None
     assert store.get_snapshot(job.job_id).status == "failed"
+    # Failed jobs may expose a retained diagnostic report; none was recorded here.
     with pytest.raises(ApplicationError) as error:
         service.report(OWNER, job.job_id)
-    assert error.value.code == "result_not_ready"
+    assert (error.value.status, error.value.code) == (409, "result_unavailable")
+    # Text and artifact are never published for a failed job.
+    with pytest.raises(ApplicationError) as error:
+        service.text(OWNER, job.job_id)
+    assert (error.value.status, error.value.code) == (409, "result_not_ready")
+    assert service.artifact(OWNER, job.job_id).available is False
+    with pytest.raises(ApplicationError) as error:
+        service.artifact_file(OWNER, job.job_id)
+    assert error.value.code == "artifact_unavailable"
 
 
 def test_filters_ties_cursor_insert_and_filter_binding(results):

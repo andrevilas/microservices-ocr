@@ -7,10 +7,22 @@
   const $ = (id) => document.getElementById(id);
   const BASE = "/api/v1/service-principals";
   const SCOPES = {"jobs:read": "Consultar jobs", "artifacts:read": "Ler resultados", "jobs:submit": "Enviar documentos",
-    "jobs:cancel": "Cancelar jobs", "artifacts:delete": "Excluir arquivos"};
+    "jobs:cancel": "Cancelar jobs", "artifacts:delete": "Excluir arquivos", "contexts:read": "Consultar contextos",
+    "contexts:write": "Editar rascunhos de contextos", "metadata:read": "Consultar metadados", "metadata:write": "Salvar rascunhos de metadados"};
   const PAGE = 100;
-  let token = null, busy = false;
+  // Actions stay disabled until the session and first service page load (ready) and while any operation runs (busy),
+  // so a click is never swallowed by the busy guard in run(). Text inputs stay editable; typed values are never reset on failure.
+  const ACTIONS = ["create-service-btn", "issue-btn", "services-more", "credentials-more", "disable-service-btn"];
+  const BUSY_REGIONS = ["create-service-form", "service-list", "service-detail"];
+  let token = null, busy = false, ready = false;
   let services = [], servicesDone = false, current = null, credentials = [], credentialsDone = false;
+
+  function syncControls() {
+    const off = busy || !ready;
+    for (const id of ACTIONS) $(id).disabled = off;
+    document.querySelectorAll("#service-list [data-service-id], #credential-list [data-revoke-id]").forEach((button) => { button.disabled = off; });
+    for (const id of BUSY_REGIONS) $(id).setAttribute("aria-busy", String(busy));
+  }
 
   function show(kind, message) {
     $("integrations-status").hidden = true; $("integrations-error").hidden = true;
@@ -34,9 +46,17 @@
   }
   const send = (path, method, body) => api(path, {method, headers: body ? {"Content-Type": "application/json"} : {}, body: body ? JSON.stringify(body) : undefined});
   const run = (operation) => async (...args) => {
-    if (busy) return;
+    if (busy) return;                           // last-resort guard against duplicate requests; controls are disabled meanwhile
     busy = true;
-    try { await operation(...args); } catch (e) { show("error", e.message); } finally { busy = false; }
+    const origin = document.activeElement;
+    syncControls();
+    try { await operation(...args); } catch (e) { show("error", e.message); } finally {
+      busy = false;
+      syncControls();
+      // Disabling the focused control drops focus to <body>; give it back when nothing else claimed it.
+      const active = document.activeElement;
+      if ((!active || active === document.body) && origin?.isConnected && !origin.disabled && origin !== document.body) origin.focus();
+    }
   };
 
   // ------------------------------------------------------------ services
@@ -59,13 +79,17 @@
       el("button", {type: "button", className: "button button-small", dataset: {serviceId: s.id}, "aria-pressed": String(current?.id === s.id)},
         ["Gerenciar", el("span", {className: "visually-hidden", text: ` ${s.name}`})]),
     ])));
+    syncControls();
   }
-  $("service-list").addEventListener("click", run(async (event) => {
-    const button = event.target.closest("[data-service-id]");
-    if (!button) return;
-    const service = services.find((s) => s.id === button.dataset.serviceId);
+  // Resolve the clicked target before run() disables it, then pass only the id.
+  const manageService = run(async (id) => {
+    const service = services.find((s) => s.id === id);
     if (service) await openService(service);
-  }));
+  });
+  $("service-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-service-id]");
+    if (button && !button.disabled) manageService(button.dataset.serviceId);
+  });
   $("services-more").onclick = run(() => loadServices(false));
 
   const onSubmit = (form, handler) => { const go = run(handler); $(form).addEventListener("submit", (event) => { event.preventDefault(); go(); }); };
@@ -137,20 +161,23 @@
           : null,
       ]);
     }));
+    syncControls();
   }
   $("credentials-more").onclick = run(() => loadCredentials(false));
-  $("credential-list").addEventListener("click", run(async (event) => {
-    const button = event.target.closest("[data-revoke-id]");
-    if (!button) return;
-    const credential = credentials.find((c) => c.id === button.dataset.revokeId);
+  const revokeCredential = run(async (id) => {
+    const credential = credentials.find((c) => c.id === id);
     const ok = await ui.confirmAction({title: "Revogar esta credencial?", danger: true,
       body: `“${credential?.name || ""}” deixará de autenticar na próxima requisição, inclusive em conexões MCP abertas. Pedidos já em andamento não são interrompidos. Não é possível desfazer.`,
       confirmLabel: "Revogar credencial", cancelLabel: "Voltar"});
     if (!ok) return;
-    await send(`${BASE}/${encodeURIComponent(current.id)}/credentials/${encodeURIComponent(button.dataset.revokeId)}`, "DELETE");
+    await send(`${BASE}/${encodeURIComponent(current.id)}/credentials/${encodeURIComponent(id)}`, "DELETE");
     show("success", "Credencial revogada.");
     await loadCredentials(true);
-  }));
+  });
+  $("credential-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-revoke-id]");
+    if (button && !button.disabled) revokeCredential(button.dataset.revokeId);
+  });
 
   onSubmit("issue-form", async () => {
     const name = $("credential-name").value.trim();
@@ -205,15 +232,20 @@
 
   const initialize = run(async () => {
     $("integrations-retry").disabled = true;
+    $("integrations-error").hidden = true;
+    $("integrations-loading").hidden = false;
     try {
       token = (await ui.browserToken()).access_token;
       await loadServices(true);
+      ready = true;
       $("integrations-retry").hidden = true;
-      $("integrations-error").hidden = true;
     } catch (e) {
       $("integrations-retry").hidden = false;
       show("error", e.message);
-    } finally { $("integrations-retry").disabled = false; }
+    } finally {
+      $("integrations-loading").hidden = true;
+      $("integrations-retry").disabled = false;
+    }
   });
   $("integrations-retry").onclick = initialize;
   initialize();

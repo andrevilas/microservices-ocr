@@ -19,6 +19,7 @@ from app.retention_models import retention_info
 from app.services.artifact_retention import safe_rmtree
 from app.services.control_service import ControlService
 from app.services.export_service import ExportService
+from app.services.ocr_orchestrator import legacy_output_format
 from app.services.retention_worker import RetentionWorker
 from app.services.storage_service import JobStore, _CREATE_TABLE_SQL
 from test_http_contract import validate_response
@@ -28,6 +29,14 @@ from test_upload_admission import system, bearer, pdf, upload
 from test_bulk import bulk, job as bulk_job, create_export, wait_export
 
 OWNER = Principal("user:1", 1, frozenset({"jobs:read", "jobs:submit", "artifacts:read", "artifacts:delete"}))
+
+
+@pytest.fixture(autouse=True)
+def searchable_output(monkeypatch):
+    # finished() runs the mocked orchestrator on jobs without recorded options, so the format comes
+    # from the legacy setting. Retention is the subject here, not PDF/A conformance (see test_pdfa_integration).
+    monkeypatch.setattr(settings, "final_output_type", "pdf")
+    assert legacy_output_format(settings.final_output_type) == "pdf_searchable"
 
 
 def finished(system, status="completed"):

@@ -1,3 +1,6 @@
+# veraPDF 1.30.2 (official image, pinned by digest). Only its files are copied; it never runs as a service.
+FROM verapdf/cli@sha256:d5ee329657cf9bc4b2400392dd54c7d0a0ce9980ff6fa2da5590eebeec007cdb AS verapdf
+
 FROM python:3.11-slim AS builder
 
 ARG ENABLE_FALLBACK_OCR=false
@@ -33,7 +36,9 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     OCR_TMP_DIR=/tmp/ocr-recognizer \
     MAX_UPLOAD_SIZE_MB=80 \
-    ENABLE_FALLBACK_OCR=$ENABLE_FALLBACK_OCR
+    ENABLE_FALLBACK_OCR=$ENABLE_FALLBACK_OCR \
+    VERAPDF_EXECUTABLE=/opt/verapdf/verapdf \
+    VERAPDF_TIMEOUT_SECONDS=120
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
@@ -46,11 +51,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsm6 \
     libxext6 \
     libxrender1 \
+    openjdk-21-jre-headless \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
+# Only the veraPDF distribution is copied: the official image's JRE is Alpine/musl and does not
+# run on this Debian (glibc) base, so Java comes from the Debian package above (java on PATH).
+COPY --from=verapdf /opt/verapdf /opt/verapdf
+# Build-time smoke test: fails the build if veraPDF cannot start with the Debian JRE.
+RUN /opt/verapdf/verapdf --version
 COPY app /app/app
 
 EXPOSE 8000

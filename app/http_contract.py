@@ -12,7 +12,7 @@ from starlette.routing import Match
 from app.application import ErrorResponse
 
 logger = logging.getLogger(__name__)
-API_VERSION = "1.6.0"
+API_VERSION = "1.7.0"
 
 
 def is_v1(path: str) -> bool:
@@ -133,6 +133,18 @@ def install_openapi(application, routes):
         for route in routes:
             for method in route.methods:
                 responses = schema["paths"][route.path][method.lower()]["responses"]
+                declared_body = (route.openapi_extra or {}).get("requestBody", {})
+                for media, declared in declared_body.get("content", {}).items():
+                    rendered = schema["paths"][route.path][method.lower()].get(
+                        "requestBody", {}).get("content", {}).get(media)
+                    if rendered is None:
+                        continue
+                    for key in ("example", "examples"):
+                        if key in declared:
+                            rendered[key] = deepcopy(declared[key])
+                    if "examples" in declared.get("schema", {}):
+                        rendered.setdefault("schema", {})["examples"] = deepcopy(
+                            declared["schema"]["examples"])
                 for status, response in route.responses.items():
                     for media, content in response.get("content", {}).items():
                         if "example" in content:

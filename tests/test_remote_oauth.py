@@ -254,9 +254,42 @@ def test_realm_requires_pkce_exact_redirects_and_no_embedded_users():
     client = realm["clients"][0]
     assert client["attributes"]["pkce.code.challenge.method"] == "S256"
     assert client["consentRequired"] and not client["directAccessGrantsEnabled"] and not client["implicitFlowEnabled"]
+    assert client["publicClient"] and client["standardFlowEnabled"]
+    assert client["serviceAccountsEnabled"] is False
+    assert client["redirectUris"] == ["http://127.0.0.1:9187/callback"]
+    assert client["webOrigins"] == []
+    expected_scopes = {
+        "jobs:read", "artifacts:read", "jobs:submit", "jobs:cancel", "artifacts:delete",
+        "contexts:read", "contexts:write", "contexts:publish",
+        "metadata:read", "metadata:write", "metadata:approve",
+    }
+    assert client["optionalClientScopes"] == sorted(expected_scopes)
+    assert client["defaultClientScopes"] == ["ocr-audience"]
+    assert expected_scopes.isdisjoint(client["defaultClientScopes"])
+    assert sorted(scope["name"] for scope in realm["clientScopes"]) == sorted(expected_scopes | {"ocr-audience"})
+    for scope in realm["clientScopes"]:
+        if scope["name"] in expected_scopes:
+            assert scope["protocol"] == "openid-connect"
+            assert scope["attributes"]["include.in.token.scope"] == "true"
+            assert scope["attributes"]["display.on.consent.screen"] == "true"
+            assert scope["attributes"]["consent.screen.text"] == scope["name"]
     assert realm["sslRequired"] == "all" and "users" not in realm
     assert realm["revokeRefreshToken"] and realm["accessTokenLifespan"] == 300
+    assert realm["refreshTokenMaxReuse"] == 0
     assert realm["clients"][-1]["secret"] == "${OCR_INTROSPECTION_SECRET}"
+    resource = realm["clients"][-1]
+    assert resource["clientId"] == "ocr-resource"
+    assert resource["publicClient"] is False
+    assert resource["clientAuthenticatorType"] == "client-secret"
+    for flag in ("standardFlowEnabled", "implicitFlowEnabled", "directAccessGrantsEnabled", "serviceAccountsEnabled"):
+        assert resource[flag] is False
+    assert resource["redirectUris"] == [] and resource["webOrigins"] == []
+    assert resource["defaultClientScopes"] == [] and resource["optionalClientScopes"] == []
+    assert [(entry["clientId"], entry["secret"]) for entry in realm["clients"] if "secret" in entry] == [
+        ("ocr-resource", "${OCR_INTROSPECTION_SECRET}")]
+    serialized = json.dumps(realm)
+    for field in ("users", "credentials", "password"):
+        assert json.dumps(field) + ":" not in serialized
     mapper = realm["clientScopes"][0]["protocolMappers"][0]["config"]
     assert mapper["included.custom.audience"] == "https://ocr.test/mcp"
     mappers = realm["clientScopes"][0]["protocolMappers"]

@@ -31,7 +31,8 @@ class RuntimeLease:
     def release(self):
         if self._file is None:
             return
-        handle, self._file = self._file, None
+        # Retain the handle until both unlocking and closing succeed.
+        handle = self._file
         if os.name == "nt":
             import msvcrt
             handle.seek(0)
@@ -40,3 +41,4 @@ class RuntimeLease:
             import fcntl
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         handle.close()
+        self._file = None

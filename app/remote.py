@@ -2,11 +2,22 @@
 
 The established authorization server owns login, consent, PKCE and token issuance.
 This entrypoint never accepts the application's legacy JWT or service credentials.
+
+Subject bindings are explicit: {"user_id": int, "scopes": [...]}. A binding that
+contains any document scope (contexts:*, metadata:*) must also carry
+"document_scopes_not_before", a finite Unix timestamp (0 < x < 1e12); the
+legacy-only format stays valid, and the field is optional there. Operators set the
+cutoff after the last second in which old tokens were issued (for example
+floor(now)+1) and request new consent/tokens. A token whose verified "iat" is
+before the cutoff keeps only its legacy scopes, so an old token that already
+carried a previously unsupported name is never promoted. The cutoff is never
+generated automatically.
 """
 import asyncio
 from dataclasses import dataclass
 import json
 import ipaddress
+import math
 import os
 from pathlib import Path
 import re
@@ -23,7 +34,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.application import ApplicationError, Principal
 from app.http_contract import error_response
-from app.services.identity_store import SERVICE_SCOPES
+from app.scopes import DOCUMENT_SCOPES, LEGACY_SCOPES, OAUTH_SCOPES
 from app.services.user_store import get_user_store
 
 MAX_JSON = 65536
@@ -33,10 +44,39 @@ OPERATIONS = {
     "GET": [r"/api/v1/(me|capabilities|metrics|jobs|batches)",
             r"/api/v1/(jobs|batches|uploads|exports)/[0-9a-f]{32}",
             r"/api/v1/jobs/[0-9a-f]{32}/(text|report|artifact|artifact/content)",
-            r"/api/v1/exports/[0-9a-f]{32}/content"],
+            r"/api/v1/exports/[0-9a-f]{32}/content",
+            r"/api/v1/context-templates",
+            r"/api/v1/contexts",
+            r"/api/v1/contexts/[0-9a-f]{32}",
+            r"/api/v1/contexts/[0-9a-f]{32}/types",
+            r"/api/v1/document-types/[0-9a-f]{32}",
+            r"/api/v1/document-types/[0-9a-f]{32}/versions",
+            r"/api/v1/document-types/[0-9a-f]{32}/versions/[1-9][0-9]{0,18}",
+            r"/api/v1/jobs/[0-9a-f]{32}/metadata",
+            r"/api/v1/jobs/[0-9a-f]{32}/metadata/revisions",
+            r"/api/v1/jobs/[0-9a-f]{32}/metadata/revisions/[0-9a-f]{32}",
+            r"/api/v1/jobs/[0-9a-f]{32}/metadata/revisions/[0-9a-f]{32}/content",
+            r"/api/v1/jobs/[0-9a-f]{32}/metadata/revisions/[0-9a-f]{32}/segments/[0-9a-f]{32}/fields",
+            r"/api/v1/jobs/[0-9a-f]{32}/metadata/revisions/[0-9a-f]{32}/segments/[0-9a-f]{32}/fields/[a-z][a-z0-9_]{0,63}/values",
+            r"/api/v1/jobs/[0-9a-f]{32}/metadata/revisions/[0-9a-f]{32}/segments/[0-9a-f]{32}/fields/[a-z][a-z0-9_]{0,63}/evidence",
+            r"/api/v1/jobs/[0-9a-f]{32}/metadata/revisions/[0-9a-f]{32}/segments/[0-9a-f]{32}/fields/[a-z][a-z0-9_]{0,63}/strings/(raw|normalized)",
+            r"/api/v1/jobs/[0-9a-f]{32}/metadata/revisions/[0-9a-f]{32}/schemas/[0-9a-f]{64}",
+            r"/api/v1/jobs/[0-9a-f]{32}/canonical/manifest",
+            r"/api/v1/jobs/[0-9a-f]{32}/canonical/pages",
+            r"/api/v1/jobs/[0-9a-f]{32}/canonical/pages/[1-9][0-9]{0,2}",
+            r"/api/v1/jobs/[0-9a-f]{32}/canonical/pages[.]jsonl"],
     "POST": [r"/api/v1/(upload-sessions|uploads|jobs|batches|exports|jobs/cancel-batch)",
-             r"/api/v1/jobs/[0-9a-f]{32}/(cancel|retry)"],
-    "PUT": [r"/api/v1/uploads/[0-9a-f]{32}/content"],
+             r"/api/v1/jobs/[0-9a-f]{32}/(cancel|retry)",
+             r"/api/v1/context-templates/(?=[a-z0-9-]{1,64}/clone$)[a-z][a-z0-9]*(?:-[a-z0-9]+)*/clone",
+             r"/api/v1/contexts",
+             r"/api/v1/contexts/[0-9a-f]{32}/types",
+             r"/api/v1/document-types/[0-9a-f]{32}/versions",
+             r"/api/v1/document-types/[0-9a-f]{32}/versions/[1-9][0-9]{0,18}/deprecate",
+             r"/api/v1/jobs/[0-9a-f]{32}/metadata/approve"],
+    "PUT": [r"/api/v1/uploads/[0-9a-f]{32}/content",
+            r"/api/v1/contexts/[0-9a-f]{32}",
+            r"/api/v1/document-types/[0-9a-f]{32}",
+            r"/api/v1/jobs/[0-9a-f]{32}/metadata"],
     "DELETE": [r"/api/v1/jobs/[0-9a-f]{32}/artifacts"],
 }
 
@@ -67,7 +107,8 @@ class RemoteConfig:
     issuer: str
     introspection_client_id: str
     secret_file: Path
-    # subject -> {user_id: int, scopes: list[str]}; exact issuer is globally pinned.
+    # subject -> {user_id: int, scopes: list[str][, document_scopes_not_before: number]};
+    # exact issuer is globally pinned.
     subjects: dict
     allowed_clients: tuple[str, ...]
     ca_file: Path | None = None
@@ -86,10 +127,21 @@ class RemoteConfig:
             raise ValueError("Invalid OAuth integration configuration.")
         for subject, binding in self.subjects.items():
             if (not isinstance(subject, str) or not 1 <= len(subject) <= 512 or not isinstance(binding, dict)
-                    or set(binding) != {"user_id", "scopes"} or type(binding["user_id"]) is not int
+                    or not {"user_id", "scopes"} <= set(binding)
+                    or not set(binding) <= {"user_id", "scopes", "document_scopes_not_before"}
+                    or type(binding["user_id"]) is not int
                     or not 0 < binding["user_id"] <= 9223372036854775807
-                    or not isinstance(binding["scopes"], list) or not binding["scopes"]
-                    or any(not isinstance(s, str) or s not in SERVICE_SCOPES for s in binding["scopes"])):
+                    or not isinstance(binding["scopes"], list)
+                    or not 0 < len(binding["scopes"]) <= len(OAUTH_SCOPES)
+                    or any(type(s) is not str or s not in OAUTH_SCOPES for s in binding["scopes"])
+                    or len(set(binding["scopes"])) != len(binding["scopes"])):
+                raise ValueError("Invalid explicit OAuth subject binding.")
+            cutoff = binding.get("document_scopes_not_before")
+            documental = not set(binding["scopes"]) <= LEGACY_SCOPES
+            if "document_scopes_not_before" in binding:
+                if type(cutoff) not in (int, float) or not 0 < cutoff < 1e12:
+                    raise ValueError("Invalid explicit OAuth subject binding.")
+            elif documental:
                 raise ValueError("Invalid explicit OAuth subject binding.")
 
     @property
@@ -193,14 +245,15 @@ class IntrospectionVerifier:
             raise ApplicationError(503, "identity_unavailable", "Identity verification is unavailable.")
         claims = await self._json("POST", self.endpoint, data={"token": token, "token_type_hint": "access_token"},
                                   auth=httpx2.BasicAuth(self.config.introspection_client_id, self.secret))
+        now = time.time()
         expiry, subject, scopes = claims.get("exp"), claims.get("sub"), claims.get("scope")
         audience = claims.get("aud")
         audience = [audience] if isinstance(audience, str) else audience
         not_before = claims.get("nbf", 0)
         token_type = claims.get("token_type")
         if (claims.get("active") is not True or claims.get("iss") != self.config.issuer
-                or type(expiry) not in (int, float) or not (time.time() < expiry < 1e12)
-                or type(not_before) not in (int, float) or not (-1e12 < not_before <= time.time())
+                or type(expiry) not in (int, float) or not (now < expiry < 1e12)
+                or type(not_before) not in (int, float) or not (-1e12 < not_before <= now)
                 or not isinstance(audience, list) or any(not isinstance(a, str) for a in audience)
                 or self.config.resource not in audience or claims.get("client_id") not in self.config.allowed_clients
                 or not isinstance(token_type, str) or token_type.lower() != "bearer"
@@ -214,9 +267,16 @@ class IntrospectionVerifier:
             raise ApplicationError(503, "identity_unavailable", "Identity verification is unavailable.") from None
         if user is None:
             raise denied
-        allowed = frozenset(scopes.split()) & frozenset(binding["scopes"]) & SERVICE_SCOPES
+        allowed = frozenset(scopes.split()) & frozenset(binding["scopes"]) & OAUTH_SCOPES
+        if allowed & DOCUMENT_SCOPES:
+            issued_at = claims.get("iat")
+            if (type(issued_at) not in (int, float)
+                    or not 0 < issued_at <= now or not issued_at < expiry):
+                raise denied
+            if issued_at < binding.get("document_scopes_not_before", math.inf):
+                allowed -= DOCUMENT_SCOPES  # Older tokens are never promoted to document scopes.
         # OAuth never gains local administrative powers from roles/email/claims.
-        return Principal(f"user:{user['id']}", user["id"], allowed, is_admin=False)
+        return Principal(f"user:{user['id']}", user["id"], allowed, kind="user", is_admin=False, auth_source="oauth")
 
 
 async def remote_principal(request: Request):
@@ -261,7 +321,7 @@ class RemoteSurface:
             return await error_response(request, 400, "invalid_request", "Use the Authorization header.")(scope, receive, send)
         if path in (METADATA_PATH, "/.well-known/oauth-protected-resource") and method == "GET":
             return await JSONResponse({"resource": self.config.resource, "authorization_servers": [self.config.issuer],
-                "scopes_supported": sorted(SERVICE_SCOPES), "bearer_methods_supported": ["header"]}, headers=headers)(scope, receive, send)
+                "scopes_supported": sorted(OAUTH_SCOPES), "bearer_methods_supported": ["header"]}, headers=headers)(scope, receive, send)
         allowed = (path == "/mcp" and method in {"POST", "GET", "DELETE"}) or any(
             re.fullmatch(pattern, path) for pattern in OPERATIONS.get(method, []))
         if not allowed:

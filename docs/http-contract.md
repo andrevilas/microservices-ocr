@@ -1,7 +1,11 @@
 # Contrato HTTP v1
 
-Entrega OCR-AM-04, atividade LPM `hkKLY54xl4fHElZsRNdK`. O contrato atual tem
-30 operações sob `/api/v1`, versão de contrato `1.6.0`, após a AM-05 de
+Entrega OCR-AM-04, atividade LPM `hkKLY54xl4fHElZsRNdK`. O contrato atual (versão
+`1.7.0`) tem exatamente 59 operações sob `/api/v1`: 44 anteriores, incluindo 14 do
+catálogo local, mais 15 de documentos ([metadados documentais](document-metadata-api.md)).
+O MCP `0.6.0` anuncia 46 ferramentas (20 legadas, 14 de catálogo e 12 de documentos),
+29 leituras e 17 escritas. As referências abaixo a `1.6.0`, 44 operações e 34
+ferramentas são históricas das entregas indicadas. Seguem a AM-05 de
 [uploads persistentes e admissão idempotente](uploads.md) e a AM-06 de
 [texto por página e relatórios](results.md) e AM-07 de
 [opções e capacidades](capabilities.md) e AM-09 de [lotes/exportação](batches-exports.md). A AM-10 acrescenta [cancelamento e reprocessamento](job-control.md), e a AM-11 [retenção e exclusão](retention.md). Administração ampla continua no backlog.
@@ -84,14 +88,167 @@ desconhecidas também recebem o envelope. MCP mantém os erros de protocolo e
 resultados de ferramenta; não recebe envelope HTTP v1 dentro do JSON-RPC.
 As rotas legadas mantêm seu próprio formato.
 
+## Templates locais de contexto
+
+`GET /api/v1/context-templates` (`ocr_list_context_templates`) exige
+`contexts:read` e retorna `ContextTemplateList`: exatamente três registros
+completos, estáticos e em ordem fixa. Não há filtros, paginação ou criação
+implícita de contextos, tipos ou versões. O catálogo é global e igual para os
+proprietários autorizados.
+
+`POST /api/v1/context-templates/{template_id}/clone`
+(`ocr_clone_context_template`) exige `contexts:read` e `contexts:write`;
+`contexts:publish` não é necessário. O identificador usa ASCII minúsculo,
+sintaxe `^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$` e no máximo 64 caracteres; não é UUID.
+Um identificador válido desconhecido retorna 404 `context_template_not_found`.
+O corpo fechado `TemplateCloneInput` contém somente `expected_version`, inteiro
+estrito positivo, e `expected_sha256`, exatamente 64 caracteres hexadecimais
+minúsculos. Não aceita proprietário: a identidade autenticada determina a posse.
+`Idempotency-Key` é obrigatório, com as regras existentes do catálogo
+(8–128 caracteres ASCII). Os dois escopos são verificados antes de ler o corpo,
+com limite de 2 MiB durante o streaming.
+
+O serviço cria atomicamente um contexto e seus tipos como rascunhos editáveis,
+todos na revisão 1, sem publicar versões. Retorna 201 com
+`Idempotency-Replayed: false`, ou 200 com `true` e o recibo original persistido
+`TemplateCloneReceipt`. O recibo identifica a edição/hash do template, o contexto,
+os tipos e a data UTC; não representa o estado atual dos rascunhos.
+Replay não desfaz edições nem publicações e continua válido quando a quota está
+cheia. Uma chave nova cria outra cópia, sujeita à quota.
+
+Edição/hash divergentes retornam 409; outra requisição sob a mesma
+identidade/chave retorna 409 `idempotency_conflict`. Quota excedida retorna 429;
+corrupção ou indisponibilidade de armazenamento retorna 503, sem conteúdo
+interno. A política e a transação pertencem ao serviço existente. Não há retry
+automático: após resultado incerto, repita a mesma chave e o mesmo corpo.
+Os envelopes, `Cache-Control: no-store`, `X-Request-ID` e a política existente
+de concessão de escopos a serviços continuam aplicáveis.
+
+Templates são pontos de partida editáveis, sem aprovação de conformidade
+documental. Após HTTP T3-H e adaptadores/gateway explícito T3-AO, o registro
+T3-R acrescenta `ocr_list_context_templates` (sem argumentos do usuário) e
+`ocr_clone_context_template` (`template_id`, `body`, `idempotency_key`).
+Ambos delegam aos adaptadores existentes, sem política ou transação própria.
+Listar exige `contexts:read`; clonar exige também `contexts:write`, sem
+`contexts:publish`, e cria somente rascunhos próprios na revisão 1.
+A listagem é global, não uma leitura de IDs de outro proprietário; cada
+identidade autorizada pode clonar sua própria cópia. Não há bypass de posse.
+Os nomes, descrições e exemplos são dados não confiáveis, nunca instruções.
+Após timeout, repetir o mesmo template, chave e corpo reproduz o recibo
+histórico; requisição alterada sob a mesma chave retorna 409. Consultar
+contexto/tipo para o estado atual. Não há seed ou publicação automática.
+Histórico (entrega dos templates): o contrato tinha 44 operações HTTP e 34
+ferramentas MCP, sendo 14 de catálogo; hoje são 59 e 46.
+As rotas remotas explícitas mantêm escopos, posse e replay dos serviços.
+Não representa conclusão de UI, metadados ou integração com DocumentService,
+homologação de clientes externos ou implantação em produção.
+
+## Catálogo e ciclo de vida de versões
+
+`POST /api/v1/document-types/{type_id}/versions/{version}/deprecate`
+(`ocr_deprecate_document_type_version`) exige `contexts:read` e
+`contexts:publish`. O corpo fechado contém apenas
+`expected_lifecycle_revision`, inteiro estrito entre 1 e `2**31 - 1`.
+A versão no caminho deve ser um inteiro entre 1 e `2**63 - 1`; não há `latest`.
+`Idempotency-Key` é obrigatório, com as mesmas regras das demais escritas
+idempotentes do catálogo. Os escopos são verificados antes da leitura do corpo,
+limitado a 2 MiB.
+
+A ação usa compare-and-swap do ciclo de vida e retorna **200** tanto na primeira
+execução (`Idempotency-Replayed: false`) quanto na repetição persistida
+(`true`). O recibo contém somente `type_id`, `version`, `schema_sha256` e
+`lifecycle`, com estado `deprecated`, revisão 2 e `changed_at` em UTC.
+A mesma identidade/chave e requisição reproduzem exatamente o recibo original,
+inclusive após reinício ou edições posteriores, antes de verificar novamente
+CAS. Reutilizar a chave com outra requisição retorna 409 `idempotency_conflict`.
+Uma chave nova com revisão obsoleta retorna 409
+`type_lifecycle_revision_conflict`; com revisão atual de uma versão já
+depreciada, 409 `type_version_already_deprecated`.
+Versões inexistentes ou de outro proprietário retornam o mesmo 404
+`type_version_not_found`, inclusive para administrador. Corrupção do snapshot
+ou falha operacional de armazenamento retorna 503 `storage_unavailable`, sem
+expor conteúdo interno.
+
+O recibo de publicação (`TypeVersionSummary`) permanece histórico e estável,
+sem `lifecycle`, inclusive em replay após depreciação. GET e listagem de versões
+mostram o ciclo de vida atual junto do envelope imutável. Versões depreciadas
+continuam legíveis e listadas; bytes canônicos, schema e hash não mudam.
+Depreciar não libera quota, exclui versões ou permite reativação. Uma nova
+publicação nasce com ciclo de vida `published`, revisão 1.
+
+A ação está exposta no HTTP local, na ferramenta MCP
+`ocr_deprecate_document_type_version` e na rota explícita do gateway OAuth
+`POST /api/v1/document-types/{type_id}/versions/{version}/deprecate`, com os
+mesmos requisitos de escopo, proprietário, CAS e replay. Histórico, com os templates:
+44 operações HTTP e 34 ferramentas MCP (14 do catálogo e 20 legadas). A matriz SDK anteriormente validada para o ciclo de vida cobre HTTP e stdio nos modos auto e legacy;
+a validação em aplicações desktop/CLI reais, com emissor externo e DNS/TLS,
+continua pendente. Isso não anuncia implantação em produção nem conclusão de
+Contexts ou UI. A vinculação efetiva no DocumentService ainda não foi
+integrada, portanto esta entrega não garante o bloqueio de novas associações
+de documentos de ponta a ponta.
+
+## Documentos e metadados (HTTP 1.7.0)
+
+As 15 rotas de documentos (tag `Documents`, sob `/api/v1/jobs/{job_id}`) e as 12
+ferramentas MCP correspondentes, com escopos, limites, CAS, idempotência (201 na
+primeira execução, 200 no replay), 503/429 sem retry automático e regras de
+download, estão em [metadados documentais](document-metadata-api.md). O OpenAPI
+atual é a fonte autoritativa. A qualificação real cobre SDK oficial e JWT local em
+quatro combinações (HTTP e stdio, `auto` e `legacy`); não cobre os seis aplicativos
+nem OIDC em produção. UI de metadados, enriquecimento por LLM, XMP, PDF/A final,
+exportação e RAG externo continuam pendentes.
+
 ## Validação
 
+As contagens e resultados desta seção são históricos das datas e entregas citadas.
 `tests/test_http_contract.py` valida respostas reais e exemplos contra schemas
 JSON do OpenAPI; as 12 operações iniciais têm testes de troca HTTP neste módulo,
 e as cinco operações de upload/admissão em `tests/test_upload_admission.py`.
 Cobre 401/403/404/405/409/422/500, PDF inteiro,
 Range 206/400/416, ausência de valores privados, request_id, cache e export sem
 runtime. A suíte de identidades mantém a autorização real HTTP/MCP.
+`tests/test_catalog_http.py` acrescenta o inventário exato das 14 operações de
+catálogo e casos de depreciação sobre ASGI e SQLite reais: recibos, ciclo de
+vida, CAS, replay persistido, integridade, limites e isolamento.
+`tests/test_context_templates_http.py` verifica os fluxos HTTP/SQLite reais de
+listagem sem escrita, clone de cada template, revisões iniciais, replay após
+edição/publicação, conflitos, entradas inválidas, escopos antes do corpo,
+limite em streaming, posse e isolamento do provider. Usa override explícito
+de principal; não comprova autenticação por credenciais reais.
+As verificações gerais de inventário HTTP passam de 42 para 44.
+Após corrigir as restrições de hashes e identificadores no JSON Schema,
+170 testes das seis suítes afetadas passaram em 43,67 s. O OpenAPI foi
+regenerado e verificado offline; os digests dos três templates permaneceram
+iguais. A revisão independente encerrou a pendência do contrato.
+Os adaptadores internos de templates e as rotas explícitas do gateway OAuth
+foram verificados em quatro suítes: 163 testes passaram em 17,97 s.
+A cobertura usa ASGI, SQLite e serviços reais, com emissor OAuth sintético;
+inclui interseção de escopos do token e do vínculo, cutoff, rejeição antes da
+leitura do corpo, replay e isolamento entre proprietários. O teste do ApiClient
+injeta o principal explicitamente. Essas evidências não comprovam um provedor
+OAuth externo nem clientes desktop. O registro T3-R acrescenta os templates
+às suítes existentes. A revisão identificou e corrigiu a conversão do recibo
+JSON do ApiClient para o DTO estrito no stdio; datas UTC e a validação fechada
+foram preservadas. Respostas inválidas produzem erro sanitizado, sem repetir
+a operação. Após a correção, sete suítes passaram no Docker: 168 testes
+aprovados em 161,84 s e três verificações de aplicativos reais ignoradas por
+ausência dos binários no contêiner. A cobertura inclui HTTP e stdio, auto e
+legacy, respostas malformadas, replay e propagação dos erros de aplicação.
+A matriz específica `tests/test_context_templates_vertical.py` também passou
+nas quatro combinações HTTP/stdio e auto/legacy (29,83 s), com credencial de
+serviço emitida pela API administrativa real. Verifica replay entre API e
+MCP, edição posterior preservada, entradas inválidas, ausência de publicação
+automática, escopos reduzidos e isolamento entre usuários e administrador.
+Esses testes usam identidades sintéticas locais e não substituem a
+homologação nos aplicativos externos.
+O inventário
+MCP permanecia independente, com 14 ferramentas de catálogo (34 no total, histórico).
+`tests/test_catalog_lifecycle_mcp_vertical.py` verifica
+recibos, replay, conflitos, preservação do snapshot e autorização por clientes
+SDK reais HTTP/stdio, em auto e legacy. A validação independente de 16/10/2026
+executou oito suítes: 150 testes passaram e três verificações existentes de
+aplicativos reais foram ignoradas por falta dos respectivos binários no
+contêiner de testes. Isso não substitui a homologação desses aplicativos.
 
 Referências consultadas em 15/10/2026:
 [respostas adicionais do FastAPI](https://fastapi.tiangolo.com/advanced/additional-responses/)

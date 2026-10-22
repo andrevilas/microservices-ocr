@@ -17,6 +17,7 @@ from app.application import ApplicationError, JobApplication, Principal, get_job
 from app.config import settings
 from app.main import app
 from app.mcp_server import build_mcp_server
+from catalog_tool_expectations import assert_catalog_annotations, assert_tool_inventory
 from app.services.auth_service import create_token
 from app.services.storage_service import JobStore
 from app.services.user_store import get_user_store
@@ -132,7 +133,7 @@ def test_openapi_declares_identity_and_unique_operations():
         for operation in methods.values():
             assert operation["security"] == [{"PrincipalBearer": []}]
             ids.append(operation["operationId"])
-    assert len(ids) == len(set(ids)) == 30
+    assert len(ids) == len(set(ids)) == 59
 
 
 def test_read_snapshot_and_sanitized_error(fixture):
@@ -166,11 +167,34 @@ def test_one_runtime_owner_between_processes(tmp_path):
 def test_combined_app_lifecycle_and_real_mcp(fixture, monkeypatch, tmp_path):
     from unittest.mock import Mock
     import app.main as main
+    from app.services.upload_service import UploadService, get_upload_service
+    from app.services.batch_service import BatchService, get_batch_service
+    from app.services.control_service import ControlService, get_control_service
+    from app.services.export_service import ExportService, get_export_service
+    from app.services.job_queue import get_job_queue_processor
+
     service, _, tokens, _, _ = fixture
     processor = Mock()
-    monkeypatch.setattr(main, "get_job_queue_processor", lambda: processor)
-    monkeypatch.setattr(settings, "ocr_tmp_dir", tmp_path / "lifecycle")
+    processor.job_store = service.store
+    monkeypatch.setattr(settings, "ocr_tmp_dir", service.store.root_dir)
     combined = main.create_app(lambda: service)
+    cache = {}
+
+    def cached(name, build):
+        if name not in cache:
+            cache[name] = build()
+        return cache[name]
+
+    def uploads():
+        return cached("uploads", lambda: UploadService(service.store))
+
+    combined.dependency_overrides.update({
+        get_upload_service: uploads,
+        get_batch_service: lambda: cached("batches", lambda: BatchService(service.store, uploads())),
+        get_control_service: lambda: cached("controls", lambda: ControlService(uploads())),
+        get_export_service: lambda: cached("exports", lambda: ExportService(service.store)),
+        get_job_queue_processor: lambda: processor,
+    })
     async def scenario():
         async with combined.router.lifespan_context(combined):
             async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=combined),
@@ -232,8 +256,8 @@ def test_real_sdk_http_parity_and_cross_user_denial(fixture, mode):
                                           headers={"Authorization": f"Bearer {tokens[0]}"}) as http:
                 async with Client(streamable_http_client("http://localhost/mcp", http_client=http), mode=mode) as client:
                     tools = await client.list_tools()
-                    assert {t.name for t in tools.tools} == {"ocr_whoami", "ocr_list_jobs", "ocr_get_job", "ocr_get_metrics", "ocr_get_artifact", "ocr_get_text", "ocr_get_report", "ocr_get_capabilities", "ocr_prepare_upload", "ocr_get_upload", "ocr_submit_job", "ocr_create_batch", "ocr_list_batches", "ocr_get_batch", "ocr_create_export", "ocr_get_export", "ocr_cancel_job", "ocr_cancel_jobs", "ocr_retry_job", "ocr_delete_job_artifacts"}
-                    assert all(t.annotations.read_only_hint == (t.name not in {"ocr_prepare_upload", "ocr_submit_job", "ocr_create_batch", "ocr_create_export", "ocr_cancel_job", "ocr_cancel_jobs", "ocr_retry_job", "ocr_delete_job_artifacts"}) for t in tools.tools)
+                    assert_tool_inventory(tools.tools)
+                    assert_catalog_annotations(tools.tools)
                     for name, args, path in [
                         ("ocr_whoami", {}, "/api/v1/me"),
                         ("ocr_get_capabilities", {}, "/api/v1/capabilities"),

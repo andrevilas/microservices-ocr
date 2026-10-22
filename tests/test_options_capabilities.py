@@ -18,6 +18,7 @@ from app.services import capability_service as module
 from app.services.capability_service import CapabilityService
 from app.services.ocr_orchestrator import OcrOrchestrator
 from app.services.ocrmypdf_service import OcrmypdfService
+from app.services.pdfa_validator import PdfaValidationResult
 from app.services.storage_service import JobStore
 from app.services.upload_service import UploadService
 from test_upload_admission import system, upload, bearer
@@ -28,8 +29,13 @@ from test_http_contract import validate_response
 def probes(monkeypatch):
     outputs = {"tesseract": "tesseract 5.3.4", "langs": "List of available languages in PRIVATE-PATH:\neng\npor\nosd\n",
                "gs": "10.03.1", "pdftoppm": "pdftoppm version 24.02.0", "pdfinfo": "pdfinfo version 24.02.0",
-               "ocrmypdf": "16.10.4", "fallback": '{"ready":true}'}
+               "ocrmypdf": "16.10.4", "fallback": '{"ready":true}', "verapdf": "veraPDF 1.30.2"}
     calls = []
+    # veraPDF readiness is simulated explicitly on every OS (production runs it only on POSIX);
+    # no process is started, the probe output above is synthetic.
+    from app.services import pdfa_validator
+    monkeypatch.setattr(pdfa_validator, "_PLATFORM", "linux")
+    monkeypatch.setattr(settings, "verapdf_executable", Path("verapdf"))
     monkeypatch.setattr(module.shutil, "which", lambda name: name if name in outputs else None)
     monkeypatch.setattr(module, "installed", lambda _: True)
     def output(args, timeout=5):
@@ -223,7 +229,8 @@ def test_concurrent_commands_use_immutable_options_without_global_mutation(probe
     assert {key: getattr(settings, key) for key in watched} == before
     for command, kwargs in calls:
         lang = command[command.index("--language") + 1]
-        assert command[command.index("--output-type") + 1] == ("pdf" if lang == "eng" else "pdfa")
+        # PDF/A-2 is now explicit (E1); the generic "pdfa" alias is no longer emitted.
+        assert command[command.index("--output-type") + 1] == ("pdf" if lang == "eng" else "pdfa-2")
         assert command[command.index("--optimize") + 1] == ("0" if lang == "eng" else "1")
         assert "--skip-text" in command and "--force-ocr" not in command
         assert command[command.index("--jobs") + 1] == "1"
@@ -237,11 +244,48 @@ def test_probe_single_flight_cache_and_copy_isolation(probes):
     _, calls, service = probes
     with ThreadPoolExecutor(max_workers=8) as pool:
         values = list(pool.map(lambda _: service.snapshot(), range(16)))
-    assert len(calls) == 7
+    assert len(calls) == 8
     values[0].languages.clear()
     assert service.snapshot().languages == ["eng", "por"]
     service.snapshot(refresh=True)
-    assert len(calls) == 14
+    assert len(calls) == 16
+
+
+@pytest.mark.parametrize("platform,executable,version", [("win32", "verapdf", "veraPDF 1.30.2"),
+                                                         ("linux", None, "veraPDF 1.30.2"),
+                                                         ("linux", "verapdf", None)])
+def test_pdfa_not_offered_and_rejected_before_admission_without_validator(system, probes, monkeypatch,
+                                                                          platform, executable, version):
+    from app.services import pdfa_validator
+    outputs, _, service = probes
+    monkeypatch.setattr(pdfa_validator, "_PLATFORM", platform)
+    monkeypatch.setattr(settings, "verapdf_executable", Path(executable) if executable else None)
+    outputs["verapdf"] = version
+    capabilities = service.snapshot(refresh=True)
+    assert capabilities.output_formats == ["pdf_searchable"]
+    assert not capabilities.engines["verapdf"].available and capabilities.engines["verapdf"].reasons
+    receipt = upload(system)
+    response = submit(system, receipt, {"languages": ["eng"], "output_format": "pdfa"})
+    assert response.status_code == 503 and response.json()["error"]["code"] == "pdfa_validator_unavailable"
+    assert system.jobs.snapshot() == [] and system.queue.enqueued == []
+    # Default output is PDF/A, so the default request is also refused instead of silently downgraded.
+    assert submit(system, receipt, key="options-key-0002").status_code == 503
+    assert submit(system, receipt, {"languages": ["eng"], "output_format": "pdf_searchable"},
+                  key="options-key-0003").status_code == 202
+
+
+def test_worker_reaffirms_validator_before_processing(system, probes, monkeypatch):
+    receipt = upload(system)
+    response = submit(system, receipt, {"languages": ["eng"]})
+    assert response.status_code == 202
+    monkeypatch.setattr(settings, "verapdf_executable", None)
+    engine = Mock()
+    engine.run_ocr.side_effect = AssertionError("Must not run OCR")
+    job_id = response.json()["job_id"]
+    assert OcrOrchestrator(system.jobs, ocrmypdf_service=engine).process_job(job_id) is None
+    job = system.jobs.get_snapshot(job_id)
+    assert job.status == "failed" and job.error_code == "pdfa_validator_unavailable"
+    assert job.output_pdf_path is None and engine.run_ocr.call_count == 0
 
 
 @pytest.mark.parametrize("failure", [OSError("PRIVATE-PATH"), subprocess.TimeoutExpired("PRIVATE", 5)])
@@ -279,8 +323,16 @@ def test_orchestrator_passes_options_and_honors_fallback(system, probes, policy)
     engine.optimize_pdfa.side_effect = copy
     fallback.is_available.return_value = True
     fallback.process_pages.return_value = ["the original document has a name and a date for the page"]
-    assert OcrOrchestrator(system.jobs, ocrmypdf_service=engine, fallback_ocr=fallback).process_job(job_id)
+    # Default output is PDF/A (fail-closed): a passing validator stub is required for completion.
+    validator = Mock()
+    # The stub reports the real digest of the bytes it was given, like the real wrapper.
+    validator.validate.side_effect = lambda path, profile: PdfaValidationResult(
+        "passed", "2b", hashlib.sha256(Path(path).read_bytes()).hexdigest(), validator_version="1.30.2",
+        reason_codes=("compliant",))
+    assert OcrOrchestrator(system.jobs, ocrmypdf_service=engine, fallback_ocr=fallback,
+                           pdfa_validator=validator).process_job(job_id)
     assert calls == [effective, effective]
+    assert validator.validate.call_count == 1
     assert fallback.process_pages.call_count == (1 if policy == "if_low_quality" else 0)
     report = JobApplication(system.jobs).report(Principal("user:1", 1, frozenset({"jobs:read", "artifacts:read"})), job_id)
     assert report.options_effective == effective

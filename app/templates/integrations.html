@@ -9,6 +9,7 @@
   </div>
 </div>
 
+<p id="integrations-loading" class="hint" role="status">Carregando serviços…</p>
 <p id="integrations-status" class="form-alert" data-tone="success" role="status" hidden></p>
 <p id="integrations-error" class="form-alert" role="alert" hidden></p>
 <button id="integrations-retry" class="button button-small" type="button" hidden>Tentar novamente</button>
@@ -24,7 +25,7 @@
       <input type="text" id="service-name" maxlength="80" required autocomplete="off" />
     </label>
     <div class="form-actions form-grid__wide">
-      <button type="submit" id="create-service-btn" class="button button-primary">Criar serviço</button>
+      <button type="submit" id="create-service-btn" class="button button-primary" disabled>Criar serviço</button>
     </div>
   </form>
 </details>
@@ -60,7 +61,13 @@
           <label class="check"><input type="checkbox" name="scope" value="jobs:submit" /> Enviar documentos <code>jobs:submit</code></label>
           <label class="check"><input type="checkbox" name="scope" value="jobs:cancel" /> Cancelar jobs <code>jobs:cancel</code></label>
           <label class="check"><input type="checkbox" name="scope" value="artifacts:delete" /> Excluir arquivos de jobs <code>artifacts:delete</code></label>
+          <label class="check"><input type="checkbox" name="scope" value="contexts:read" aria-describedby="documental-scopes-help" /> Consultar contextos <code>contexts:read</code></label>
+          <label class="check"><input type="checkbox" name="scope" value="contexts:write" aria-describedby="documental-scopes-help" /> Editar rascunhos de contextos <code>contexts:write</code></label>
+          <label class="check"><input type="checkbox" name="scope" value="metadata:read" aria-describedby="documental-scopes-help" /> Consultar metadados <code>metadata:read</code></label>
+          <label class="check"><input type="checkbox" name="scope" value="metadata:write" aria-describedby="documental-scopes-help" /> Salvar rascunhos de metadados <code>metadata:write</code></label>
           <p class="hint">Conceda o mínimo necessário. Ler resultados também exige consultar jobs.</p>
+          <p id="documental-scopes-help" class="hint">As permissões documentais são opcionais. Serviços podem preparar contextos e tipos em rascunho, mas não publicar schemas nem aprovar metadados. Salvar metadados exige um tipo publicado do mesmo proprietário; um serviço novo não dispõe desse fluxo.</p>
+          <p id="documental-oauth-help" class="hint">Para o fluxo completo de metadados e aprovação, use OAuth com uma conta de usuário e permissões explícitas. A configuração OAuth é feita separadamente desta tela.</p>
         </fieldset>
         <label class="field" for="credential-expiry">Validade
           <select id="credential-expiry">

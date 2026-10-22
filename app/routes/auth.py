@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
@@ -226,6 +227,38 @@ async def browser_session(request: Request):
         raise HTTPException(401, "Human session required.")
     return JSONResponse({"access_token": token, "token_type": "bearer", "subject": principal.subject},
                         headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
+
+
+@auth_router.get("/contexts")
+async def contexts_page(request: Request, user: dict = Depends(require_auth)):
+    """Render context CRUD for authenticated human users; API scopes govern access."""
+    return templates.TemplateResponse(
+        request=request,
+        name="contexts.html",
+        context={
+            "app_name": settings.app_name,
+            "static_asset_version": settings.static_asset_version,
+            "user": user,
+        },
+    )
+
+
+@auth_router.get("/documents/{job_id}/review")
+async def document_review_page(job_id: str, request: Request, user: dict = Depends(require_auth)):
+    """Render the read-only metadata review shell; document data comes from the existing API v1."""
+    if re.fullmatch(r"[0-9a-f]{32}", job_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Documento não encontrado.")
+    return templates.TemplateResponse(
+        request=request,
+        name="document_review.html",
+        context={
+            "app_name": settings.app_name,
+            "static_asset_version": settings.static_asset_version,
+            "user": user,
+            "job_id": job_id,
+            "active_page": "documents",
+        },
+    )
 
 
 @auth_router.get("/account")

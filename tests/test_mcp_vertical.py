@@ -21,6 +21,7 @@ import pytest
 
 from app.mcp_stdio import ApiClient, MAX_RESPONSE_BYTES, configuration
 from test_upload_admission import pdf, system, upload
+from catalog_tool_expectations import assert_tool_inventory
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -128,7 +129,7 @@ def test_real_clients_upload_submit_poll_text_pdf_and_isolation(runtime, transpo
         async with connected(runtime, transport, mode) as client:
             listing = await client.list_tools()
             tools = {t.name: t for t in listing.tools}
-            assert len(tools) == 20
+            assert_tool_inventory(listing.tools)
             assert not tools["ocr_prepare_upload"].annotations.idempotent_hint
             assert tools["ocr_submit_job"].annotations.idempotent_hint
             assert all(t.output_schema for t in tools.values())

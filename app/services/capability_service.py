@@ -10,7 +10,7 @@ import time
 from threading import Lock
 
 from app.config import settings
-from app.options import Capabilities, EffectiveOptions, EngineCapability, ProcessingOptions, ResolvedOptions
+from app.options import COMPRESSION_PRESET_VERSION, Capabilities, EffectiveOptions, EngineCapability, ProcessingOptions, ResolvedOptions
 from app.results import MAX_PAGE_CHARS, MAX_TOTAL_CHARS, package_version
 
 
@@ -132,17 +132,34 @@ class CapabilityService:
                 pass
         engines["easyocr"] = EngineCapability(available=fallback_ready, version=package_version("easyocr"),
                                                reasons=[] if fallback_ready else ["dependencies_or_local_pt_en_models_unavailable"])
+        engines["verapdf"] = self._probe_verapdf()
+        warnings = ["probe_is_not_ocr_homologation", "defaults_may_be_unavailable",
+                    "extract_text_does_not_recognize_scans", "economic_compression_is_experimental"]
+        pdfa_ready = ready and engines["verapdf"].available
+        if not engines["verapdf"].available:
+            # PDF/A is not offered (and is rejected at admission) until a validator is available.
+            warnings.append("pdfa_validator_unavailable_pdfa_not_offered")
         return Capabilities(
             engines=engines, languages=languages if ready else [],
             processing_modes=["extract_text", "preserve_existing_text"] if ready else ["extract_text"],
-            output_formats=["pdf_searchable", "pdfa"] if ready else ["pdf_searchable"],
-            compression_profiles=["none", "balanced"] if ready else ["none"],
+            output_formats=["pdf_searchable", "pdfa"] if pdfa_ready else ["pdf_searchable"],
+            compression_profiles=["none", "economic", "balanced", "preservation"] if ready else ["none"],
             fallback_policies=["disabled", "if_low_quality"] if ready and fallback_ready and languages == ["eng", "por"] else ["disabled"],
             fallback_language_sets=[["eng", "por"]] if fallback_ready else [],
-            defaults=ProcessingOptions().resolved(), limits={},
-            warnings=["probe_is_not_ocr_homologation", "pdfa_conformance_not_validated",
-                      "defaults_may_be_unavailable", "extract_text_does_not_recognize_scans"],
+            defaults=ProcessingOptions().resolved(), limits={}, warnings=warnings,
         )
+
+    @staticmethod
+    def _probe_verapdf() -> EngineCapability:
+        from app.services.pdfa_validator import (REASON_NOT_CONFIGURED, REASON_UNSUPPORTED_PLATFORM,
+                                                 platform_supported)
+        if not platform_supported():
+            return EngineCapability(available=False, reasons=[REASON_UNSUPPORTED_PLATFORM])
+        if settings.verapdf_executable is None:
+            return EngineCapability(available=False, reasons=[REASON_NOT_CONFIGURED])
+        version = version_from(command_output([str(settings.verapdf_executable), "--version"], timeout=30))
+        return EngineCapability(available=version is not None, version=version,
+                                reasons=[] if version else ["missing_or_failed_probe"])
 
     def validate(self, options: ResolvedOptions, *, refresh=False):
         from app.application import ApplicationError
@@ -156,6 +173,9 @@ class CapabilityService:
             raise ApplicationError(503, "ocr_unavailable", "OCR dependencies are unavailable.")
         if not options.languages or not set(options.languages) <= set(capabilities.languages):
             raise ApplicationError(422, "language_unavailable", "Requested OCR language is not installed or supported.")
+        if options.output_format == "pdfa" and "pdfa" not in capabilities.output_formats:
+            # Checked before admission and again by the worker (refresh=True) before processing.
+            raise ApplicationError(503, "pdfa_validator_unavailable", "PDF/A output requires an available veraPDF validator.")
         if options.fallback_policy == "if_low_quality":
             if options.languages != ("eng", "por"):
                 raise ApplicationError(422, "unsupported_option_combination", "Fallback requires the eng and por language pair.")
@@ -170,7 +190,10 @@ class CapabilityService:
                                 subprocess_timeout_seconds=settings.ocr_subprocess_timeout_seconds,
                                 quality_min_text=settings.quality_min_text,
                                 quality_valid_ratio_threshold=settings.quality_valid_ratio_threshold,
-                                fallback_character_tolerance=settings.fallback_character_tolerance)
+                                fallback_character_tolerance=settings.fallback_character_tolerance,
+                                compression_preset_version=COMPRESSION_PRESET_VERSION,
+                                pdfa_validation_timeout_seconds=(settings.verapdf_timeout_seconds
+                                                                 if resolved.output_format == "pdfa" else None))
 
 
 _service = CapabilityService()

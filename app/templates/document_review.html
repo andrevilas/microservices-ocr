@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Revisar metadados · {{ app_name }}{% endblock %}
+{% block content %}
+<style>
+  .review { display: grid; gap: var(--s4); max-width: 960px; margin: 0 auto; }
+  .review, .review * { min-width: 0; overflow-wrap: anywhere; }
+  .review h1, .review h2 { margin: 0; }
+  .review .review-bar { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: end; margin: var(--s3) 0; }
+  .review .text-output { white-space: pre-wrap; max-height: 50vh; overflow: auto; margin: 0; }
+  .review ul { list-style: none; margin: 0; padding: 0; }
+  .review li { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; justify-content: space-between; padding: var(--s2) 0; border-bottom: 1px solid var(--border); }
+  @media (max-width: 719px) { .review .review-bar > * { flex: 1 1 100%; } .review .field select { width: 100%; } }
+</style>
+<div class="review" id="rv-root" data-job-id="{{ job_id }}">
+  <header>
+    <p class="eyebrow"><a href="/">← Voltar aos documentos</a></p>
+    <h1 id="page-title" tabindex="-1">Revisar metadados</h1>
+    <p class="hint">Visualização somente leitura do texto canônico e das revisões de metadados salvas. Nada é editado, salvo ou aprovado aqui.</p>
+    <p>Documento: <span class="mono" id="rv-job">{{ job_id }}</span></p>
+  </header>
+
+  <section class="panel" aria-label="Estado da página">
+    <p id="rv-status" class="notice" role="status" data-tone="info">Recuperando a sessão…</p>
+    <div class="review-bar">
+      <button id="rv-retry" type="button" class="button" hidden>Tentar novamente</button>
+      <a id="rv-login" class="button button-primary" href="/login" hidden>Entrar novamente</a>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="rv-text-title">
+    <h2 id="rv-text-title">Texto canônico</h2>
+    <p id="rv-manifest" class="hint"></p>
+    <div class="review-bar">
+      <label class="field">Página
+        <select id="rv-page" disabled></select>
+      </label>
+      <button id="rv-next" type="button" class="button button-small" disabled>Próximo trecho</button>
+    </div>
+    <p id="rv-chunk-meta" class="hint"></p>
+    <pre id="rv-text" class="text-output" tabindex="0" aria-label="Texto da página, somente leitura"></pre>
+  </section>
+
+  <section class="panel" aria-labelledby="rv-meta-title">
+    <h2 id="rv-meta-title">Metadados</h2>
+    <p id="rv-meta-note" class="hint" role="status"></p>
+    <dl id="rv-meta" class="detail-list"></dl>
+    <h3>Segmentos</h3>
+    <ul id="rv-segments"></ul>
+    <div class="review-bar">
+      <button id="rv-head" type="button" class="button button-small" disabled>Recarregar versão atual</button>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="rv-revs-title">
+    <h2 id="rv-revs-title">Revisões salvas</h2>
+    <ul id="rv-revs"></ul>
+    <div class="review-bar">
+      <button id="rv-more" type="button" class="button button-small" hidden>Carregar mais revisões</button>
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/document-review.js?v={{ static_asset_version }}" defer></script>
+{% endblock %}

@@ -15,9 +15,79 @@ from urllib.parse import quote, urlsplit
 import httpx2
 from mcp.server.mcpserver.exceptions import ToolError
 
-from app.mcp_tools import INSTRUCTIONS, OcrMCPServer, register_tools
+from app.catalog_mcp_tools import CATALOG_OPERATIONS
+from app.document_mcp_http import document_body, document_request
+from app.document_mcp_tools import DOCUMENT_OPERATIONS
+from app.mcp_tools import INSTRUCTIONS, MCP_VERSION, OcrMCPServer, register_tools
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_CATALOG_REQUEST_BYTES = 2 * 1024 * 1024  # internal, never a tool argument
+CATALOG_UPDATES = frozenset({"update_context", "update_document_type"})
+_ID = re.compile(r"[0-9a-f]{32}")
+
+
+def _catalog_id(value, code):
+    if not isinstance(value, str) or not _ID.fullmatch(value):
+        raise ToolError(f"{code}: Resource not found.")
+    return quote(value, safe="")
+
+
+def catalog_request(operation, args):
+    """Map a catalog operation to (method, path, query, body, headers); IDs are single path segments."""
+    dump = lambda model: model.model_dump(mode="json", by_alias=True)
+    key = lambda value: {"Idempotency-Key": value}
+    page = lambda limit, after: {k: v for k, v in (("limit", limit), ("after", after)) if v is not None}
+    if operation == "list_context_templates":
+        return "GET", "/context-templates", None, None, None
+    if operation == "clone_context_template":
+        template_id, body, idempotency_key = args
+        if (not isinstance(template_id, str) or not 1 <= len(template_id) <= 64
+                or not re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", template_id)):
+            raise ToolError("validation_error: Invalid template identifier.")
+        return "POST", "/context-templates/" + quote(template_id, safe="") + "/clone", None, dump(body), key(idempotency_key)
+    if operation == "list_contexts":
+        return "GET", "/contexts", page(*args), None, None
+    if operation == "create_context":
+        return "POST", "/contexts", None, dump(args[0]), key(args[1])
+    if operation in ("get_context", "update_context"):
+        path = "/contexts/" + _catalog_id(args[0], "context_not_found")
+        return ("GET", path, None, None, None) if operation == "get_context" else ("PUT", path, None, dump(args[1]), None)
+    if operation in ("list_document_types", "create_document_type"):
+        path = "/contexts/" + _catalog_id(args[0], "context_not_found") + "/types"
+        if operation == "list_document_types":
+            return "GET", path, page(args[1], args[2]), None, None
+        return "POST", path, None, dump(args[1]), key(args[2])
+    path = "/document-types/" + _catalog_id(args[0], "type_not_found")
+    if operation == "deprecate_document_type_version":
+        version, body, idempotency_key = args[1:]
+        if not isinstance(version, int) or isinstance(version, bool) or not 1 <= version <= 2**63 - 1:
+            raise ToolError("version_not_found: Resource not found.")
+        return "POST", f"{path}/versions/{version}/deprecate", None, dump(body), key(idempotency_key)
+    if operation == "get_document_type":
+        return "GET", path, None, None, None
+    if operation == "update_document_type":
+        return "PUT", path, None, dump(args[1]), None
+    if operation == "publish_document_type":
+        return "POST", path + "/versions", None, dump(args[1]), key(args[2])
+    if operation == "list_document_type_versions":
+        return "GET", path + "/versions", page(args[1], args[2]), None, None
+    version = args[1]  # get_document_type_version: explicit positive integer, no "latest"
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        raise ToolError("version_not_found: Resource not found.")
+    return "GET", f"{path}/versions/{version}", None, None, None
+
+
+def catalog_body(body):
+    """Compact UTF-8 JSON bytes, refused above the limit before any request is sent."""
+    if body is None:
+        return None
+    try:
+        data = json.dumps(body, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    except (ValueError, TypeError, RecursionError):
+        raise ToolError("invalid_request: Request body could not be serialized.") from None
+    if len(data) > MAX_CATALOG_REQUEST_BYTES:
+        raise ToolError(f"request_too_large: Request body exceeds {MAX_CATALOG_REQUEST_BYTES} bytes.")
+    return data
 
 
 def configuration():
@@ -56,7 +126,7 @@ class ApiClient:
         self.origin, self.http = origin, http
 
     async def invoke(self, _ctx, operation, *args):
-        method, path, query, body, headers = "GET", "", None, None, None
+        method, path, query, body, headers, content = "GET", "", None, None, None, None
         if operation in ("whoami", "capabilities", "metrics"):
             path = {"whoami": "/me", "capabilities": "/capabilities", "metrics": "/metrics"}[operation]
         elif operation == "list_jobs":
@@ -99,14 +169,27 @@ class ApiClient:
         elif operation == "list_batches":
             path = "/batches"
             query = {key: value for key, value in zip(("limit", "cursor"), args) if value is not None}
+        elif operation in DOCUMENT_OPERATIONS:
+            method, path, query, body, headers = document_request(operation, args)
+            content = document_body(body)
+            if content is not None:
+                body, headers = None, {**(headers or {}), "Content-Type": "application/json"}
+        elif operation in CATALOG_OPERATIONS or operation in ("deprecate_document_type_version", "list_context_templates", "clone_context_template"):
+            method, path, query, body, headers = catalog_request(operation, args)
+            content = catalog_body(body)
+            if content is not None:
+                body, headers = None, {**(headers or {}), "Content-Type": "application/json"}
         else:
             raise ToolError("unknown_operation: Operation is not supported.")
+        # Updates are CAS without a key: repeating blindly would not replay anything.
+        retry_hint = ("read the current revision before trying again" if operation in CATALOG_UPDATES
+                      else "retry submissions with the same key")
         try:
             # No redirect, proxy inheritance, automatic retry or arbitrary URL fetch.
             # A timeout may occur after admission: reuse the original key.
             async with asyncio.timeout(120):
                 async with self.http.stream(method, self.origin + "/api/v1" + path,
-                                            params=query, json=body, headers=headers) as response:
+                                            params=query, json=body, content=content, headers=headers) as response:
                     data = bytearray()
                     async for chunk in response.aiter_bytes():
                         if len(data) + len(chunk) > MAX_RESPONSE_BYTES:
@@ -120,12 +203,12 @@ class ApiClient:
                         if not isinstance(code, str) or not re.fullmatch(r"[a-z_]{1,64}", code):
                             code = "upstream_error"
                         # Do not echo upstream HTML, debug errors, URLs or credentials.
-                        raise ToolError(f"{code}: API rejected the operation (HTTP {response.status_code}); retry submissions with the same key.")
+                        raise ToolError(f"{code}: API rejected the operation (HTTP {response.status_code}); {retry_hint}.")
                     if not isinstance(payload, dict):
                         raise ValueError("Expected an object")
                     return payload
         except (httpx2.HTTPError, TimeoutError):
-            raise ToolError("api_unavailable: API connection failed or timed out; retry submissions with the same key.") from None
+            raise ToolError(f"api_unavailable: API connection failed or timed out; {retry_hint}.") from None
         except (ValueError, AttributeError, TypeError):
             raise ToolError("invalid_api_response: API returned an invalid response.") from None
 
@@ -135,7 +218,7 @@ async def run():
     async with httpx2.AsyncClient(headers={"Authorization": "Bearer " + token},
                                  follow_redirects=False, trust_env=False,
                                  timeout=120, limits=httpx2.Limits(max_connections=8)) as http:
-        server = OcrMCPServer("OCR Recognizer", version="0.5.0", instructions=INSTRUCTIONS, log_level="WARNING")
+        server = OcrMCPServer("OCR Recognizer", version=MCP_VERSION, instructions=INSTRUCTIONS, log_level="WARNING")
         register_tools(server, ApiClient(origin, http).invoke)
         await server.run_stdio_async()
 

@@ -41,7 +41,7 @@ class QualityReport(BaseModel):
 
 
 class StageReport(BaseModel):
-    name: Literal["primary", "fallback", "build", "finalize"]
+    name: Literal["primary", "fallback", "build", "finalize", "pdfa_validation"]
     duration_ms: int = Field(ge=0)
 
 
@@ -49,7 +49,16 @@ class OutputValidation(BaseModel):
     requested_format: str
     pdf_readable: bool
     page_count_matches: bool
-    pdfa_conformance: Literal["not_validated"] = "not_validated"
+    pdfa_conformance: Literal["not_validated", "passed", "failed", "indeterminate"] = "not_validated"
+    pdfa_profile: str | None = None
+    pdfa_validator: str | None = None
+    pdfa_validator_version: str | None = None
+    pdfa_validated_sha256: str | None = None
+    pdfa_reason_codes: list[str] = Field(default_factory=list)
+    pdfa_stats: dict[str, int] = Field(default_factory=dict)
+    compression_preset_version: str | None = None
+    compression_arguments: list[str] = Field(default_factory=list)
+    compression_fallback: str | None = None
 
 
 class JobReport(BaseModel):

@@ -1,0 +1,396 @@
+"""Context CRUD service: synthetic data only, real JobStore on tmp_path, no network."""
+import logging
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
+import pytest
+
+from app.application import ApplicationError, Principal
+from app.catalog_models import TypeInput
+from app.document_models import ContextCreate, RequiredWhen, TypeDraft
+from app.services.context_service import ContextService, _snapshot
+from app.services.storage_service import JobStore
+from app.services.type_service import TypeService
+
+BOTH = frozenset({"contexts:read", "contexts:write"})
+
+
+def who(subject="user:1", scopes=BOTH, **extra):
+    return Principal(subject=subject, user_id=1, scopes=frozenset(scopes), **extra)
+
+
+def body(name="Synthetic", *fields):
+    return ContextCreate(name=name, description="synthetic", common_fields=[
+        dict(name=f, type="string", description="synthetic field") for f in fields])
+
+
+def code(call, *args, **kwargs):
+    with pytest.raises(ApplicationError) as error:
+        call(*args, **kwargs)
+    return error.value.status, error.value.code
+
+
+def rows(store):
+    with store._lock:
+        return store._get_conn().execute("SELECT COUNT(*) FROM document_contexts").fetchone()[0]
+
+
+@pytest.fixture
+def store(tmp_path):
+    return JobStore(tmp_path)
+
+
+@pytest.fixture
+def svc(store):
+    return ContextService(store)
+
+
+def test_crud_roundtrip_and_reopen(tmp_path, store, svc):
+    p = who()
+    receipt, replayed = svc.create(p, body("Alpha", "cpf_like"), "key-00000001")
+    assert (replayed, receipt.revision) == (False, 1)
+    assert svc.get(p, receipt.context_id).body == body("Alpha", "cpf_like")
+    updated = svc.update(p, receipt.context_id, body("Beta"), expected_revision=1)
+    assert (updated.revision, updated.created_at) == (2, receipt.created_at) and updated.updated_at >= updated.created_at
+    page = svc.list(p)
+    assert [(i.name, i.revision) for i in page.items] == [("Beta", 2)] and page.next_cursor is None
+    assert not hasattr(page.items[0], "body")
+    ContextService(store)  # second init must not wipe
+    reopened = ContextService(JobStore(tmp_path))
+    assert reopened.get(p, receipt.context_id) == updated
+
+
+def test_scopes_enforced(svc):
+    p = who()
+    cid = svc.create(p, body(), "key-00000001")[0].context_id
+    reader, writer, nobody = who(scopes={"contexts:read"}), who(scopes={"contexts:write"}), who(scopes=set())
+    assert svc.get(reader, cid).context_id == cid and svc.list(reader).items
+    for call in (lambda: svc.create(reader, body(), "key-00000002"), lambda: svc.update(reader, cid, body(), expected_revision=1),
+                 lambda: svc.create(writer, body(), "key-00000002"), lambda: svc.update(writer, cid, body(), expected_revision=1),
+                 lambda: svc.get(writer, cid), lambda: svc.list(writer), lambda: svc.get(nobody, cid), lambda: svc.list(nobody)):
+        assert code(call) == (403, "insufficient_scope")
+    assert svc.get(p, cid).revision == 1
+
+
+def test_owner_isolation_and_admin_has_no_bypass(svc):
+    owner, other = who("user:1"), who("user:2", is_admin=True, kind="service")
+    cid = svc.create(owner, body(), "key-00000001")[0].context_id
+    missing = code(svc.get, other, "0" * 32)
+    assert missing == (404, "context_not_found")
+    assert code(svc.get, other, cid) == missing and code(svc.get, other, "not-an-id") == missing
+    assert code(svc.update, other, cid, body("X"), expected_revision=1) == missing
+    assert svc.list(other).items == [] and svc.get(owner, cid).body.name == "Synthetic"
+
+
+def test_create_idempotency(svc):
+    p, q = who(), who("user:2")
+    receipt, _ = svc.create(p, body("One"), "key-00000001")
+    assert svc.create(p, body("One"), "key-00000001") == (receipt, True)
+    svc.update(p, receipt.context_id, body("Two"), expected_revision=1)
+    assert svc.create(p, body("One"), "key-00000001") == (receipt, True)
+    assert svc.get(p, receipt.context_id).revision == 2
+    assert code(svc.create, p, body("Different"), "key-00000001") == (409, "idempotency_conflict")
+    other, replayed = svc.create(q, body("Different"), "key-00000001")
+    assert not replayed and other.context_id != receipt.context_id
+    for bad in ("short", "bad key with spaces", "é" * 10, None):
+        assert code(svc.create, p, body(), bad) == (422, "invalid_idempotency_key")
+
+
+def test_concurrent_create_and_update(store, svc):
+    p = who()
+
+    def race(fn):
+        gate = Barrier(2, timeout=10)
+
+        def run(i):
+            gate.wait()
+            try:
+                return fn(i)
+            except ApplicationError as error:
+                return error
+        with ThreadPoolExecutor(2) as pool:
+            return [f.result(timeout=20) for f in [pool.submit(run, i) for i in range(2)]]
+
+    results = race(lambda i: svc.create(p, body("Same"), "key-00000001"))
+    assert len({r[0].context_id for r in results}) == 1 and sorted(r[1] for r in results) == [False, True] and rows(store) == 1
+    cid = results[0][0].context_id
+    outcomes = race(lambda i: svc.update(p, cid, body(f"Writer{i}"), expected_revision=1))
+    assert sorted(type(o).__name__ for o in outcomes) == ["ApplicationError", "ContextRecord"]
+    assert [o.code for o in outcomes if isinstance(o, ApplicationError)] == ["context_revision_conflict"]
+    assert svc.get(p, cid).revision == 2
+
+
+def test_quota_and_pagination(svc):
+    p, q = who(), who("user:2")
+    ids = [svc.create(p, body(f"N{i % 3}"), f"key-{i:08d}")[0].context_id for i in range(100)]
+    assert code(svc.create, p, body(), "key-99999999") == (429, "context_quota_exceeded")
+    assert svc.create(p, body("N0"), "key-00000000")[1] is True
+    foreign = svc.create(q, body(), "key-99999999")[0].context_id
+    seen, after = [], None
+    while True:
+        page = svc.list(p, limit=40, after=after)
+        seen += [i.context_id for i in page.items]
+        after = page.next_cursor
+        if after is None:
+            break
+    assert seen == sorted(ids) and foreign not in seen
+    assert [i.context_id for i in svc.list(q).items] == [foreign]
+    assert svc.list(p, limit=100).next_cursor is None and svc.list(p, after="f" * 32).items == []
+    for kwargs in ({"limit": 0}, {"limit": 101}, {"limit": True}, {"limit": "5"}, {"after": "X" * 32}, {"after": "abc"}, {"after": 5}):
+        assert code(svc.list, p, **kwargs) == (422, "invalid_context_query")
+
+
+@pytest.mark.parametrize("revision", [0, -1, 2**31, True, "1", 1.0, None])
+def test_expected_revision_must_be_strict_int(svc, revision):
+    p = who()
+    cid = svc.create(p, body(), "key-00000001")[0].context_id
+    assert code(svc.update, p, cid, body(), expected_revision=revision) == (422, "invalid_context_query")
+    assert code(svc.update, p, cid, body(), expected_revision=2) == (409, "context_revision_conflict")
+
+
+def test_revision_limit(store, svc):
+    p = who()
+    cid = svc.create(p, body(), "key-00000001")[0].context_id
+    with store._lock, store._get_conn() as conn:
+        conn.execute("UPDATE document_contexts SET revision=?", (2**31 - 1,))
+    assert code(svc.update, p, cid, body(), expected_revision=2**31 - 1) == (409, "context_revision_limit")
+
+
+def test_mutated_body_is_revalidated_and_returns_are_copies(svc):
+    p = who()
+    bad = body("Mutated", "dup_field")
+    bad.common_fields.append(bad.common_fields[0])
+    assert code(svc.create, p, bad, "key-00000001") == (422, "invalid_context_body")
+    good = body("Safe", "one_field")
+    cid = svc.create(p, good, "key-00000002")[0].context_id
+    good.common_fields.clear()
+    assert code(svc.update, p, cid, bad, expected_revision=1) == (422, "invalid_context_body")
+    record = svc.get(p, cid)
+    assert [f.name for f in record.body.common_fields] == ["one_field"]
+    record.body.common_fields.clear()
+    assert len(svc.get(p, cid).body.common_fields) == 1
+    assert code(svc.create, p, {"name": "dict"}, "key-00000003") == (422, "invalid_context_body")
+
+
+def test_sql_failure_rolls_back(store, svc):
+    p = who()
+    cid = svc.create(p, body("Original"), "key-00000001")[0].context_id
+
+    def trigger(sql):
+        with store._lock, store._get_conn() as conn:
+            conn.execute(sql)
+
+    trigger("CREATE TRIGGER fail_update BEFORE UPDATE ON document_contexts BEGIN SELECT RAISE(ABORT, 'boom'); END")
+    assert code(svc.update, p, cid, body("secret-name"), expected_revision=1) == (503, "storage_unavailable")
+    record = svc.get(p, cid)
+    assert (record.revision, record.body.name) == (1, "Original")
+    trigger("DROP TRIGGER fail_update")
+    assert svc.update(p, cid, body("Next"), expected_revision=1).revision == 2
+
+    trigger("CREATE TRIGGER fail_insert BEFORE INSERT ON document_contexts BEGIN SELECT RAISE(ABORT, 'boom'); END")
+    with pytest.raises(ApplicationError) as error:
+        svc.create(p, body("secret-name"), "key-00000002")
+    assert (error.value.status, error.value.code) == (503, "storage_unavailable")
+    assert "secret-name" not in repr(error.value.args) + str(error.value.__cause__) and error.value.__suppress_context__
+    assert rows(store) == 1
+    trigger("DROP TRIGGER fail_insert")
+    receipt, replayed = svc.create(p, body("secret-name"), "key-00000002")  # key was not consumed
+    assert not replayed and rows(store) == 2 and receipt.revision == 1
+
+
+MARKER = "corrupt-secret-marker"
+
+
+def corrupt(store, column, value):
+    with store._lock, store._get_conn() as conn:
+        conn.execute(f"UPDATE document_contexts SET {column}=?", (value,))
+
+
+def snapshot_row(store):
+    with store._lock:
+        return store._get_conn().execute("SELECT payload, revision, created_at, updated_at FROM document_contexts").fetchall()
+
+
+def assert_sanitized(error, caplog):
+    assert (error.status, error.code) == (503, "storage_unavailable")
+    assert error.message == "Context storage is unavailable."
+    assert MARKER not in repr(error.args) + str(error) + str(error.__cause__) + caplog.text
+    assert error.__cause__ is None and error.__suppress_context__
+
+
+BAD_VALUES = [("payload", MARKER), ("payload", '{"name": 5, "x": "' + MARKER + '"}'),
+              ("created_at", MARKER), ("updated_at", MARKER), ("created_at", ""), ("updated_at", "2026-13-99T00:00:00"),
+              ("revision", MARKER)]
+
+
+@pytest.mark.parametrize("column,value", BAD_VALUES)
+def test_corrupt_persisted_rows_are_sanitized_503(store, svc, caplog, column, value):
+    p, other = who(), who("user:2")
+    cid = svc.create(p, body("Original"), "key-00000001")[0].context_id
+    corrupt(store, column, value)
+    caplog.set_level(logging.DEBUG)
+    with pytest.raises(ApplicationError) as error:
+        svc.get(p, cid)
+    assert_sanitized(error.value, caplog)
+    with pytest.raises(ApplicationError) as error:
+        svc.list(p)
+    assert_sanitized(error.value, caplog)
+    # A foreign owner neither sees the row nor learns that it is corrupt.
+    assert code(svc.get, other, cid) == (404, "context_not_found") and svc.list(other).items == []
+    assert code(svc.update, other, cid, body("X"), expected_revision=1) == (404, "context_not_found")
+
+
+@pytest.mark.parametrize("value", [MARKER, "", "2026-13-99T00:00:00"])
+def test_create_replay_with_corrupt_created_at_is_503(store, svc, caplog, value):
+    p = who()
+    svc.create(p, body("One"), "key-00000001")
+    corrupt(store, "created_at", value)
+    before = snapshot_row(store)
+    with pytest.raises(ApplicationError) as error:
+        svc.create(p, body("One"), "key-00000001")
+    assert_sanitized(error.value, caplog)
+    assert snapshot_row(store) == before and rows(store) == 1
+    assert code(svc.create, p, body("Different"), "key-00000001") == (409, "idempotency_conflict")  # conflict still wins
+
+
+@pytest.mark.parametrize("value", [MARKER, "", "2026-13-99T00:00:00"])
+def test_update_with_corrupt_created_at_changes_nothing(store, svc, caplog, value):
+    p = who()
+    cid = svc.create(p, body("Original"), "key-00000001")[0].context_id
+    corrupt(store, "created_at", value)
+    before = snapshot_row(store)
+    with pytest.raises(ApplicationError) as error:
+        svc.update(p, cid, body(MARKER), expected_revision=1)
+    assert_sanitized(error.value, caplog)
+    assert snapshot_row(store) == before  # payload, revision and updated_at untouched
+    assert code(svc.update, p, cid, body("X"), expected_revision=7) == (503, "storage_unavailable")  # validated before conflict checks
+
+
+def test_update_with_corrupt_revision_changes_nothing(store, svc):
+    p = who()
+    cid = svc.create(p, body("Original"), "key-00000001")[0].context_id
+    corrupt(store, "revision", MARKER)
+    before = snapshot_row(store)
+    assert code(svc.update, p, cid, body("X"), expected_revision=1) == (503, "storage_unavailable")
+    assert snapshot_row(store) == before
+
+
+@pytest.mark.parametrize("kind", ["copied_field", "constructed", "copied", "tuple", "condition", "mutated", "dict"])
+def test_invalid_internal_context_dto_is_atomic(store, svc, caplog, kind):
+    p = who()
+    original = body("Original", "source")
+    cid = svc.create(p, original, "key-original-001")[0].context_id
+    before = svc.get(p, cid)
+    candidate = body(MARKER, "source", "dependent")
+    if kind == "copied_field":
+        candidate = candidate.model_copy(update={"common_fields": [
+            candidate.common_fields[0].model_copy(update={"max_items": True})]})
+    elif kind == "constructed":
+        candidate = ContextCreate.model_construct(name={"secret": MARKER}, description="", common_fields=[])
+    elif kind == "copied":
+        candidate = candidate.model_copy(update={"name": {"secret": MARKER}})
+    elif kind == "tuple":
+        candidate = candidate.model_copy(update={"common_fields": tuple(candidate.common_fields)})
+    elif kind == "condition":
+        condition = RequiredWhen(field="source", equals="ok").model_copy(update={"equals": [MARKER]})
+        candidate = candidate.model_copy(update={"common_fields": [candidate.common_fields[0],
+            candidate.common_fields[1].model_copy(update={"required_when": condition})]})
+    elif kind == "mutated":
+        candidate.common_fields.append(candidate.common_fields[0])
+    else:
+        candidate = candidate.model_dump(mode="python")
+
+    for operation in (lambda: svc.create(p, candidate, "key-retry-0001"),
+                      lambda: svc.update(p, cid, candidate, expected_revision=1)):
+        with pytest.raises(ApplicationError) as error:
+            operation()
+        exc = error.value
+        assert (exc.status, exc.code, exc.message) == (422, "invalid_context_body", "Context body is invalid.")
+        assert exc.__cause__ is None and exc.__context__ is None
+        assert MARKER not in repr(exc.args) + str(exc) + caplog.text
+        assert rows(store) == 1 and svc.get(p, cid) == before
+    receipt, replayed = svc.create(p, body("Corrected"), "key-retry-0001")
+    assert not replayed and rows(store) == 2
+    assert svc.get(p, receipt.context_id).body.name == "Corrected"
+
+
+@pytest.mark.parametrize("equals,field_type", [(False, "boolean"), (0, "integer")])
+def test_context_snapshot_preserves_types_and_detaches_lists(svc, equals, field_type):
+    candidate = ContextCreate(name="Valid", common_fields=[
+        dict(name="source", type=field_type, description="synthetic"),
+        dict(name="dependent", type="string", description="synthetic", examples=["sample"],
+             required_when=dict(field="source", equals=equals))])
+    detached = _snapshot(candidate)
+    assert type(detached.common_fields) is list
+    assert type(detached.common_fields[1].examples) is list
+    assert type(detached.common_fields[1].required_when.equals) is type(equals)
+    assert detached.common_fields[1].required_when.equals == equals
+    assert detached.common_fields is not candidate.common_fields
+    assert detached.common_fields[1].examples is not candidate.common_fields[1].examples
+    receipt, _ = svc.create(who(), candidate, "key-valid-0001")
+    updated = svc.update(who(), receipt.context_id, candidate, expected_revision=1)
+    candidate.common_fields[1].examples.append("input change")
+    candidate.common_fields.clear()
+    detached.common_fields[1].examples.append("snapshot change")
+    assert updated.body.common_fields[1].examples == ["sample"]
+    updated.body.common_fields[1].examples.clear()
+    assert svc.get(who(), receipt.context_id).body.common_fields[1].examples == ["sample"]
+    assert detached.common_fields[1].examples == ["sample", "snapshot change"]
+
+
+class FailingCommit:
+    """Connection proxy whose commit fails once, before anything is persisted."""
+    def __init__(self, conn):
+        self._conn, self.armed = conn, True
+
+    def commit(self):
+        if self.armed:
+            self.armed = False
+            raise sqlite3.OperationalError("synthetic commit failure " + MARKER)
+        self._conn.commit()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+def test_commit_failure_rolls_back_and_same_key_can_retry(store, svc, monkeypatch, caplog):
+    p = who()
+    real = store._get_conn()
+    proxy = FailingCommit(real)
+    monkeypatch.setattr(store, "_get_conn", lambda: proxy)
+    with pytest.raises(ApplicationError) as error:
+        svc.create(p, body("Retry"), "key-00000001")
+    assert_sanitized(error.value, caplog)
+    assert rows(store) == 0  # no phantom record
+    receipt, replayed = svc.create(p, body("Retry"), "key-00000001")  # same key, same body
+    assert not replayed and rows(store) == 1 and svc.get(p, receipt.context_id).body.name == "Retry"
+
+    proxy.armed = True
+    with pytest.raises(ApplicationError) as error:
+        svc.update(p, receipt.context_id, body("Changed"), expected_revision=1)
+    assert_sanitized(error.value, caplog)
+    record = svc.get(p, receipt.context_id)
+    assert (record.revision, record.body.name) == (1, "Retry")
+    assert svc.update(p, receipt.context_id, body("Changed"), expected_revision=1).revision == 2
+
+
+def test_same_idempotency_key_is_namespaced_per_operation(store):
+    contexts, types = ContextService(store), TypeService(store)
+    p = Principal(subject="user:1", user_id=1, scopes=frozenset({"contexts:read", "contexts:write", "contexts:publish"}))
+    key = "shared-key-0001"
+    draft = TypeDraft.model_validate(TypeInput.model_config["json_schema_extra"]["examples"][0])
+    ctx, ctx_replayed = contexts.create(p, body("Shared", "campo"), key)
+    typ, type_replayed = types.create(p, ctx.context_id, draft, key)
+    assert not ctx_replayed and not type_replayed and typ.type_id != ctx.context_id
+    version, version_replayed = types.publish(p, typ.type_id, expected_revision=1, expected_context_revision=1, key=key)
+    assert not version_replayed and version.version == 1
+
+    # Edit both sources afterwards: every operation still replays its own original receipt.
+    contexts.update(p, ctx.context_id, body("Shared edited", "campo"), expected_revision=1)
+    types.update(p, typ.type_id, draft.model_copy(update={"name": "Edited type"}), expected_revision=1)
+    assert contexts.create(p, body("Shared", "campo"), key) == (ctx, True)
+    assert types.create(p, ctx.context_id, draft, key) == (typ, True)
+    assert types.publish(p, typ.type_id, expected_revision=1, expected_context_revision=1, key=key) == (version, True)
+    assert code(contexts.create, p, body("Other"), key) == (409, "idempotency_conflict")
+    assert rows(store) == 1

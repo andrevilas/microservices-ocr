@@ -51,15 +51,16 @@ def json_contract(model):
     return {**operation("jobs:submit"), "requestBody": {"required": True, "content": {"application/json": {"schema": inline(schema)}}}}
 
 
-async def json_input(request, model):
+async def json_input(request, model, *, max_bytes=65536):
+    # max_bytes is a code constant (never client input); the stream is counted before any parsing.
     if request.headers.get("content-type", "").split(";")[0] != "application/json":
         raise ApplicationError(415, "unsupported_media_type", "Send application/json.")
     payload = bytearray()
     try:
         async with asyncio.timeout(settings.upload_timeout_seconds):
             async for chunk in request.stream():
-                if len(payload) + len(chunk) > 65536:
-                    raise ApplicationError(413, "request_too_large", "JSON request exceeds 64 KiB.")
+                if len(payload) + len(chunk) > max_bytes:
+                    raise ApplicationError(413, "request_too_large", "JSON request is too large.")
                 payload.extend(chunk)
     except TimeoutError:
         raise ApplicationError(408, "upload_timeout", "Request deadline exceeded.") from None

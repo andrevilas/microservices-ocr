@@ -13,6 +13,7 @@
       <a class="brand" href="/">{{ app_name }}</a>
       <nav class="topnav" aria-label="Navegação principal">
         <a href="/" {% if active_page == 'documents' %}aria-current="page"{% endif %}>Documentos</a>
+        <a href="/contexts" {% if active_page == 'contexts' %}aria-current="page"{% endif %}>Contextos</a>
         {% if admin_page or (user is defined and user and user.role == 'admin') %}
         <a href="/admin/users" {% if active_page == 'users' %}aria-current="page"{% endif %}>Usuários</a>
         <a href="/admin/integrations" {% if active_page == 'integrations' %}aria-current="page"{% endif %}>Integrações</a>

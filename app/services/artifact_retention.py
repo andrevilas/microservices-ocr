@@ -101,6 +101,8 @@ class ArtifactRetentionMixin:
     def _purge_locked(self, job):
         if self._artifact_leases.get(job.job_id) or job.artifacts_purged_at or not job.artifacts_removed_at:
             return
+        # Lease counters may already be released; quarantine still preserves files.
+        self._check_available()
         try:
             if not re.fullmatch("[0-9a-f]{32}", job.job_id):
                 raise OSError("Invalid managed job ID.")

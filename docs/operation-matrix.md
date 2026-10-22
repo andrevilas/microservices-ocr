@@ -2,8 +2,16 @@
 
 Fonte: matriz do plano OCR-AM-01, projeto LPM `POzf83SdXU3HWL9KX9i2`.
 Esta tabela usa os nomes efetivamente implementados; nomes propostos diferentes
-não são aliases. Catálogo atual: HTTP v1 **1.6.0, 30 operações**; MCP **0.5.0,
-20 tools**. Contratos e permissões: [API/MCP](api-mcp.md).
+não são aliases. Contrato atual: HTTP v1 **1.7.0, 59 operações** (30 de OCR +
+14 de catálogo + 15 de documentos); MCP **0.6.0, 46 ferramentas** (20 legadas +
+14 de catálogo + 12 de documentos), sendo **29 leituras e 17 escritas**.
+Contratos e permissões: [API/MCP](api-mcp.md), [metadados documentais](document-metadata-api.md)
+e [HTTP v1](http-contract.md). A tabela F01–F29 abaixo mantém o escopo original e
+cobre apenas o fluxo OCR; catálogo e documentos não são linhas F. Pendentes: UI de
+metadados, enriquecimento por LLM, XMP, PDF/A final, exportação e RAG externo.
+
+> Histórico (entrega AM-12, não é o estado atual): na época havia HTTP 1.6.0 com
+> 41 operações (30 de OCR + 11 de catálogo) e MCP 0.5.0 com 20 tools.
 
 | ID | Funcionalidade | Contrato efetivo / decisão de cobertura |
 |---|---|---|
@@ -43,13 +51,25 @@ seis hosts permanecem rastreados nessas atividades. Exclusão de upload-sessions
 não consumidas não está exposta como operação (expiração automática existente).
 Nenhuma capacidade pendente foi renomeada como concluída.
 
-A revisão de interface ([ui-review.md](ui-review.md)) alterou apenas a apresentação
-e o cliente web; contratos HTTP v1 (30 operações) e MCP (20 tools) não mudaram.
+Histórico, nessa entrega: a revisão de interface ([ui-review.md](ui-review.md)) alterou
+apenas a apresentação e o cliente web; os contratos de então, HTTP v1 (30 operações)
+e MCP (20 tools), não mudaram. Não são as contagens atuais.
+Cobertura E1 (PDF/A e compactação, [pdfa.md](pdfa.md)): os presets usam `balanced`
+como padrão; as capabilities não oferecem `pdfa` sem validador; o relatório final
+mostra falha ou aprovação da validação. Tudo pela mesma API e pelo mesmo MCP, sem
+novas operações; as contagens daquela entrega (30 operações, 20 tools) permaneceram,
+e isso não declara o Contexts pronto.
+
 A única rota nova é a página HTML `GET /admin/integrations`, protegida por
 `require_admin`, que consome as operações já existentes de F24.
 
-As 20 tools dividem-se em 12 consultas (whoami, capabilities, metrics, list/get
-jobs, get_upload, list/get batches, get_export, text, report, artifact) e 8
-mutações (prepare_upload, submit_job, create_batch, create_export, cancel_job,
-cancel_jobs, retry_job, delete_job_artifacts). Todas compartilham os mesmos
-serviços, identidade e schemas; binários trafegam por HTTP autenticado.
+Subconjunto histórico: as 20 tools legadas dividem-se em 12 consultas (whoami,
+capabilities, metrics, list/get jobs, get_upload, list/get batches, get_export,
+text, report, artifact) e 8 mutações (prepare_upload, submit_job, create_batch,
+create_export, cancel_job, cancel_jobs, retry_job, delete_job_artifacts). Todas
+compartilham os mesmos serviços, identidade e schemas; binários trafegam por HTTP
+autenticado.
+
+Total atual das 46 tools: **29 leituras e 17 escritas**. Somam-se ao subconjunto
+legado (12/8) as 14 de catálogo e as 12 de documentos (10 leituras, 2 escritas:
+salvar e aprovar metadados).

@@ -5,6 +5,7 @@ from queue import Empty, Queue
 from threading import Event, Lock, Thread
 
 from app.config import settings
+from app.services.metadata_runtime import _observe_health_on_control, assert_metadata_health
 from app.services.ocr_orchestrator import OcrOrchestrator
 from app.services.storage_service import JobStore, get_job_store
 
@@ -25,6 +26,9 @@ class JobQueueProcessor:
 
     def start(self) -> None:
         with self._lock:
+            # Connection health is required even for an already-started queue;
+            # it does not replace lifespan-owned namespace recovery.
+            assert_metadata_health(self.job_store)
             if self._started:
                 return
             self._stop_event.clear()
@@ -34,8 +38,14 @@ class JobQueueProcessor:
                 cleaned = self.job_store.cleanup_expired()
                 if cleaned:
                     logger.info("Startup cleanup: removed files for %d expired jobs", len(cleaned))
+            except (KeyboardInterrupt, SystemExit):
+                _observe_health_on_control(self.job_store)
+                raise
             except Exception:
-                logger.exception("Startup cleanup failed, continuing")
+                assert_metadata_health(self.job_store)
+                logger.warning("Startup cleanup deferred")
+            else:
+                assert_metadata_health(self.job_store)
 
             for job in self.job_store.snapshot():
                 if job.status == "cancel_requested":
@@ -45,6 +55,7 @@ class JobQueueProcessor:
                     self.job_store.update(job.job_id, error_code="cancellation_recovery_required")
 
             # --- Recovery: reset processing -> queued ----------------------
+            assert_metadata_health(self.job_store)
             for job in self.job_store.get_processing_jobs():
                 logger.info("Recovery: job %s was processing, resetting to queued", job.job_id)
                 self.job_store.update(
@@ -55,12 +66,14 @@ class JobQueueProcessor:
                 )
 
             # --- Recovery: re-enqueue persisted queued jobs ----------------
+            assert_metadata_health(self.job_store)
             for job in self.job_store.get_queued_jobs():
                 if job.job_id not in self._queued_ids:
                     logger.info("Recovery: re-enqueuing persisted queued job %s", job.job_id)
                     self._queued_ids.add(job.job_id)
                     self._queue.put(job.job_id)
 
+            assert_metadata_health(self.job_store)
             self._threads = [
                 Thread(target=self._worker_loop, name=f"ocr-worker-{index + 1}", daemon=True)
                 for index in range(self.worker_count)

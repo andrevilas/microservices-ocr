@@ -14,6 +14,7 @@ import pytest
 from app.mcp_client_config import CLIENTS, files_for
 from app.mcp_stdio import configuration
 from test_mcp_vertical import ROOT, runtime
+from catalog_tool_expectations import assert_tool_inventory
 
 
 @pytest.mark.parametrize("host", CLIENTS)
@@ -85,7 +86,7 @@ def test_generated_launcher_connects_from_unrelated_cwd_with_token_file(runtime,
         with (runtime.root / "stdio.log").open("w") as log:
             async with Client(stdio_client(params, errlog=log), mode=mode) as client:
                 listing = await client.list_tools()
-                assert len(listing.tools) == 20
+                assert_tool_inventory(listing.tools)
                 result = await client.call_tool("ocr_whoami", {})
                 assert not result.is_error
                 assert result.structured_content["kind"] == "service"

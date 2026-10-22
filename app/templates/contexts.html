@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% set active_page = 'contexts' %}
+{% block title %}Contextos — {{ app_name }}{% endblock %}
+{% block body_class %}app catalog-page{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>Contextos</h1><p class="page-head__summary">Organize os campos comuns dos seus documentos.</p></div>
+  <button id="context-new" class="button button-primary" type="button" disabled>Novo contexto</button>
+</header>
+<div id="context-status" class="callout" role="status" aria-live="polite">Carregando sessão…</div>
+<div class="catalog-actions">
+  <button id="context-bootstrap" type="button" hidden>Tentar novamente</button>
+  <a id="context-login" class="button" href="/login" hidden>Entrar novamente</a>
+  <button id="context-session-logout" type="button" hidden>Sair para entrar novamente</button>
+</div>
+<section id="template-section" class="panel" aria-labelledby="template-title" aria-busy="false" hidden>
+  <h2 id="template-title">Modelos de contexto</h2>
+  <p class="hint">Escolha um modelo, confira os campos e crie um contexto para revisar.</p>
+  <div class="catalog-actions"><button id="template-load" type="button" disabled>Carregar modelos</button></div>
+  <p id="template-status" role="status" aria-live="polite">Aguardando sessão com permissão de leitura.</p>
+  <ul id="template-list" class="entity-list"></ul>
+  <section id="template-preview" aria-labelledby="template-preview-title" hidden>
+    <h3 id="template-preview-title">Modelo selecionado</h3>
+    <details>
+      <summary>Referência do modelo</summary>
+      <p id="template-edition" class="hint"></p>
+      <p class="hint">SHA-256</p>
+      <p id="template-hash" class="mono"></p>
+    </details>
+    <h4 id="template-context-name"></h4>
+    <p id="template-context-description" class="catalog-description"></p>
+    <h4 id="template-type-name"></h4>
+    <p id="template-type-description" class="catalog-description"></p>
+    <div class="template-fields-grid">
+      <section aria-labelledby="template-common-title">
+        <h4 id="template-common-title">Campos comuns do modelo</h4>
+        <div id="template-common" class="catalog-fields" aria-labelledby="template-common-title"></div>
+      </section>
+      <section aria-labelledby="template-specific-title">
+        <h4 id="template-specific-title">Campos específicos do tipo do modelo</h4>
+        <div id="template-specific" class="catalog-fields" aria-labelledby="template-specific-title"></div>
+      </section>
+    </div>
+    <button id="template-clone" class="button button-primary" type="button" aria-describedby="template-clone-status" hidden disabled>Criar contexto a partir deste modelo</button>
+  </section>
+  <p id="template-clone-status" role="status" aria-live="polite"></p>
+  <div class="catalog-actions">
+    <button id="template-recover" type="button" hidden disabled>Recuperar clonagem</button>
+    <button id="template-abandon" type="button" hidden disabled>Abandonar recuperação</button>
+    <button id="template-open" type="button" hidden disabled>Abrir contexto criado</button>
+  </div>
+</section>
+<div class="catalog-layout">
+  <section class="panel catalog-list" aria-labelledby="context-list-title">
+    <div class="catalog-actions"><h2 id="context-list-title">Seus contextos</h2><button id="context-refresh" type="button" disabled>Atualizar lista</button></div>
+    <p id="context-list-status" role="status" aria-live="polite">Aguardando sessão.</p>
+    <ul id="context-list" class="entity-list"></ul>
+    <button id="context-more" type="button" hidden disabled>Carregar mais</button>
+    <section id="type-section" aria-labelledby="type-title" hidden>
+      <div class="catalog-actions"><h3 id="type-title">Tipos de documento</h3><button id="type-new" type="button" hidden disabled>Novo tipo</button><button id="type-refresh" type="button" disabled>Atualizar tipos</button></div>
+      <p id="type-parent" class="hint"></p>
+      <p id="type-list-status" role="status" aria-live="polite"></p>
+      <ul id="type-list" class="entity-list"></ul>
+      <div class="catalog-actions">
+        <button id="type-more" type="button" hidden disabled>Carregar mais tipos</button>
+        <button id="type-edit-context" type="button" hidden disabled>Editar contexto</button>
+      </div>
+    </section>
+  </section>
+  <section class="panel catalog-detail" aria-labelledby="context-detail-title">
+    <h2 id="context-detail-title">Detalhes do contexto</h2>
+    <p id="context-empty">Selecione um contexto ou crie um novo.</p>
+    <form id="context-form" class="stack-form" hidden novalidate>
+      <p id="context-revision" class="hint"></p>
+      <label class="field" for="context-name">Nome<input id="context-name" type="text" required aria-describedby="context-name-error" disabled></label>
+      <p id="context-name-error" class="catalog-error" hidden></p>
+      <label class="field" for="context-description">Descrição<textarea id="context-description" rows="4" aria-describedby="context-description-error" disabled></textarea></label>
+      <p id="context-description-error" class="catalog-error" hidden></p>
+      <section aria-labelledby="context-fields-title"><h3 id="context-fields-title">Campos comuns</h3><div id="context-fields" class="catalog-fields"></div></section>
+      <section id="type-common-panel" aria-labelledby="type-common-title" hidden>
+        <h3 id="type-common-title">Campos comuns herdados</h3>
+        <p id="type-field-count" class="hint"></p>
+        <div id="type-common-fields" class="catalog-fields"></div>
+      </section>
+      <div class="catalog-actions"><button id="context-save" type="submit" class="button button-primary" disabled>Salvar contexto</button></div>
+    </form>
+    <div class="catalog-actions">
+      <button id="context-recover-create" type="button" hidden disabled>Tentar novamente</button>
+      <button id="context-consult" type="button" hidden disabled>Consultar versão atual</button>
+      <button id="context-use-current" type="button" hidden disabled>Usar versão atual</button>
+      <button id="context-abandon" type="button" hidden disabled>Abandonar recuperação</button>
+    </div>
+    <section id="context-comparison" class="catalog-comparison" aria-labelledby="context-comparison-title" hidden>
+      <h3 id="context-comparison-title">Versão atual no servidor</h3>
+      <p class="hint">Seu rascunho permanece no formulário. Consulte os dados antes de decidir qual versão usar.</p>
+      <div id="context-current"></div>
+    </section>
+    <section id="version-section" class="panel catalog-comparison" aria-labelledby="version-title" hidden>
+      <h3 id="version-title">Versões imutáveis</h3>
+      <div class="catalog-actions">
+        <button id="version-publish" type="button" hidden disabled>Publicar versão</button>
+        <button id="version-publish-recover" type="button" hidden disabled>Recuperar publicação</button>
+        <button id="version-publish-abandon" type="button" hidden disabled>Abandonar recuperação da publicação</button>
+        <button id="version-refresh-draft" type="button" hidden disabled>Atualizar rascunho</button>
+      </div>
+      <p id="version-publish-status" role="status" aria-live="polite"></p>
+      <div class="catalog-actions">
+        <button id="version-deprecate-recover" type="button" hidden disabled>Recuperar descontinuação</button>
+        <button id="version-deprecate-abandon" type="button" hidden disabled>Abandonar recuperação da descontinuação</button>
+      </div>
+      <p id="version-deprecate-status" role="status" aria-live="polite"></p>
+      <p id="version-list-status" role="status" aria-live="polite"></p>
+      <ul id="version-list" class="entity-list"></ul>
+      <div class="catalog-actions">
+        <button id="version-refresh" type="button" disabled>Atualizar versões</button>
+        <button id="version-more" type="button" hidden disabled>Carregar mais versões</button>
+        <button id="version-close" type="button" disabled>Fechar versão</button>
+      </div>
+      <p id="version-detail-status" role="status" aria-live="polite"></p>
+      <section id="version-detail" aria-labelledby="version-detail-title" hidden>
+        <h3 id="version-detail-title">Versão selecionada</h3>
+        <button id="version-deprecate" type="button" hidden disabled>Descontinuar versão</button>
+        <p id="version-reference" class="mono"></p>
+        <p id="version-meta" class="hint"></p>
+        <p id="version-lifecycle" class="hint"></p>
+        <p id="version-count" class="hint"></p>
+        <div id="version-fields" class="catalog-fields"></div>
+      </section>
+    </section>
+  </section>
+</div>
+<noscript><p class="callout">Ative o JavaScript para consultar e editar contextos.</p></noscript>
+{% endblock %}
+{% block scripts %}
+<script src="/static/catalog-fields.js?v={{ static_asset_version }}" defer></script>
+<script src="/static/catalog-templates.js?v={{ static_asset_version }}" defer></script>
+<script src="/static/catalog-versions.js?v={{ static_asset_version }}" defer></script>
+<script src="/static/contexts.js?v={{ static_asset_version }}" defer></script>
+{% endblock %}

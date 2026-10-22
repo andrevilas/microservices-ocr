@@ -31,9 +31,12 @@ def bearer(token):
     return {"Authorization": "Bearer " + token}
 
 
-def test_results_four_principals_real_credentials(system):
+def test_results_four_principals_real_credentials(system, monkeypatch):
     from unittest.mock import Mock
     from app.services.ocr_orchestrator import OcrOrchestrator
+    # Mocked engines do not convert; option-less jobs use the legacy setting, so request a
+    # searchable PDF explicitly. This test covers result ACLs, not PDF/A conformance.
+    monkeypatch.setattr(settings, "final_output_type", "pdf")
     engine, fallback = Mock(), Mock()
     engine.is_available.return_value = False
     fallback.is_available.return_value = False
@@ -149,13 +152,31 @@ def test_four_principals_are_isolated_on_http_and_legacy(system, monkeypatch):
 
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
 def test_service_mcp_isolation_scopes_and_revocation(system, mode, monkeypatch):
-    import app.main as main
-    from unittest.mock import Mock
+    from app.services.upload_service import UploadService, get_upload_service
+    from app.services.batch_service import BatchService, get_batch_service
+    from app.services.control_service import ControlService, get_control_service
+    from app.services.export_service import ExportService, get_export_service
     tokens = system["human_tokens"][1:] + system["service_tokens"]
     jobs = [admit(system, token, f"mcp-{i}.pdf") for i, token in enumerate(tokens)]
-    monkeypatch.setattr(main, "get_job_queue_processor", Mock())
-    monkeypatch.setattr(settings, "ocr_tmp_dir", system["tmp_path"] / "lifecycle")
+    monkeypatch.setattr(settings, "ocr_tmp_dir", system["jobs"].root_dir)
     app = system["app"]
+    cache = {}
+
+    def cached(name, build):
+        if name not in cache:
+            cache[name] = build()
+        return cache[name]
+
+    def uploads():
+        return cached("uploads", lambda: UploadService(system["jobs"]))
+
+    app.dependency_overrides.update({
+        get_upload_service: uploads,
+        get_batch_service: lambda: cached("batches", lambda: BatchService(system["jobs"], uploads())),
+        get_control_service: lambda: cached("controls", lambda: ControlService(uploads())),
+        get_export_service: lambda: cached("exports", lambda: ExportService(system["jobs"])),
+        get_job_queue_processor: lambda: system["queue"],
+    })
 
     async def scenario():
         async with app.router.lifespan_context(app):

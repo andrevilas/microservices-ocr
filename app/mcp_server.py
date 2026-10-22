@@ -9,7 +9,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from app.application import ApplicationError, get_job_application
-from app.mcp_tools import INSTRUCTIONS, OcrMCPServer, register_tools
+from app.catalog_mcp_tools import CATALOG_OPERATIONS
+from app.mcp_tools import INSTRUCTIONS, MCP_VERSION, OcrMCPServer, register_tools
+from app.document_mcp_tools import DOCUMENT_OPERATIONS
+from app.document_mcp_runtime import execute_document
 from app.security import authenticate_bearer
 from app.services.admission_service import submit_and_enqueue
 from app.services.job_queue import get_job_queue_processor
@@ -17,6 +20,60 @@ from app.services.upload_service import get_upload_service
 from app.services.batch_service import dispatch_batch, get_batch_service
 from app.services.export_service import get_export_service
 from app.services.control_service import get_control_service, retry_and_enqueue
+
+
+def _retry_hint(operation):
+    # PUT updates carry no key and are never replayed: the outcome must be read back first.
+    if operation in ("update_context", "update_document_type"):
+        return "read the current revision with the matching get tool before trying again"
+    return "retry submissions with the same key"
+
+
+def execute_catalog(services, principal, operation, args):
+    """Explicit mapping to the keyword-aware catalog services; create/publish return only the receipt."""
+    if operation == "list_context_templates":
+        return services.templates.list(principal)
+    if operation == "clone_context_template":
+        template_id, body, key = args
+        return services.templates.clone(principal, template_id, body, key)[0]
+    contexts, types = services.contexts, services.types
+    if operation == "list_contexts":
+        limit, after = args
+        return contexts.list(principal, limit=limit, after=after)
+    if operation == "create_context":
+        body, key = args
+        return contexts.create(principal=principal, body=body, key=key)[0]
+    if operation == "get_context":
+        return contexts.get(principal, *args)
+    if operation == "update_context":
+        context_id, body = args
+        return contexts.update(principal, context_id, body.body, expected_revision=body.expected_revision)
+    if operation == "list_document_types":
+        context_id, limit, after = args
+        return types.list(principal, context_id, limit=limit, after=after)
+    if operation == "create_document_type":
+        context_id, body, key = args
+        return types.create(principal=principal, context_id=context_id, body=body, key=key)[0]
+    if operation == "get_document_type":
+        return types.get(principal, *args)
+    if operation == "update_document_type":
+        type_id, body = args
+        return types.update(principal, type_id, body.body, expected_revision=body.expected_revision)
+    if operation == "publish_document_type":
+        type_id, body, key = args
+        return types.publish(principal, type_id, expected_revision=body.expected_revision,
+                             expected_context_revision=body.expected_context_revision, key=key)[0]
+    if operation == "deprecate_document_type_version":
+        type_id, version, body, key = args
+        return types.deprecate(principal, type_id, version,
+                               expected_lifecycle_revision=body.expected_lifecycle_revision, key=key)[0]
+    if operation == "list_document_type_versions":
+        type_id, limit, after = args
+        return types.list_versions(principal, type_id, limit=limit, after=after)
+    if operation == "get_document_type_version":
+        type_id, version = args
+        return types.get_version(principal, type_id, version)
+    raise ValueError(operation)
 
 
 class BearerAuth:
@@ -47,8 +104,13 @@ class BearerAuth:
 def build_mcp_server(service_provider=get_job_application, upload_provider=get_upload_service,
                      queue_provider=get_job_queue_processor, batch_provider=get_batch_service,
                      export_provider=get_export_service, control_provider=get_control_service,
-                     *, request_authenticator=None, transport_security=None):
-    server = OcrMCPServer("OCR Recognizer", version="0.5.0", instructions=INSTRUCTIONS)
+                     *, request_authenticator=None, transport_security=None, catalog_provider=None,
+                     document_provider=None):
+    server = OcrMCPServer("OCR Recognizer", version=MCP_VERSION, instructions=INSTRUCTIONS)
+    if catalog_provider is None:
+        # Imported only here so the pure registry and stdio never load the runtime. Resolved lazily per call.
+        from app.services.catalog_runtime import CatalogProvider
+        catalog_provider = CatalogProvider(service_provider)
 
     async def invoke(ctx: Context, operation: str, *args):
         request = ctx.request_context.request
@@ -57,6 +119,8 @@ def build_mcp_server(service_provider=get_job_application, upload_provider=get_u
             raise ToolError("authentication_required: A valid Bearer token is required.")
 
         def execute():
+            if operation in CATALOG_OPERATIONS or operation in ("deprecate_document_type_version", "list_context_templates", "clone_context_template"):
+                return execute_catalog(catalog_provider(), principal, operation, args)
             if operation in ("cancel", "cancel_many"):
                 return getattr(control_provider(), operation)(principal, *args)
             if operation == "retry":
@@ -78,15 +142,17 @@ def build_mcp_server(service_provider=get_job_application, upload_provider=get_u
             return getattr(service_provider(), operation)(principal, *args)
 
         try:
+            if operation in DOCUMENT_OPERATIONS:
+                return await execute_document(document_provider, principal, operation, args)
             # Shield admission/queue handoff from request cancellation. The job's
             # persisted lifecycle is independent of the MCP connection.
             return await run_in_threadpool(execute)
         except ApplicationError as error:
             raise ToolError(f"{error.code}: {error.message}") from None
         except (OSError, sqlite3.Error):
-            raise ToolError("storage_unavailable: Storage is unavailable; retry submissions with the same key.") from None
+            raise ToolError(f"storage_unavailable: Storage is unavailable; {_retry_hint(operation)}.") from None
         except Exception:
-            raise ToolError("internal_error: Operation could not be completed; retry submissions with the same key.") from None
+            raise ToolError(f"internal_error: Operation could not be completed; {_retry_hint(operation)}.") from None
 
     register_tools(server, invoke)
 
@@ -96,5 +162,5 @@ def build_mcp_server(service_provider=get_job_application, upload_provider=get_u
         allowed_origins=["http://localhost", "http://localhost:*", "http://127.0.0.1", "http://127.0.0.1:*", "http://[::1]", "http://[::1]:*"],
     )
     transport = server.streamable_http_app(json_response=True, stateless_http=True,
-                                            max_request_body_size=65536, transport_security=security)
+                                            max_request_body_size=2 * 1024 * 1024, transport_security=security)
     return server, BearerAuth(transport, request_authenticator)

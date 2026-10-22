@@ -8,6 +8,8 @@ import hmac
 import json
 import time
 
+from app.scopes import LOCAL_AUTHZ_VERSION, local_role_scopes
+
 
 def _b64url_encode(data: bytes) -> str:
     """Base64-URL encode bytes, stripping padding '=' characters."""
@@ -38,6 +40,8 @@ def create_token(
         "role": role,
         "exp": now + exp_minutes * 60,
         "iat": now,
+        "ocr_authz_version": LOCAL_AUTHZ_VERSION,
+        "scopes": sorted(local_role_scopes(role)),
     }
 
     header_b64 = _b64url_encode(json.dumps(header, separators=(",", ":")).encode("utf-8"))
