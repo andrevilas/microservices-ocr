@@ -35,6 +35,7 @@ from reportlab.pdfgen import canvas
 from app.oauth_realm import build_realm
 
 ROOT = Path(__file__).resolve().parents[1]
+EXPECTED_TOOLS = 63
 
 
 def port():
@@ -134,7 +135,8 @@ def run(args, report):
                     "JOB_WORKER_CONCURRENCY": "1"}
                 log = (temp / "ocr.log").open("wb")
                 logs.append(log)
-                processes.append(subprocess.Popen([sys.executable, "-m", "uvicorn", "app.remote:create_remote_app", "--factory",
+                # The production entrypoint: app.main:app serves the OAuth host when OCR_REMOTE_CONFIG_FILE is set.
+                processes.append(subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app",
                     "--host", "127.0.0.1", "--port", str(urlsplit(origin).port), "--ssl-certfile", str(cert),
                     "--ssl-keyfile", str(key), "--no-proxy-headers", "--no-access-log", "--log-level", "warning"],
                     cwd=ROOT, env=runtime_env, stdout=log, stderr=log, creationflags=flags))
@@ -234,7 +236,7 @@ def run(args, report):
                             for mode in ("auto", "legacy"):
                                 async with Client(streamable_http_client(origin + "/mcp", http_client=client), mode=mode) as mcp_client:
                                     listing = await mcp_client.list_tools()
-                                    assert len(listing.tools) == 20
+                                    assert len(listing.tools) == EXPECTED_TOOLS
                                     result = await mcp_client.call_tool("ocr_whoami", {})
                                     assert not result.is_error and result.structured_content["subject"] == "user:1"
                             buffer = BytesIO()
@@ -257,7 +259,7 @@ def run(args, report):
                                         await asyncio.sleep(0.1)
                                 result = await mcp_client.call_tool("ocr_get_text", {"job_id": job_id})
                                 assert not result.is_error and "Synthetic OAuth" in result.structured_content["text"]
-                        report["checks"]["mcp_sdk_auto_legacy_20_tools"] = True
+                        report["checks"]["mcp_sdk_auto_legacy_all_tools"] = True
                         report["checks"]["https_upload_processing_mcp_text"] = True
                     # Playwright's synchronous facade already owns an event loop.
                     with ThreadPoolExecutor(max_workers=1) as pool:

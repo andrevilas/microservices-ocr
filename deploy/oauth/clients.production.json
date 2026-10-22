@@ -1,0 +1,6 @@
+{
+  "ocr-claude": ["https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback"],
+  "ocr-chatgpt": ["https://chatgpt.com/connector_platform_oauth_redirect"],
+  "ocr-claude-code": ["http://localhost:33418/callback"],
+  "ocr-smoke": ["http://127.0.0.1:47613/callback"]
+}

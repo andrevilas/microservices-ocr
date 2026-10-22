@@ -1,0 +1,104 @@
+# OCR-AM-13 identity provider on the single-node TrueNAS k3s.
+# Keycloak + PostgreSQL in their own namespace, ClusterIP only: the public path is
+# Cloudflare Tunnel -> NPM (path filter) -> keycloak.ocr-oauth.svc:8080.
+# Secrets come from the "ocr-oauth" Secret created from private files; never inline.
+# KEYCLOAK_IMAGE / POSTGRES_IMAGE are replaced with digest-pinned references at deploy.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ocr-oauth
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: db, namespace: ocr-oauth}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: ocr-oauth-db}}
+  template:
+    metadata: {labels: {app: ocr-oauth-db}}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: {runAsUser: 70, runAsGroup: 70, fsGroup: 70, runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: postgres
+          image: POSTGRES_IMAGE
+          imagePullPolicy: Never
+          env:
+            - {name: POSTGRES_DB, value: keycloak}
+            - {name: POSTGRES_USER, value: keycloak}
+            - {name: POSTGRES_PASSWORD_FILE, value: /secrets/database_password}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          args: ["-c", "shared_buffers=32MB", "-c", "max_connections=30", "-c", "work_mem=2MB"]
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {cpu: "1", memory: 256Mi}}
+          readinessProbe: {exec: {command: ["pg_isready", "-U", "keycloak", "-d", "keycloak"]}, periodSeconds: 10}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: secrets, mountPath: /secrets, readOnly: true}
+            - {name: run, mountPath: /var/run/postgresql}
+      volumes:
+        - {name: data, hostPath: {path: /mnt/NVME/ocr-oauth/pgdata, type: Directory}}
+        - {name: secrets, secret: {secretName: ocr-oauth, items: [{key: database_password, path: database_password}], defaultMode: 0400}}
+        - {name: run, emptyDir: {sizeLimit: 16Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: db, namespace: ocr-oauth}
+spec:
+  type: ClusterIP
+  selector: {app: ocr-oauth-db}
+  ports: [{name: postgres, port: 5432, targetPort: 5432}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: keycloak, namespace: ocr-oauth}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: ocr-oauth-keycloak}}
+  template:
+    metadata: {labels: {app: ocr-oauth-keycloak}}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: {runAsUser: 1000, runAsGroup: 0, runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: keycloak
+          image: KEYCLOAK_IMAGE
+          imagePullPolicy: Never
+          args: ["start", "--import-realm"]
+          env:
+            - {name: KC_DB, value: postgres}
+            - {name: KC_DB_URL, value: "jdbc:postgresql://db.ocr-oauth.svc.cluster.local:5432/keycloak"}
+            - {name: KC_DB_USERNAME, value: keycloak}
+            - {name: KC_DB_PASSWORD, valueFrom: {secretKeyRef: {name: ocr-oauth, key: database_password}}}
+            - {name: KC_HOSTNAME, value: "https://ocr-auth.andre.goiania.br"}
+            - {name: KC_HTTP_ENABLED, value: "true"}
+            - {name: KC_PROXY_HEADERS, value: xforwarded}
+            - {name: KC_HEALTH_ENABLED, value: "true"}
+            - {name: KC_CACHE, value: local}
+            - {name: KC_LOG_LEVEL, value: WARN}
+            - {name: KC_BOOTSTRAP_ADMIN_USERNAME, value: bootstrap-admin}
+            - {name: KC_BOOTSTRAP_ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: ocr-oauth, key: bootstrap_password}}}
+            - {name: OCR_INTROSPECTION_SECRET, valueFrom: {secretKeyRef: {name: ocr-oauth, key: introspection_secret}}}
+            - {name: JAVA_OPTS_KC_HEAP, value: "-XX:MaxRAMPercentage=55 -XX:InitialRAMPercentage=20 -XX:MaxMetaspaceSize=160m -Xss512k"}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 100m, memory: 400Mi}, limits: {cpu: "2", memory: 768Mi}}
+          startupProbe: {httpGet: {path: /health/started, port: 9000}, periodSeconds: 10, failureThreshold: 30}
+          readinessProbe: {httpGet: {path: /health/ready, port: 9000}, periodSeconds: 15}
+          livenessProbe: {httpGet: {path: /health/live, port: 9000}, periodSeconds: 30, failureThreshold: 4}
+          ports: [{containerPort: 8080, name: http}]
+          volumeMounts:
+            - {name: realm, mountPath: /opt/keycloak/data/import, readOnly: true}
+      volumes:
+        - {name: realm, hostPath: {path: /mnt/NVME/ocr-oauth/realm, type: Directory}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: keycloak, namespace: ocr-oauth}
+spec:
+  type: ClusterIP
+  selector: {app: ocr-oauth-keycloak}
+  ports: [{name: http, port: 8080, targetPort: 8080}]
