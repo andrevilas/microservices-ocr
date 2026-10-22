@@ -373,3 +373,14 @@ def test_contract_rejects_chosen_ids_and_incoherent_structure(env):
         c["nodes"] = [dict(n, page_end=1) if n["kind"] == "segment" else n for n in c["nodes"]]
     rejected(evidence_outside, "evidence_outside_segment")
     assert segment["page_start"] == 1 and segment["page_end"] == 2
+
+
+def test_snapshot_field_without_spec_is_refused_not_crashed(env):
+    from app.services.graph_export import build_graph
+    doc = document(env, "sem-spec")
+    snapshot = env.service.get(env.owner, doc.job.job_id, doc.approved.revision_id, sha256=doc.approved.sha256)
+    segment = snapshot.segments[0]
+    renamed = segment.model_copy(update={"fields": [segment.fields[0].model_copy(update={"field_name": "inexistente"})]})
+    broken = snapshot.model_copy(update={"segments": [renamed]})
+    with pytest.raises(ValueError, match="graph_field_unknown"):
+        build_graph(broken, doc.approved.sha256, "internal")

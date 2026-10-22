@@ -57,11 +57,15 @@ def build_graph(snapshot: MetadataSnapshot, metadata_sha256: str, ceiling: str) 
         nodes.append(hub)
         edges.append(Edge(edge_id=edge_id(document, root.node_id, hub.node_id, "has_segment"),
                           source=root.node_id, target=hub.node_id, predicate="has_segment", sensitivity="public"))
-        fields = specs[segment.schema_sha256]
+        fields = specs.get(segment.schema_sha256)
+        if fields is None:
+            raise ValueError("graph_schema_missing")
         for field in segment.fields:
             if field.status == "not_found" or field.normalized is None:
                 continue
-            spec = fields[field.field_name]
+            spec = fields.get(field.field_name)
+            if spec is None:
+                raise ValueError("graph_field_unknown")
             if field.status != "reviewed":
                 omitted["not_reviewed"] += 1
                 continue
