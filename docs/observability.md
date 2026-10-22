@@ -58,7 +58,7 @@ Para ajustar o nível, use `LOG_LEVEL` (padrão `INFO`).
 | Extrações nas últimas 24 h | `extraction_failing` (3 ou mais falhas de provedor e pelo menos metade das execuções) |
 | Outbox do RAG | `rag_delivery_resolution`, `rag_delivery_stuck` (mais de 1 h) |
 | Jobs em processamento | `jobs_stuck` (mais de 30 min sem atualização) |
-| Disco e memória do host | `disk_low` (menos de 10 GB), `memory_low` (menos de 300 MB) |
+| Disco do dataset de dados (cota ZFS) e memória do host | `disk_low` (menos de 15% da cota ou de 1 GB livres), `memory_low` (menos de 300 MB) |
 
 O vigia grava dois arquivos em `/mnt/NVME/ocr-apps/monitor/`:
 

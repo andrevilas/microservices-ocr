@@ -84,8 +84,12 @@ def check_database(conn: sqlite3.Connection, now: float) -> list[dict]:
     return findings
 
 
-def check_capacity(free_disk_gb: float, mem_available_mb: float, min_disk_gb: float, min_mem_mb: float) -> list[dict]:
-    return [{"check": "disk", "alert": "disk_low" if free_disk_gb < min_disk_gb else None, "free_gb": round(free_disk_gb, 1)},
+def check_capacity(free_disk_gb: float, total_disk_gb: float, mem_available_mb: float, min_disk_gb: float,
+                   min_disk_ratio: float, min_mem_mb: float) -> list[dict]:
+    """Disk is measured on the data dataset, whose total is its ZFS quota: use an absolute and a relative floor."""
+    low = free_disk_gb < min_disk_gb or (total_disk_gb > 0 and free_disk_gb / total_disk_gb < min_disk_ratio)
+    return [{"check": "disk", "alert": "disk_low" if low else None, "free_gb": round(free_disk_gb, 1),
+             "total_gb": round(total_disk_gb, 1)},
             {"check": "memory", "alert": "memory_low" if mem_available_mb < min_mem_mb else None,
              "available_mb": round(mem_available_mb)}]
 
@@ -153,7 +157,8 @@ def main(argv=None):
     parser.add_argument("--llm-url", default="http://100.120.78.1:11434/v1/models")
     parser.add_argument("--namespaces", default="ix-ocr-recognizer,document-rag")
     parser.add_argument("--sync-max-age-hours", type=float, default=26)
-    parser.add_argument("--min-disk-gb", type=float, default=10)
+    parser.add_argument("--min-disk-gb", type=float, default=1)
+    parser.add_argument("--min-disk-ratio", type=float, default=0.15)
     parser.add_argument("--min-mem-mb", type=float, default=300)
     parser.add_argument("--notify-command", default=os.environ.get("OCR_WATCHDOG_NOTIFY"))
     args = parser.parse_args(argv)
@@ -179,8 +184,9 @@ def main(argv=None):
             conn.close()
     except sqlite3.Error:
         findings.append({"check": "ocr_database", "alert": "database_unreadable"})
-    findings.extend(check_capacity(shutil.disk_usage(Path(args.ocr_db).parent).free / 2**30, _mem_available_mb(),
-                                   args.min_disk_gb, args.min_mem_mb))
+    disk = shutil.disk_usage(Path(args.ocr_db).parent)
+    findings.extend(check_capacity(disk.free / 2**30, disk.total / 2**30, _mem_available_mb(),
+                                   args.min_disk_gb, args.min_disk_ratio, args.min_mem_mb))
 
     events = transitions(previous, findings, at)
     active = [f["alert"] for f in findings if f["alert"]]

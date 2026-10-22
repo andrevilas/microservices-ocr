@@ -74,8 +74,11 @@ class ChecksTest(unittest.TestCase):
                          "rag_delivery_resolution")
 
     def test_capacity(self):
-        found = watchdog.check_capacity(5, 200, 10, 300)
+        found = watchdog.check_capacity(0.5, 8, 200, 1, 0.15, 300)
         self.assertEqual([f["alert"] for f in found], ["disk_low", "memory_low"])
+        # A mostly empty 8 GiB quota is healthy; 1 GiB free of 8 is not.
+        self.assertIsNone(watchdog.check_capacity(7.97, 8, 4096, 1, 0.15, 300)[0]["alert"])
+        self.assertEqual(watchdog.check_capacity(1.1, 8, 4096, 1, 0.15, 300)[0]["alert"], "disk_low")
 
     def test_transitions(self):
         previous = {"disk": {"alert": None}, "memory": {"alert": "memory_low"}}
@@ -98,7 +101,7 @@ class MainTest(unittest.TestCase):
             (sync / "report-1.json").write_text(json.dumps({"status": "unchanged", "content_sha256": "x"}))
             notified = tmp / "notified.json"
             args = ["--state-dir", str(tmp / "monitor"), "--ocr-db", str(db), "--sync-dir", str(sync),
-                    "--min-disk-gb", "0", "--min-mem-mb", "0",
+                    "--min-disk-gb", "0", "--min-disk-ratio", "0", "--min-mem-mb", "0",
                     "--notify-command", f'{sys.executable} -c "import sys; open(r\'{notified}\', \'w\').write(sys.stdin.read())"']
             pods = {"ix-ocr-recognizer": {"ready": True, "restarts": 0}, "document-rag": {"ready": True, "restarts": 0}}
             with patch.object(watchdog, "_pods", return_value=pods), \
