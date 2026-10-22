@@ -15,6 +15,7 @@ generated automatically.
 """
 import asyncio
 from dataclasses import dataclass
+import hashlib
 import hmac
 import logging
 import json
@@ -332,7 +333,9 @@ class RemoteSurface:
         scope["headers"] = [(k, v) for k, v in scope.get("headers", []) if k != GATEWAY_HEADER]
         if self.gateway is None:
             return scope.get("scheme") == "https" and not values
-        return len(values) == 1 and hmac.compare_digest(values[0], self.gateway)
+        # Fixed-length digests: the comparison reveals neither content nor the secret's length.
+        provided = hashlib.sha256(values[0] if len(values) == 1 else b"").digest()
+        return len(values) == 1 and hmac.compare_digest(provided, hashlib.sha256(self.gateway).digest())
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "lifespan":
