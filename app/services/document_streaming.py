@@ -25,6 +25,8 @@ from app.services.document_execution import (
 )
 from app.services.document_service import DocumentMetadataService
 from app.services.metadata_store import _guard, _require
+from app.services.package_service import CHUNK as _PACKAGE_CHUNK_BYTES, DocumentPackageService, MIB
+from app.config import settings
 
 
 _METADATA_CHUNK_BYTES = 65536
@@ -43,6 +45,7 @@ class _Header:
         limits = {
             ("application/json", "metadata.json"): MAX_SNAPSHOT_BYTES,
             ("application/x-ndjson", "pages.jsonl"): MAX_JSONL_BYTES,
+            ("application/zip", "package.zip"): settings.package_max_total_mb * MIB,
         }
         if (type(self.media_type) is not str or type(self.filename) is not str
                 or (self.media_type, self.filename) not in limits
@@ -261,10 +264,13 @@ class DocumentStreams:
     """Download helper sharing the document runtime's existing execution capacity."""
 
     @_guard
-    def __init__(self, document, canonical_service, execution):
+    def __init__(self, document, canonical_service, execution, packages=None):
         _require(isinstance(document, DocumentMetadataService)
                  and isinstance(canonical_service, CanonicalTextService)
-                 and isinstance(execution, DocumentExecution))
+                 and isinstance(execution, DocumentExecution)
+                 and (packages is None or (isinstance(packages, DocumentPackageService)
+                                           and packages.document is document)))
+        self.packages = packages
         _require(document.canonical is canonical_service
                  and canonical_service.store is document.bundle.jobs)
         self.document = document
@@ -289,8 +295,8 @@ class DocumentStreams:
 
     @staticmethod
     def _source_error(header):
-        code = ("metadata_unavailable" if header.media_type == "application/json"
-                else "result_integrity_error")
+        code = {"application/json": "metadata_unavailable",
+                "application/zip": "package_invalid"}.get(header.media_type, "result_integrity_error")
         return ApplicationError(503, code, "Stored document failed validation.")
 
     def _pump(self, transfer, header, chunks, chunk_limit):
@@ -344,6 +350,12 @@ class DocumentStreams:
                     chunks = (data[start:start + _METADATA_CHUNK_BYTES]
                               for start in range(0, len(data), _METADATA_CHUNK_BYTES))
                     self._pump(transfer, header, chunks, _METADATA_CHUNK_BYTES)
+            elif kind == "package":
+                _require(self.packages is not None)
+                with self.packages.open_download(principal, job_id, revision_id) as (size, digest, chunks):
+                    control.checkpoint()
+                    header = _Header(size, digest, "application/zip", "package.zip")
+                    self._pump(transfer, header, chunks, _PACKAGE_CHUNK_BYTES)
             else:
                 with canonical.open(principal, job_id) as prepared:
                     control.checkpoint()  # Preparation itself can block in I/O.
@@ -404,3 +416,6 @@ class DocumentStreams:
 
     def open_canonical(self, principal, job_id):
         return self._open("canonical", principal, job_id)
+
+    def open_package(self, principal, job_id, package_id):
+        return self._open("package", principal, job_id, package_id)

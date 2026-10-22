@@ -9,6 +9,7 @@ import re
 from mcp.server.mcpserver.exceptions import ToolError
 
 from .metadata_models import MAX_REQUEST_BYTES, ApprovalInput, SaveMetadataInput
+from .package_models import CreatePackageInput
 
 
 _ID = re.compile(r"[0-9a-f]{32}")
@@ -66,6 +67,10 @@ _OPERATIONS = {
         ("job_id", "revision_id", "schema_sha256", "sha256", "offset", "max_chars"),
         4, (0, 1000), ("sha256", "offset", "max_chars"),
     ),
+    "list_document_packages": (_ROOT + "/packages", ("job_id",), 1, (), ()),
+    "get_document_package": (
+        _ROOT + "/packages/{package_id}", ("job_id", "package_id"), 2, (), (),
+    ),
 }
 
 
@@ -78,7 +83,7 @@ def _matches(value, pattern):
 
 
 def _valid(name, value, operation):
-    if name in ("job_id", "revision_id", "segment_id"):
+    if name in ("job_id", "revision_id", "segment_id", "package_id"):
         return _matches(value, _ID)
     if name in ("sha256", "schema_sha256"):
         return _matches(value, _DIGEST)
@@ -141,6 +146,23 @@ def document_body(body):
     raise ToolError(error) from None
 
 
+def _package_request(args):
+    # Naturally idempotent per job, approved revision and options: no key.
+    try:
+        if type(args) not in (list, tuple) or len(args) != 2:
+            raise ValueError
+        job_id, body = args
+        if not _matches(job_id, _ID):
+            raise ValueError
+        body = CreatePackageInput.model_validate(body, strict=True).model_dump(mode="json")
+    except Exception:
+        pass
+    else:
+        document_body(body)
+        return "POST", _ROOT.format(job_id=job_id) + "/packages", {}, body, None
+    raise ToolError("validation_error: Invalid document request.") from None
+
+
 def _write_request(operation, args):
     method, path, model = _WRITES[operation]
     try:
@@ -174,8 +196,10 @@ def document_request(operation, args):
     Only None query values are omitted; continuations remain caller-controlled.
     Errors are fixed messages and never include caller-supplied content.
     """
-    if type(operation) is not str or operation not in (*_OPERATIONS, *_WRITES):
+    if type(operation) is not str or operation not in (*_OPERATIONS, *_WRITES, "create_document_package"):
         raise ToolError("unknown_operation: Unsupported document operation.") from None
+    if operation == "create_document_package":
+        return _package_request(args)
     if operation in _WRITES:
         return _write_request(operation, args)
     path, names, required, defaults, query_names = _OPERATIONS[operation]

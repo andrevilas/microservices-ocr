@@ -695,7 +695,7 @@ assert len(asyncio.run(server.list_tools())) == 14
 shared = MCPServer('test')
 app.mcp_tools.register_tools(shared, lambda *a: None)
 names = [tool.name for tool in asyncio.run(shared.list_tools())]
-assert len(names) == len(set(names)) == 55, len(names)
+assert len(names) == len(set(names)) == 58, len(names)
 assert {
     'ocr_get_document_canonical_manifest', 'ocr_get_document_canonical_chunk',
     'ocr_get_document_metadata', 'ocr_list_document_metadata_revisions',

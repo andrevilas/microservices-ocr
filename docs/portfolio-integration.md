@@ -59,7 +59,7 @@ Templates e catálogo de contexto/tipo já possuem operações, versões e hashe
 |---|---|
 | E2 — governança | Completar serviço, persistência, índice, recibo, quotas e recuperação da aprovação sobre a preparação de vínculos e os rascunhos internos já aceitos; concluir API/MCP/UI antes de anunciar acesso externo a metadados |
 | E3 — sugestão LLM | Produzir valores propostos com página, hash do texto, offset e citação; validar esquema e evidência; revisão humana antes de promover rascunho |
-| E4 — PDF final | Acrescentar XMP e revalidar o PDF/A antes do hash final, guardando proveniência; o runtime já implementa validação fail-closed com veraPDF e presets balanceados, mas a inserção de XMP e sua revalidação final pertencem à evolução E4 |
+| E4 — PDF final | E4a implementada: pacote local com XMP projetado do snapshot aprovado, revalidação veraPDF após a última escrita e hash final só no manifesto (ver [document-packages.md](document-packages.md)). E4b, entrega externa com recibo, continua pendente |
 | E5 — entrega | Obter confirmação do destinatário com hashes exatos e gravar recibo durável antes de iniciar limpeza por TTL do fluxo proposto |
 | E6 — recuperação | Indexar somente snapshot aprovado e hash correspondente, com ACL; RAG/GraphRAG filtram permissões antes da recuperação e fornecem citações verificáveis |
 

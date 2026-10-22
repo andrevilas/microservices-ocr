@@ -3,6 +3,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.application import ApplicationError
 from app.document_mcp_tools import DOCUMENT_OPERATIONS
+from app.package_models import CreatePackageInput
 from app.services.document_runtime import DocumentServices
 
 
@@ -78,6 +79,16 @@ def _dispatch(services, principal, operation, args, checkpoint):
         job_id, body, key = args
         return services.document.approve(
             principal, job_id, body, key=key, checkpoint=checkpoint)[0]
+    if operation == "create_document_package":
+        job_id, body = args
+        return services.packages.create(
+            principal, job_id, CreatePackageInput.model_validate(body, strict=True), checkpoint=checkpoint)
+    if operation == "list_document_packages":
+        job_id, = args
+        return services.packages.list(principal, job_id)
+    if operation == "get_document_package":
+        job_id, package_id = args
+        return services.packages.get(principal, job_id, package_id)
     raise ApplicationError(422, "unknown_operation", "Unknown document operation.")
 
 

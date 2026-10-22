@@ -1,6 +1,6 @@
 # API e MCP de metadados documentais
 
-Contrato HTTP `1.9.0` (69 operações) e MCP `0.7.0` (55 ferramentas). Esta página
+Contrato HTTP `1.10.0` (73 operações) e MCP `0.8.0` (58 ferramentas). Esta página
 cobre as 15 rotas HTTP e as 12 ferramentas MCP de documentos. A fonte
 autoritativa do contrato atual é o OpenAPI da aplicação e seu export
 [openapi-v1.json](openapi-v1.json); em divergência, ele prevalece sobre este texto.
