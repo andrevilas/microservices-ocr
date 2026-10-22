@@ -94,7 +94,8 @@
             "enum": [
               "pdf",
               "pages",
-              "metadata"
+              "metadata",
+              "graph"
             ],
             "title": "Role",
             "type": "string"
@@ -854,6 +855,81 @@
         "title": "Capabilities",
         "type": "object"
       },
+      "Claim": {
+        "additionalProperties": false,
+        "description": "A reviewed literal value of a segment field (date, amount, text...).",
+        "properties": {
+          "claim_id": {
+            "pattern": "^c:[0-9a-f]{24}$",
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "maxItems": 32,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "field_name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Field Name",
+            "type": "string"
+          },
+          "item_index": {
+            "maximum": 999.0,
+            "minimum": 0.0,
+            "title": "Item Index",
+            "type": "integer"
+          },
+          "sensitivity": {
+            "enum": [
+              "public",
+              "internal",
+              "restricted"
+            ],
+            "title": "Sensitivity",
+            "type": "string"
+          },
+          "subject": {
+            "pattern": "^n:[0-9a-f]{24}$",
+            "title": "Subject",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          },
+          "value_type": {
+            "enum": [
+              "string",
+              "identifier",
+              "integer",
+              "decimal",
+              "boolean",
+              "date",
+              "enum"
+            ],
+            "title": "Value Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim_id",
+          "subject",
+          "field_name",
+          "item_index",
+          "value_type",
+          "value",
+          "sensitivity"
+        ],
+        "title": "Claim",
+        "type": "object"
+      },
       "ContextCreate": {
         "additionalProperties": false,
         "properties": {
@@ -1309,13 +1385,16 @@
             "items": {
               "$ref": "#/components/schemas/Artifact"
             },
-            "maxItems": 3,
+            "maxItems": 4,
             "minItems": 2,
             "title": "Artifacts",
             "type": "array"
           },
           "contract_version": {
-            "const": "ocr-rag/1",
+            "enum": [
+              "ocr-rag/1",
+              "ocr-rag/2"
+            ],
             "title": "Contract Version",
             "type": "string"
           },
@@ -1464,6 +1543,16 @@
             "title": "Destination Id",
             "type": "string"
           },
+          "graph_sensitivity_ceiling": {
+            "default": "internal",
+            "enum": [
+              "public",
+              "internal",
+              "restricted"
+            ],
+            "title": "Graph Sensitivity Ceiling",
+            "type": "string"
+          },
           "key": {
             "pattern": "^[a-zA-Z0-9_-]{1,64}$",
             "title": "Key",
@@ -1492,6 +1581,58 @@
           "process_reference"
         ],
         "title": "DestinationView",
+        "type": "object"
+      },
+      "Edge": {
+        "additionalProperties": false,
+        "properties": {
+          "edge_id": {
+            "pattern": "^r:[0-9a-f]{24}$",
+            "title": "Edge Id",
+            "type": "string"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "maxItems": 32,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "predicate": {
+            "pattern": "^(has_segment|field:[a-z][a-z0-9_]{0,63})$",
+            "title": "Predicate",
+            "type": "string"
+          },
+          "sensitivity": {
+            "enum": [
+              "public",
+              "internal",
+              "restricted"
+            ],
+            "title": "Sensitivity",
+            "type": "string"
+          },
+          "source": {
+            "pattern": "^n:[0-9a-f]{24}$",
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "pattern": "^n:[0-9a-f]{24}$",
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "edge_id",
+          "source",
+          "target",
+          "predicate",
+          "sensitivity"
+        ],
+        "title": "Edge",
         "type": "object"
       },
       "EffectiveOptions": {
@@ -1680,6 +1821,49 @@
           "request_id"
         ],
         "title": "ErrorResponse",
+        "type": "object"
+      },
+      "Evidence": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "maximum": 500000.0,
+            "minimum": 0.0,
+            "title": "End",
+            "type": "integer"
+          },
+          "page": {
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "quote": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Quote",
+            "type": "string"
+          },
+          "start": {
+            "maximum": 500000.0,
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "integer"
+          },
+          "text_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Text Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "page",
+          "start",
+          "end",
+          "quote",
+          "text_sha256"
+        ],
+        "title": "Evidence",
         "type": "object"
       },
       "EvidenceRef": {
@@ -2766,6 +2950,183 @@
           "size_bytes"
         ],
         "title": "FileDigest",
+        "type": "object"
+      },
+      "GraphDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "claims": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Claim"
+            },
+            "maxItems": 2000,
+            "title": "Claims",
+            "type": "array"
+          },
+          "document_id": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "edges": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Edge"
+            },
+            "maxItems": 4000,
+            "title": "Edges",
+            "type": "array"
+          },
+          "metadata_revision_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Metadata Revision Id",
+            "type": "string"
+          },
+          "metadata_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Metadata Sha256",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/Node"
+            },
+            "maxItems": 2000,
+            "minItems": 1,
+            "title": "Nodes",
+            "type": "array"
+          },
+          "omitted": {
+            "$ref": "#/components/schemas/Omitted"
+          },
+          "output_pdf_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Output Pdf Sha256",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "ocr-graph/1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "sensitivity_ceiling": {
+            "enum": [
+              "public",
+              "internal",
+              "restricted"
+            ],
+            "title": "Sensitivity Ceiling",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "document_id",
+          "metadata_revision_id",
+          "metadata_sha256",
+          "output_pdf_sha256",
+          "sensitivity_ceiling",
+          "nodes",
+          "omitted"
+        ],
+        "title": "GraphDocument",
+        "type": "object"
+      },
+      "Hint": {
+        "additionalProperties": false,
+        "description": "Identifier value usable by a consumer for explicit, auditable linking.",
+        "properties": {
+          "field_name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Field Name",
+            "type": "string"
+          },
+          "scheme": {
+            "const": "identifier",
+            "title": "Scheme",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheme",
+          "field_name",
+          "value"
+        ],
+        "title": "Hint",
+        "type": "object"
+      },
+      "Identity": {
+        "additionalProperties": false,
+        "description": "What a node stands for. Scope `document` never crosses documents.",
+        "properties": {
+          "basis": {
+            "enum": [
+              "document",
+              "segment",
+              "field_value"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
+          "field_name": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Field Name"
+          },
+          "item_index": {
+            "anyOf": [
+              {
+                "maximum": 999.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Index"
+          },
+          "scope": {
+            "const": "document",
+            "title": "Scope",
+            "type": "string"
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segment Id"
+          }
+        },
+        "required": [
+          "scope",
+          "basis"
+        ],
+        "title": "Identity",
         "type": "object"
       },
       "IdentityResponse": {
@@ -4430,6 +4791,159 @@
           "by_status"
         ],
         "title": "MetricsResponse",
+        "type": "object"
+      },
+      "Node": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "agent",
+                  "organization",
+                  "place",
+                  "identifier"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Type"
+          },
+          "hints": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Hint"
+            },
+            "maxItems": 4,
+            "title": "Hints",
+            "type": "array"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/Identity"
+          },
+          "kind": {
+            "enum": [
+              "document",
+              "segment",
+              "entity"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "node_id": {
+            "pattern": "^n:[0-9a-f]{24}$",
+            "title": "Node Id",
+            "type": "string"
+          },
+          "page_end": {
+            "anyOf": [
+              {
+                "maximum": 500.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page End"
+          },
+          "page_start": {
+            "anyOf": [
+              {
+                "maximum": 500.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Start"
+          },
+          "sensitivity": {
+            "enum": [
+              "public",
+              "internal",
+              "restricted"
+            ],
+            "title": "Sensitivity",
+            "type": "string"
+          },
+          "type_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type Id"
+          },
+          "type_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type Version"
+          }
+        },
+        "required": [
+          "node_id",
+          "kind",
+          "label",
+          "sensitivity",
+          "identity"
+        ],
+        "title": "Node",
+        "type": "object"
+      },
+      "Omitted": {
+        "additionalProperties": false,
+        "description": "Counts of reviewed-snapshot values deliberately left out, never the values.",
+        "properties": {
+          "above_ceiling": {
+            "default": 0,
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Above Ceiling",
+            "type": "integer"
+          },
+          "not_indexable": {
+            "default": 0,
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Not Indexable",
+            "type": "integer"
+          },
+          "not_reviewed": {
+            "default": 0,
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Not Reviewed",
+            "type": "integer"
+          }
+        },
+        "title": "Omitted",
         "type": "object"
       },
       "OutputValidation": {
@@ -6552,8 +7066,8 @@
   "info": {
     "description": "OCR HTTP API. Versioned operations use Bearer user or individual service credentials; legacy routes retain separate contracts.",
     "title": "Fluxo OCR",
-    "version": "1.12.0",
-    "x-api-version": "1.12.0"
+    "version": "1.13.0",
+    "x-api-version": "1.13.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -27010,6 +27524,509 @@
         ]
       }
     },
+    "/api/v1/jobs/{job_id}/graph": {
+      "get": {
+        "description": "Export entities, relations and claims of the latest (or the given) APPROVED snapshot.\n\nOnly reviewed values of fields declared indexable and at or below the\nceiling are included; omitted values are counted, never shown. Entities\nstay scoped to document, segment, field and item: equal names are never\nmerged, and identifier values travel only as hints. Every relation and\nclaim carries the page evidence (offsets in Unicode code points and the\npage text SHA-256) reviewed for that value.",
+        "operationId": "ocr_get_document_graph",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "metadata_revision_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Metadata Revision Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sensitivity_ceiling",
+            "required": false,
+            "schema": {
+              "default": "internal",
+              "enum": [
+                "public",
+                "internal",
+                "restricted"
+              ],
+              "title": "Sensitivity Ceiling",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "claims": [],
+                  "document_id": "11111111111111111111111111111111",
+                  "edges": [],
+                  "metadata_revision_id": "33333333333333333333333333333333",
+                  "metadata_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "nodes": [
+                    {
+                      "entity_type": null,
+                      "hints": [],
+                      "identity": {
+                        "basis": "document",
+                        "field_name": null,
+                        "item_index": null,
+                        "scope": "document",
+                        "segment_id": null
+                      },
+                      "kind": "document",
+                      "label": "Documento 11111111111111111111111111111111",
+                      "node_id": "n:cccccccccccccccccccccccc",
+                      "page_end": null,
+                      "page_start": null,
+                      "sensitivity": "public",
+                      "type_id": null,
+                      "type_version": null
+                    }
+                  ],
+                  "omitted": {
+                    "above_ceiling": 1,
+                    "not_indexable": 2,
+                    "not_reviewed": 0
+                  },
+                  "output_pdf_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "schema_version": "ocr-graph/1",
+                  "sensitivity_ceiling": "internal"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/GraphDocument"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "authentication_required",
+                    "details": [],
+                    "message": "A valid Bearer token is required."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A valid Bearer token is required.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "insufficient_scope",
+                    "details": [],
+                    "message": "Required permission is missing."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required permission is missing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "job_not_found",
+                    "details": [],
+                    "message": "Job not found."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "method_not_allowed",
+                    "details": [],
+                    "message": "Method not allowed."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Method not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "upload_timeout",
+                    "details": [],
+                    "message": "Upload deadline exceeded."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Upload deadline exceeded.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "artifact_unavailable",
+                    "details": [],
+                    "message": "Artifact is not available."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact is not available.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "upload_expired",
+                    "details": [],
+                    "message": "Upload has expired."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Upload has expired.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "validation_error",
+                    "details": [],
+                    "message": "Invalid request parameters."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request parameters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "storage_quota_exceeded",
+                    "details": [],
+                    "message": "Input quota is exhausted."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Input quota is exhausted.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "internal_error",
+                    "details": [],
+                    "message": "An internal error occurred."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "An internal error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "storage_unavailable",
+                    "details": [],
+                    "message": "Storage is unavailable."
+                  },
+                  "request_id": "00000000000000000000000000000000"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Storage is unavailable.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Authenticated responses are not cacheable.",
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "description": "Server-generated correlation ID; client IDs are ignored.",
+                "schema": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "PrincipalBearer": []
+          }
+        ],
+        "summary": "Get Graph",
+        "tags": [
+          "Graph"
+        ],
+        "x-human-admin-required": false,
+        "x-required-scopes": [
+          "jobs:read",
+          "artifacts:read",
+          "metadata:read"
+        ]
+      }
+    },
     "/api/v1/jobs/{job_id}/metadata": {
       "get": {
         "description": "Return a summary of the metadata revision selected by current HEAD.\n\nThe read pins that revision and hash once; later HEAD changes do not alter\nthe result, and content references retrieve the immutable snapshot.",
@@ -38537,6 +39554,11 @@
                   {
                     "destination": "normas",
                     "job_id": "11111111111111111111111111111111"
+                  },
+                  {
+                    "destination": "processo",
+                    "include_graph": true,
+                    "job_id": "11111111111111111111111111111111"
                   }
                 ],
                 "properties": {
@@ -38545,10 +39567,27 @@
                     "title": "Destination",
                     "type": "string"
                   },
+                  "include_graph": {
+                    "default": false,
+                    "title": "Include Graph",
+                    "type": "boolean"
+                  },
                   "job_id": {
                     "pattern": "^[0-9a-f]{32}$",
                     "title": "Job Id",
                     "type": "string"
+                  },
+                  "metadata_revision_id": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[0-9a-f]{32}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Metadata Revision Id"
                   }
                 },
                 "required": [

@@ -130,10 +130,10 @@ class RagOutbox:
                          "error='hold_deadline' WHERE id=?", (delivery_id,))
             self.audit(conn, delivery_id, f"resolution@{now:.6f}", now)
 
-    def enqueue(self, principal, job_id, destination):
+    def enqueue(self, principal, job_id, destination, material=None):
         # The outer lease bridges packaging -> durable hold admission.
         with self.store.artifact_lease(job_id, principal.subject):
-            prepared = prepare_delivery(self.store, principal, job_id, destination)
+            prepared = prepare_delivery(self.store, principal, job_id, destination, material)
             manifest = parse_manifest(json.dumps(json.loads(prepared.payload)["manifest"]).encode())
             now = time.time()
             with self.transaction() as conn:

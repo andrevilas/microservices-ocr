@@ -21,6 +21,8 @@ class BindingConfig(BaseModel):
     source_kind: Literal["process_record", "historical_reference", "normative_source"]
     process_reference: SafeId | None = None
     token: str = Field(repr=False)
+    # Highest field sensitivity exported in ocr-graph/1 deliveries to this destination.
+    graph_sensitivity_ceiling: Literal["public", "internal", "restricted"] = "internal"
 
     @model_validator(mode="after")
     def _process_binding(self):
@@ -45,12 +47,13 @@ class RagRuntime:
         for entry in config.destinations:
             if entry.key in destinations:
                 raise ValueError("duplicate destination key")
-            destinations[entry.key] = Destination(**entry.model_dump(exclude={"key"}))
+            destinations[entry.key] = Destination(**entry.model_dump(exclude={"key", "graph_sensitivity_ceiling"}))
         outbox = RagOutbox(store, DeliveryPolicy(**config.policy))
         self.worker = RagDeliveryWorker(outbox, destinations.values(),
             interval_seconds=config.interval_seconds, batch_size=config.batch_size,
             warning_seconds=config.warning_seconds)
-        self.service = RagApplication(outbox, destinations, self.worker)
+        self.service = RagApplication(outbox, destinations, self.worker,
+                                      {entry.key: entry.graph_sensitivity_ceiling for entry in config.destinations})
         self.shutdown_seconds = config.shutdown_seconds
 
     def start(self):

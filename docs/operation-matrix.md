@@ -2,9 +2,9 @@
 
 Fonte: matriz do plano OCR-AM-01, projeto LPM `POzf83SdXU3HWL9KX9i2`.
 Esta tabela usa os nomes efetivamente implementados; nomes propostos diferentes
-não são aliases. Contrato atual: HTTP v1 **1.12.0, 77 operações** (30 de OCR +
-14 de catálogo + 15 de documentos + 10 de entrega RAG + 4 de pacotes + 4 de extração); MCP **0.10.0, 62 ferramentas** (20 legadas +
-14 de catálogo + 12 de documentos + 3 de pacotes + 4 de extração + 9 de entrega RAG), sendo **39 leituras e 23 escritas**.
+não são aliases. Contrato atual: HTTP v1 **1.13.0, 78 operações** (30 de OCR +
+14 de catálogo + 15 de documentos + 10 de entrega RAG + 4 de pacotes + 1 de grafo + 4 de extração); MCP **0.11.0, 63 ferramentas** (20 legadas +
+14 de catálogo + 12 de documentos + 3 de pacotes + 1 de grafo + 4 de extração + 9 de entrega RAG), sendo **40 leituras e 23 escritas**.
 Contratos e permissões: [API/MCP](api-mcp.md), [metadados documentais](document-metadata-api.md)
 e [HTTP v1](http-contract.md). A tabela F01–F29 abaixo mantém o escopo original e
 cobre apenas o fluxo OCR; catálogo e documentos não são linhas F. A edição/aprovação

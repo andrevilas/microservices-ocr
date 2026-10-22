@@ -83,3 +83,11 @@ substituído. Não iniciar outra instância sobre o mesmo diretório.
 Antes de produção ainda são exigidos quota global de armazenamento, política
 operacional de resolução/alertas, revisão independente e ensaio de release e
 rollback. Os limites da fila não equivalem a quota de disco ou garantia WORM.
+
+## Grafo (ocr-rag/2)
+
+`include_graph=true` na admissão (com `metadata:read`) acrescenta os metadados
+aprovados e o `ocr-graph/1` ao pacote; `metadata_revision_id` fixa a revisão.
+Cada destino pode declarar `graph_sensitivity_ceiling` (`public`, `internal`
+ou `restricted`; padrão `internal`) no arquivo de configuração. Detalhes,
+identidade e verificação de evidências em [graph-export.md](graph-export.md).

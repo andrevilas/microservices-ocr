@@ -68,6 +68,7 @@ OPERATIONS = {
             r"/api/v1/jobs/[0-9a-f]{32}/packages",
             r"/api/v1/jobs/[0-9a-f]{32}/packages/[0-9a-f]{32}",
             r"/api/v1/jobs/[0-9a-f]{32}/packages/[0-9a-f]{32}/content",
+            r"/api/v1/jobs/[0-9a-f]{32}/graph",
             r"/api/v1/jobs/[0-9a-f]{32}/extractions",
             r"/api/v1/jobs/[0-9a-f]{32}/extractions/[0-9a-f]{32}"],
     "POST": [r"/api/v1/(upload-sessions|uploads|jobs|batches|exports|jobs/cancel-batch)",

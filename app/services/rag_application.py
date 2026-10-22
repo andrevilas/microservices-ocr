@@ -1,27 +1,34 @@
 """Shared HTTP/MCP application facade. Configuration is operator-owned."""
 import hashlib
 from app.application import ApplicationError
+from app.services.graph_export import approved_material
 from app.rag_models import (DeliveryList, DeliveryOperations, DeliveryStatus, DestinationList,
                             DestinationView, RecoveryLink)
 
 
 class RagApplication:
-    def __init__(self, outbox, destinations, worker=None):
+    def __init__(self, outbox, destinations, worker=None, graph_ceilings=None):
         self.outbox = outbox
         self.worker = worker
         self.destinations = dict(destinations)
+        # Operator-owned per destination; kept out of Destination so existing bindings are unchanged.
+        self.graph_ceilings = dict(graph_ceilings or {})
+        # Set by the application lifespan; without it graph deliveries are unavailable.
+        self.documents = None
         if len(self.destinations) > 100:
             raise ValueError("too many RAG destinations")
         for key, dest in self.destinations.items():
             dest.validate()
-            DestinationView(key=key, destination_id=dest.destination_id,
-                            source_kind=dest.source_kind, process_reference=dest.process_reference)
+            self._view(key, dest)
+
+    def _view(self, key, dest):
+        return DestinationView(key=key, destination_id=dest.destination_id, source_kind=dest.source_kind,
+                               process_reference=dest.process_reference,
+                               graph_sensitivity_ceiling=self.graph_ceilings.get(key, "internal"))
 
     def list_rag_destinations(self, principal):
         principal.require("jobs:read")
-        return DestinationList(items=[DestinationView(
-            key=key, destination_id=dest.destination_id, source_kind=dest.source_kind,
-            process_reference=dest.process_reference)
+        return DestinationList(items=[self._view(key, dest)
             for key, dest in sorted(self.destinations.items()) if dest.owner == principal.subject])
 
     def submit_rag_delivery(self, principal, body):
@@ -30,7 +37,15 @@ class RagApplication:
         dest = self.destinations.get(body.destination)
         if dest is None or dest.owner != principal.subject:
             raise ApplicationError(404, "rag_destination_not_found", "Destination not found.")
-        delivery_id = self.outbox.enqueue(principal, body.job_id, dest)
+        material = None
+        if body.include_graph:
+            principal.require("metadata:read")
+            if self.documents is None:
+                raise ApplicationError(503, "rag_unavailable", "Graph delivery is not enabled.")
+            material = approved_material(self.documents().document, principal, body.job_id,
+                                         self.graph_ceilings.get(body.destination, "internal"),
+                                         body.metadata_revision_id)
+        delivery_id = self.outbox.enqueue(principal, body.job_id, dest, material)
         return self.get_rag_delivery(principal, delivery_id)
 
     def get_rag_delivery(self, principal, delivery_id):

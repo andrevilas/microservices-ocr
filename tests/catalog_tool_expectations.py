@@ -1,8 +1,9 @@
 """Independent, literal expectations for the currently advertised MCP tools."""
 
-EXPECTED_TOOL_COUNT = 62
+EXPECTED_TOOL_COUNT = 63
 EXPECTED_TOOL_NAMES = frozenset({
     "ocr_create_document_package", "ocr_list_document_packages", "ocr_get_document_package",
+    "ocr_get_document_graph",
     "ocr_create_metadata_extraction", "ocr_list_metadata_extractions", "ocr_get_metadata_extraction",
     "ocr_apply_metadata_extraction",
     "ocr_list_rag_destinations", "ocr_submit_rag_delivery", "ocr_get_rag_delivery",
