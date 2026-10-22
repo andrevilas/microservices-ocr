@@ -57,6 +57,12 @@ processo local. O gerador também não altera configurações globais dos outros
 | Antigravity / Claude Desktop | Configuração gerada para stdio; transporte comum testado pelo SDK | Importar no aplicativo, listar catálogo e executar tools |
 | ChatGPT Desktop | Manifestos de plugin local validados contra os schemas oficiais; transporte comum testado pelo SDK | Validar instalação, catálogo, chamadas e aprovações na versão instalada |
 
+**Atualização de 22/10/2026 (AM-16):** o resultado completo por cliente está em
+[interop-matrix.md](interop-matrix.md).
+- Claude Code 2.1.308 e agy CLI passaram no fluxo completo em sessões reais, inclusive depois de reiniciar o servidor. O problema de descoberta do agy não se repetiu.
+- O Codex não rodou porque a conta atingiu o limite de uso.
+- Claude Desktop, ChatGPT Desktop e Antigravity continuam pendentes de execução assistida.
+
 AM-16 deve registrar, **para cada host**, versão, transporte, initialize,
 tools/list, whoami, capabilities, PDF sintético, consulta de texto/relatório,
 download, negativa por escopo/dono, cancel/retry/delete e reinício. Nunca fechar
