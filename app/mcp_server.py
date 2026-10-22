@@ -13,6 +13,7 @@ from app.catalog_mcp_tools import CATALOG_OPERATIONS
 from app.mcp_tools import INSTRUCTIONS, MCP_VERSION, OcrMCPServer, register_tools
 from app.document_mcp_tools import DOCUMENT_OPERATIONS
 from app.document_mcp_runtime import execute_document
+from app.rag_mcp_tools import RAG_OPERATIONS
 from app.security import authenticate_bearer
 from app.services.admission_service import submit_and_enqueue
 from app.services.job_queue import get_job_queue_processor
@@ -105,7 +106,7 @@ def build_mcp_server(service_provider=get_job_application, upload_provider=get_u
                      queue_provider=get_job_queue_processor, batch_provider=get_batch_service,
                      export_provider=get_export_service, control_provider=get_control_service,
                      *, request_authenticator=None, transport_security=None, catalog_provider=None,
-                     document_provider=None):
+                     document_provider=None, rag_provider=None):
     server = OcrMCPServer("OCR Recognizer", version=MCP_VERSION, instructions=INSTRUCTIONS)
     if catalog_provider is None:
         # Imported only here so the pure registry and stdio never load the runtime. Resolved lazily per call.
@@ -119,6 +120,11 @@ def build_mcp_server(service_provider=get_job_application, upload_provider=get_u
             raise ToolError("authentication_required: A valid Bearer token is required.")
 
         def execute():
+            if operation in RAG_OPERATIONS:
+                service = rag_provider() if rag_provider else None
+                if service is None:
+                    raise ApplicationError(503, "rag_unavailable", "RAG delivery is not enabled.")
+                return getattr(service, operation)(principal, *args)
             if operation in CATALOG_OPERATIONS or operation in ("deprecate_document_type_version", "list_context_templates", "clone_context_template"):
                 return execute_catalog(catalog_provider(), principal, operation, args)
             if operation in ("cancel", "cancel_many"):

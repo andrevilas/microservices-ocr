@@ -10,6 +10,7 @@ from pydantic import Field, ValidationError
 
 from app.catalog_mcp_tools import register_catalog_tools
 from app.document_mcp_tools import register_document_tools
+from app.rag_mcp_tools import register_rag_tools
 from app.document_mcp_limits import DocumentMCPInputGuard, DocumentMCPOutputGuard
 from app.api_models import ArtifactResponse, IdentityResponse, JobPage, MetricsResponse
 from app.models import JobResponse, JobStatus, QualityLabel
@@ -20,7 +21,7 @@ from app.retention_models import DeletionReceipt
 from app.upload_models import UploadReceipt, JobAdmission
 from app.bulk_models import BatchInput, BatchInputItem, BatchPage, BatchReceipt, BatchView, ExportInput, ExportReceipt, ResourceId
 
-MCP_VERSION = '0.6.0'
+MCP_VERSION = '0.7.0'
 
 INSTRUCTIONS = (
     "Process caller-owned PDF uploads asynchronously. Prepare an upload, transfer bytes by "
@@ -197,3 +198,4 @@ def register_tools(server, invoke):
 
     register_catalog_tools(server, invoke)
     register_document_tools(server, invoke)
+    register_rag_tools(server, invoke)

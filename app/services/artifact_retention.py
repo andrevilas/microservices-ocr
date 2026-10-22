@@ -47,6 +47,11 @@ def safe_rmtree(root, directory, allowed_relative):
 
 
 class ArtifactRetentionMixin:
+    def _delivery_hold_locked(self, job_id):
+        return self._get_conn().execute(
+            "SELECT 1 FROM rag_outbox WHERE job_id=? AND state NOT IN ('indexed','canceled')",
+            (job_id,)).fetchone() is not None
+
     @staticmethod
     def check_retained(job):
         from app.application import ApplicationError
@@ -103,6 +108,8 @@ class ArtifactRetentionMixin:
             return
         # Lease counters may already be released; quarantine still preserves files.
         self._check_available()
+        if self._delivery_hold_locked(job.job_id):
+            return
         try:
             if not re.fullmatch("[0-9a-f]{32}", job.job_id):
                 raise OSError("Invalid managed job ID.")
@@ -115,6 +122,8 @@ class ArtifactRetentionMixin:
 
     def _remove_locked(self, job, reason, actor):
         from app.application import ApplicationError
+        if self._delivery_hold_locked(job.job_id):
+            raise ApplicationError(409, "rag_delivery_hold", "Pending delivery protects these files.")
         if job.status not in TERMINAL:
             raise ApplicationError(409, "job_not_terminal", "Only terminal job files may be removed.")
         if job.artifacts_removed_at is None:
@@ -145,6 +154,8 @@ class ArtifactRetentionMixin:
         with self._lock:
             for job in self.jobs.values():
                 if job.status not in TERMINAL:
+                    continue
+                if self._delivery_hold_locked(job.job_id):
                     continue
                 deadline = (job.updated_at + timedelta(seconds=retention_seconds) if retention_seconds is not None
                             else job.artifacts_expires_at)

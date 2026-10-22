@@ -18,6 +18,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from app.catalog_mcp_tools import CATALOG_OPERATIONS
 from app.document_mcp_http import document_body, document_request
 from app.document_mcp_tools import DOCUMENT_OPERATIONS
+from app.rag_mcp_tools import RAG_OPERATIONS, rag_request
 from app.mcp_tools import INSTRUCTIONS, MCP_VERSION, OcrMCPServer, register_tools
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -169,6 +170,8 @@ class ApiClient:
         elif operation == "list_batches":
             path = "/batches"
             query = {key: value for key, value in zip(("limit", "cursor"), args) if value is not None}
+        elif operation in RAG_OPERATIONS:
+            method, path, body = rag_request(operation, args)
         elif operation in DOCUMENT_OPERATIONS:
             method, path, query, body, headers = document_request(operation, args)
             content = document_body(body)

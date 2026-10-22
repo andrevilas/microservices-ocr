@@ -152,6 +152,8 @@ class JobStore(ArtifactRetentionMixin):
 
     def _init_db(self) -> None:
         conn = self._get_conn()
+        from app.services.rag_outbox import initialize
+        initialize(conn)
         conn.execute(_CREATE_TABLE_SQL)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
         if "owner_user_id" not in columns:

@@ -1,10 +1,10 @@
 # Contrato HTTP v1
 
 Entrega OCR-AM-04, atividade LPM `hkKLY54xl4fHElZsRNdK`. O contrato atual (versão
-`1.7.0`) tem exatamente 59 operações sob `/api/v1`: 44 anteriores, incluindo 14 do
-catálogo local, mais 15 de documentos ([metadados documentais](document-metadata-api.md)).
-O MCP `0.6.0` anuncia 46 ferramentas (20 legadas, 14 de catálogo e 12 de documentos),
-29 leituras e 17 escritas. As referências abaixo a `1.6.0`, 44 operações e 34
+`1.8.0`) tem exatamente 66 operações sob `/api/v1`: 44 anteriores, incluindo 14 do
+catálogo local, mais 15 de documentos e 7 de [entrega RAG](rag-api-mcp.md).
+O MCP `0.7.0` anuncia 52 ferramentas (20 legadas, 14 de catálogo, 12 de documentos e 6 de entrega RAG),
+33 leituras e 19 escritas. As referências abaixo a `1.6.0`, 44 operações e 34
 ferramentas são históricas das entregas indicadas. Seguem a AM-05 de
 [uploads persistentes e admissão idempotente](uploads.md) e a AM-06 de
 [texto por página e relatórios](results.md) e AM-07 de
@@ -187,7 +187,7 @@ Contexts ou UI. A vinculação efetiva no DocumentService ainda não foi
 integrada, portanto esta entrega não garante o bloqueio de novas associações
 de documentos de ponta a ponta.
 
-## Documentos e metadados (HTTP 1.7.0)
+## Documentos e metadados (HTTP 1.8.0)
 
 As 15 rotas de documentos (tag `Documents`, sob `/api/v1/jobs/{job_id}`) e as 12
 ferramentas MCP correspondentes, com escopos, limites, CAS, idempotência (201 na
