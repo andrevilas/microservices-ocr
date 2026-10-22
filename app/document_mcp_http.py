@@ -9,6 +9,7 @@ import re
 from mcp.server.mcpserver.exceptions import ToolError
 
 from .metadata_models import MAX_REQUEST_BYTES, ApprovalInput, SaveMetadataInput
+from .extraction_models import ApplyExtractionInput, CreateExtractionInput
 from .package_models import CreatePackageInput
 
 
@@ -71,6 +72,10 @@ _OPERATIONS = {
     "get_document_package": (
         _ROOT + "/packages/{package_id}", ("job_id", "package_id"), 2, (), (),
     ),
+    "list_metadata_extractions": (_ROOT + "/extractions", ("job_id",), 1, (), ()),
+    "get_metadata_extraction": (
+        _ROOT + "/extractions/{run_id}", ("job_id", "run_id"), 2, (), (),
+    ),
 }
 
 
@@ -83,7 +88,7 @@ def _matches(value, pattern):
 
 
 def _valid(name, value, operation):
-    if name in ("job_id", "revision_id", "segment_id", "package_id"):
+    if name in ("job_id", "revision_id", "segment_id", "package_id", "run_id"):
         return _matches(value, _ID)
     if name in ("sha256", "schema_sha256"):
         return _matches(value, _DIGEST)
@@ -163,6 +168,34 @@ def _package_request(args):
     raise ToolError("validation_error: Invalid document request.") from None
 
 
+def _extraction_request(operation, args):
+    """Queue (no key: identical inputs replay) or apply (Idempotency-Key) an extraction run."""
+    try:
+        if operation == "create_metadata_extraction":
+            if type(args) not in (list, tuple) or len(args) != 2:
+                raise ValueError
+            job_id, body = args
+            if not _matches(job_id, _ID):
+                raise ValueError
+            body = CreateExtractionInput.model_validate(body, strict=True).model_dump(mode="json")
+            path, headers = _ROOT.format(job_id=job_id) + "/extractions", None
+        else:
+            if type(args) not in (list, tuple) or len(args) != 4:
+                raise ValueError
+            job_id, run_id, body, key = args
+            if not (_matches(job_id, _ID) and _matches(run_id, _ID) and _matches(key, _KEY)):
+                raise ValueError
+            body = ApplyExtractionInput.model_validate(body, strict=True).model_dump(mode="json")
+            path = _ROOT.format(job_id=job_id) + "/extractions/" + run_id + "/apply"
+            headers = {"Idempotency-Key": key}
+    except Exception:
+        pass
+    else:
+        document_body(body)
+        return "POST", path, {}, body, headers
+    raise ToolError("validation_error: Invalid document request.") from None
+
+
 def _write_request(operation, args):
     method, path, model = _WRITES[operation]
     try:
@@ -196,10 +229,14 @@ def document_request(operation, args):
     Only None query values are omitted; continuations remain caller-controlled.
     Errors are fixed messages and never include caller-supplied content.
     """
-    if type(operation) is not str or operation not in (*_OPERATIONS, *_WRITES, "create_document_package"):
+    extraction_writes = ("create_metadata_extraction", "apply_metadata_extraction")
+    if type(operation) is not str or operation not in (
+            *_OPERATIONS, *_WRITES, "create_document_package", *extraction_writes):
         raise ToolError("unknown_operation: Unsupported document operation.") from None
     if operation == "create_document_package":
         return _package_request(args)
+    if operation in extraction_writes:
+        return _extraction_request(operation, args)
     if operation in _WRITES:
         return _write_request(operation, args)
     path, names, required, defaults, query_names = _OPERATIONS[operation]

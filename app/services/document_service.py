@@ -29,7 +29,7 @@ from app.metadata_models import (
     SHA256, SchemaSnapshot, SegmentInput, SegmentRecord,
     snapshot_bytes, validate_manual_input,
 )
-from app.metadata_validation import MetadataValidationError, normalize_manual_values
+from app.metadata_validation import MetadataValidationError, extracted_records, normalize_manual_values
 from app.services.batch_service import request_identity
 from app.services.canonical_text_service import CanonicalTextService
 from app.services.metadata_canonical import MetadataCanonicalSource
@@ -55,6 +55,15 @@ def _conflict():
 
 def _unavailable():
     return ApplicationError(503, "metadata_unavailable", "Stored metadata is unavailable.")
+
+
+@dataclass(frozen=True)
+class ExtractionApply:
+    """Trusted internal instruction: which run feeds which request segment."""
+
+    run_id: str
+    target_client_key: str
+    proposals: tuple
 
 
 class ResolvedMetadataSegment(SegmentInput):
@@ -480,8 +489,15 @@ class DocumentMetadataService:
                 else _invalid())
 
     @_guard
-    def save(self, principal, job_id, body, *, key, checkpoint=None) -> tuple[SaveMetadataReceipt, bool]:
-        """Return a detached receipt and whether this request was replayed."""
+    def save(self, principal, job_id, body, *, key, checkpoint=None,
+             extraction: "ExtractionApply | None" = None) -> tuple[SaveMetadataReceipt, bool]:
+        """Return a detached receipt and whether this request was replayed.
+
+        With ``extraction`` (trusted internal callers only), the request carries
+        segment structure without fields: records of the HEAD are kept verbatim,
+        and the target segment receives the run's proposals for every field that
+        has no value yet, as origin=extracted bound to the run.
+        """
         _validate_checkpoint(checkpoint)
         self._check_shared()
         bundle = self.bundle
@@ -492,11 +508,19 @@ class DocumentMetadataService:
             request = validate_manual_input(body)
         except ValueError:
             raise _invalid() from None
-        key_hash, request_hash = request_identity(key, {
+        if extraction is not None and (
+                not isinstance(extraction, ExtractionApply)
+                or any(segment.fields for segment in request.segments)
+                or extraction.target_client_key not in {s.client_key for s in request.segments}):
+            raise _invalid()
+        identity = {
             "operation": "document-metadata-save/1",
             "job_id": job_id,
             "input": request.model_dump(mode="json", by_alias=True, warnings="error"),
-        })
+        }
+        if extraction is not None:
+            identity.update(operation="document-metadata-extraction-apply/1", run_id=extraction.run_id)
+        key_hash, request_hash = request_identity(key, identity)
         admission = index.preflight(
             principal, job_id, key_hash=key_hash, request_hash=request_hash)
         if admission.receipt is not None:
@@ -584,9 +608,25 @@ class DocumentMetadataService:
                     ] for schema in schemas
                 }
                 segments = []
+                kept_by_segment = {
+                    old.segment_id: {record.field_name: record for record in old.fields}
+                    for old in (head.segments if head is not None else ())
+                }
                 for segment in plan.segments:
-                    records = normalize_manual_values(
-                        fields_by_hash[segment.schema_sha256], segment.fields, provenance)
+                    specs = fields_by_hash[segment.schema_sha256]
+                    if extraction is None:
+                        records = normalize_manual_values(specs, segment.fields, provenance)
+                    else:
+                        kept = kept_by_segment.get(segment.segment_id, {})
+                        new = {}
+                        if segment.client_key == extraction.target_client_key:
+                            open_fields = [p for p in extraction.proposals
+                                           if kept.get(p.field_name) is None or kept[p.field_name].raw is None]
+                            new = {record.field_name: record for record in extracted_records(
+                                specs, open_fields, provenance.model_copy(
+                                    update={"execution_id": extraction.run_id}))}
+                        records = [new.get(spec.name) or kept[spec.name] for spec in specs
+                                   if spec.name in new or spec.name in kept]
                     segments.append(SegmentRecord(
                         segment_id=segment.segment_id,
                         page_start=segment.page_start, page_end=segment.page_end,

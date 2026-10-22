@@ -1,10 +1,10 @@
 # Contrato HTTP v1
 
 Entrega OCR-AM-04, atividade LPM `hkKLY54xl4fHElZsRNdK`. O contrato atual (versão
-`1.10.0`) tem exatamente 73 operações sob `/api/v1`: 44 anteriores, incluindo 14 do
-catálogo local, mais 15 de documentos, 7 de [entrega RAG](rag-api-mcp.md) e 4 de [pacotes](document-packages.md).
-O MCP `0.8.0` anuncia 58 ferramentas (20 legadas, 14 de catálogo, 12 de documentos, 3 de pacotes e 9 de entrega RAG),
-37 leituras e 21 escritas. As referências abaixo a `1.6.0`, 44 operações e 34
+`1.11.0`) tem exatamente 77 operações sob `/api/v1`: 44 anteriores, incluindo 14 do
+catálogo local, mais 15 de documentos, 10 de [entrega RAG](rag-api-mcp.md), 4 de [pacotes](document-packages.md) e 4 de [extração assistida](llm-extraction.md).
+O MCP `0.9.0` anuncia 62 ferramentas (20 legadas, 14 de catálogo, 12 de documentos, 3 de pacotes, 4 de extração e 9 de entrega RAG),
+39 leituras e 23 escritas. As referências abaixo a `1.6.0`, 44 operações e 34
 ferramentas são históricas das entregas indicadas. Seguem a AM-05 de
 [uploads persistentes e admissão idempotente](uploads.md) e a AM-06 de
 [texto por página e relatórios](results.md) e AM-07 de

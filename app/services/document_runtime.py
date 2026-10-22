@@ -14,6 +14,7 @@ from app.services.document_execution import DocumentExecution
 from app.services.document_queries import DocumentQueries
 from app.services.document_service import DocumentMetadataService
 from app.services.document_streaming import DocumentStreams
+from app.services.extraction_service import ExtractionService
 from app.services.metadata_runtime import MetadataServices
 from app.services.metadata_store import _error, _guard, _require
 from app.services.package_service import DocumentPackageService
@@ -29,6 +30,7 @@ class DocumentServices:
     queries: DocumentQueries
     streams: DocumentStreams
     packages: DocumentPackageService
+    extractions: ExtractionService
 
     @property
     def jobs(self) -> JobStore:
@@ -82,7 +84,7 @@ class DocumentProvider:
                         document, document.canonical, self._execution,
                         DocumentQueries(document),
                         DocumentStreams(document, document.canonical, self._execution, packages),
-                        packages)
+                        packages, ExtractionService(document, catalog.types))
                 else:
                     old_metadata, old_catalog, services = cached
                     _require(old_metadata is metadata and old_catalog is catalog)
@@ -101,7 +103,10 @@ class DocumentProvider:
                          and services.streams.execution is self._execution
                          and type(services.packages) is DocumentPackageService
                          and services.packages.document is services.document
-                         and services.streams.packages is services.packages)
+                         and services.streams.packages is services.packages
+                         and type(services.extractions) is ExtractionService
+                         and services.extractions.document is services.document
+                         and services.extractions.types is catalog.types)
                 self._shared(metadata, catalog)
                 metadata.ensure_healthy()
                 # Publish only after construction and every identity/health check.

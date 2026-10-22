@@ -498,7 +498,6 @@ class ReadinessRuleTests(ErrorAssertions):
     def test_reserved_states_and_origins_remain_errors(self):
         for value, code in (
             (record(origin="inherited"), "unsupported_metadata_origin"),
-            (record(origin="extracted"), "unsupported_metadata_origin"),
             (record(status="conflict"), "unsupported_metadata_state"),
         ):
             self.assert_metadata_error(code, lambda: self.blockers([spec()], [value]))

@@ -55,6 +55,27 @@ class Settings(BaseSettings):
     package_ttl_seconds: int = Field(default=86400, ge=60)
     package_max_total_mb: int = Field(default=512, ge=1, le=4096)
     package_max_per_job: int = Field(default=20, ge=1, le=200)
+    # Assisted extraction (E3). Off by default; the endpoint must be the owner's own
+    # model runtime (decisions 2026-10-21): a private-network host, or a hostname
+    # behind the owner's Cloudflare Tunnel + Access with a service token.
+    extraction_enabled: bool = False
+    extraction_base_url: str | None = None
+    extraction_model: str | None = None
+    extraction_allowed_hosts: str = ""
+    extraction_access_hosts: str = ""
+    # JSON {"client_id": ..., "client_secret": ...}; server-only file, never in env or argv.
+    extraction_access_token_file: Path | None = None
+    extraction_api_key_file: Path | None = None
+    # Sent as reasoning_effort; empty omits it for runtimes that reject the parameter.
+    extraction_reasoning_effort: str = "none"
+    extraction_call_timeout_seconds: int = Field(default=120, ge=5, le=900)
+    extraction_run_timeout_seconds: int = Field(default=600, ge=10, le=3600)
+    extraction_max_chunk_chars: int = Field(default=12000, ge=1000, le=200000)
+    extraction_max_calls_per_run: int = Field(default=6, ge=1, le=50)
+    extraction_max_output_tokens: int = Field(default=1500, ge=64, le=16384)
+    extraction_owner_daily_tokens: int = Field(default=400000, ge=1000)
+    extraction_max_runs_per_job: int = Field(default=20, ge=1, le=200)
+    extraction_max_queued: int = Field(default=8, ge=1, le=100)
     retention_interval_seconds: int = Field(default=60, ge=1, le=3600)
     worker_shutdown_timeout_seconds: int = 30
     user_db_path: Path | None = None
