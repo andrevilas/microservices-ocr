@@ -290,3 +290,14 @@ def test_logs_never_contain_document_text_or_answers(env, caplog):
     run(env)
     text = caplog.text
     assert "Prefeitura" not in text and "CONTRATO" not in text and "123/2026" not in text
+
+
+def test_removing_job_artifacts_scrubs_proposals_but_keeps_usage(env):
+    _, view = run(env)
+    env.jobs.remove_artifacts(env.job.job_id, env.job.effective_owner, "user:1")
+    with env.jobs._lock:
+        row = env.jobs._get_conn().execute(
+            "SELECT result, prompt_tokens, completion_tokens FROM extraction_runs WHERE run_id=?",
+            (view.run_id,)).fetchone()
+    assert row[0] is None and row[1] + row[2] == 120
+    assert env.extractions._tokens_today(env.job.effective_owner) == 120

@@ -94,6 +94,12 @@ class ArtifactRetentionMixin:
         conn = self._get_conn()
         try:
             self._persist(record, commit=False)
+            if "artifacts_removed_at" in changes and conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='extraction_runs'").fetchone():
+                # Extraction proposals (values, quotes) leave together with the job's content.
+                # Usage rows stay, so removing a job never refunds the daily token budget.
+                conn.execute("UPDATE extraction_runs SET result=NULL WHERE job_id=? AND result IS NOT NULL",
+                             (job.job_id,))
             conn.execute("INSERT OR IGNORE INTO artifact_audit VALUES (?,?,?,?,?)",
                          (job.job_id, event, actor, record.artifacts_removal_reason, datetime.now(timezone.utc).isoformat()))
             conn.commit()
