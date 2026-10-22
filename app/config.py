@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     export_max_pending: int = Field(default=32, ge=1, le=256)
     api_key: str | None = None
     upload_rate_limit_per_minute: int = 0
+    # Requests per minute per authenticated principal across HTTP v1 and MCP (token bucket); 0 disables.
+    principal_requests_per_minute: int = Field(default=0, ge=0, le=100000)
     quality_min_text: int = Field(default=40, ge=0)
     quality_valid_ratio_threshold: float = Field(default=0.7, ge=0, le=1)
     fallback_min_improvement_chars: int = 20

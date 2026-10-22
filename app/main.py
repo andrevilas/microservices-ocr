@@ -10,6 +10,7 @@ from starlette.exceptions import HTTPException
 from app.application import ApplicationError, get_job_application
 from app.config import settings
 from app.mcp_server import build_mcp_server
+from app.observability import install_logging
 from app.routes.api import router
 from app.routes.auth import auth_router
 from app.routes.v1 import router as v1_router
@@ -40,6 +41,7 @@ from app.http_contract import API_VERSION, ERRORS, V1Boundary, error_response, i
 
 
 def create_app(service_provider=get_job_application, *, request_authenticator=None, transport_security=None) -> FastAPI:
+    install_logging()
     runtime_store = None
     runtime_lease = None
 
@@ -237,11 +239,12 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
         if is_v1(_request.url.path):
             return error_response(_request, error.status, error.code, error.message,
                                   headers={"WWW-Authenticate": "Bearer"} if error.status == 401 else
-                                  {"Retry-After": "60"} if error.status == 429 else
+                                  {"Retry-After": str(error.retry_after or 60)} if error.status == 429 else
                                   {"Retry-After": "5"} if error.status == 503 else None)
         return JSONResponse({"error": {"code": error.code, "message": error.message}},
                             status_code=error.status,
-                            headers={"WWW-Authenticate": "Bearer"} if error.status == 401 else None)
+                            headers={"WWW-Authenticate": "Bearer"} if error.status == 401 else
+                            {"Retry-After": str(error.retry_after)} if error.retry_after else None)
 
     @application.exception_handler(RequestValidationError)
     async def validation_error(request, error: RequestValidationError):

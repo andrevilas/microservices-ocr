@@ -4,12 +4,14 @@ import sqlite3
 from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.datastructures import MutableHeaders
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from app.application import ApplicationError, get_job_application
 from app.catalog_mcp_tools import CATALOG_OPERATIONS
+from app.observability import new_request_id, request_id_var
 from app.mcp_tools import INSTRUCTIONS, MCP_VERSION, OcrMCPServer, register_tools
 from app.document_mcp_tools import DOCUMENT_OPERATIONS
 from app.document_mcp_runtime import execute_document
@@ -78,7 +80,11 @@ def execute_catalog(services, principal, operation, args):
 
 
 class BearerAuth:
-    """Authenticate every request, including discovery; do not bind auth to a session."""
+    """Authenticate every request, including discovery; do not bind auth to a session.
+
+    Each MCP HTTP request gets its own server request_id, returned as X-Request-ID and
+    carried by logs and by any job a tool admits; client-supplied IDs are ignored.
+    """
     def __init__(self, app, request_authenticator=None):
         self.app = app
         self.request_authenticator = request_authenticator
@@ -86,6 +92,20 @@ class BearerAuth:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
+        token = request_id_var.set(None)
+        try:
+            request_id = new_request_id()
+
+            async def correlated_send(message):
+                if message["type"] == "http.response.start":
+                    MutableHeaders(scope=message)["X-Request-ID"] = request_id
+                await send(message)
+
+            return await self._authenticated(scope, receive, correlated_send)
+        finally:
+            request_id_var.reset(token)
+
+    async def _authenticated(self, scope, receive, send):
         request = Request(scope)
         if request.url.path != "/mcp":
             return await JSONResponse({"detail": "Not Found"}, status_code=404)(scope, receive, send)
@@ -95,8 +115,11 @@ class BearerAuth:
             principal = (await self.request_authenticator(request) if self.request_authenticator else
                          authenticate_bearer(token if scheme.lower() == "bearer" else None))
         except ApplicationError as error:
+            headers = {"WWW-Authenticate": "Bearer"} if error.status == 401 else {}
+            if error.retry_after:
+                headers["Retry-After"] = str(error.retry_after)
             response = JSONResponse({"error": {"code": error.code, "message": error.message}},
-                                    status_code=error.status, headers={"WWW-Authenticate": "Bearer"})
+                                    status_code=error.status, headers=headers)
             return await response(scope, receive, send)
         scope.setdefault("state", {})["ocr_principal"] = principal
         await self.app(scope, receive, send)

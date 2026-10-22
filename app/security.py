@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.application import ApplicationError, Principal
 from app.config import settings
+from app.observability import admit_principal
 from app.scopes import effective_local_scopes
 from app.services.auth_service import decode_token
 from app.services.user_store import get_user_store
@@ -17,6 +18,13 @@ bearer = HTTPBearer(auto_error=False, scheme_name="PrincipalBearer",
 
 
 def authenticate_bearer(token: str | None) -> Principal:
+    """Authenticate, then charge the principal's request rate (HTTP v1, MCP and legacy Bearer)."""
+    principal = _authenticate(token)
+    admit_principal(principal)
+    return principal
+
+
+def _authenticate(token: str | None) -> Principal:
     denied = ApplicationError(401, "authentication_required", "A valid Bearer token is required.")
     if not token:
         raise denied
