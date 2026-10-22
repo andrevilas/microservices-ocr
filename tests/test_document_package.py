@@ -22,8 +22,10 @@ from app.results import (
 from app.services.context_service import ContextService
 from app.services.package_service import DocumentPackageService, read_xmp
 from app.services.package_xmp import extract
+from app.services.pdf_signatures import inspect_signatures
 from app.services.pdfa_validator import PdfaValidationResult, VeraPdfValidator
 from app.services.storage_service import JobStore
+from signed_pdf import signed_pdf
 from test_document_metadata import runtime, who
 from test_document_metadata_approval import APPROVAL_SCOPES
 
@@ -93,6 +95,8 @@ def env(tmp_path, request):
         e.version, _ = e.types.publish(e.owner, draft.type_id, expected_revision=1, expected_context_revision=1,
                                        key="publish-package-0001")
         original = pdf_bytes(PAGES)
+        if getattr(request, "param", None) == "signed":
+            original = signed_pdf(original)
         e.job = e.jobs.create("contrato.pdf", original, owner_user_id=1)
         output = e.job.working_dir / "final-searchable-pdfa.pdf"
         if real:
@@ -237,6 +241,21 @@ def test_idempotent_replay_and_versioning(env):
     assert [p.package_id for p in e.packages.list(e.reader, e.job.job_id).items] == [first.package_id,
                                                                                       second.package_id]
     assert (e.job.working_dir / "packages" / first.package_id / "package.zip").is_file()  # Never overwritten.
+
+
+@pytest.mark.parametrize("env", ["signed"], indirect=True)
+def test_signed_original_travels_unchanged_and_cannot_be_dropped(env):
+    e = env
+    original = e.job.input_pdf_path.read_bytes()
+    failure(lambda: create(e, include_original=False), 409, "signed_original_required")
+    assert e.packages.list(e.reader, e.job.job_id).items == []
+    files = unzip(e, create(e).package)
+    assert files["original.pdf"] == original  # Byte-identical: the signature still verifies against it.
+    assert inspect_signatures(e.job.input_pdf_path).signed is True
+
+
+def test_unsigned_original_may_be_left_out(env):
+    assert "original.pdf" not in unzip(env, create(env, include_original=False).package)
 
 
 @pytest.mark.parametrize("status,reasons", [("failed", ("non_compliant",)), ("indeterminate", ("validator_timeout",)),

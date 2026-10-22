@@ -14,6 +14,7 @@ from app.config import settings
 from app.application import ApplicationError
 from app.services.capability_service import get_capability_service
 from app.models import OCRResult
+from app.services.pdf_signatures import inspect_signatures
 from app.results import (JobReport, OutputValidation, QualityReport, StageReport,
                          digest_file, package_version, persist_pages, persist_report)
 from app.services.easyocr_service import FallbackOcrService
@@ -204,6 +205,11 @@ class OcrOrchestrator:
                 compression_fallback=compression.get("fallback"))
             if compression.get("fallback"):
                 warnings.append(compression["fallback"])
+            signatures = inspect_signatures(job.input_pdf_path)
+            if signatures.signed is None:
+                warnings.append("input_signature_inspection_failed")
+            elif signatures.signed:
+                warnings.append("input_signed_signature_not_carried_to_output")
             pdfa = None
             if output_format == "pdfa":
                 checkpoint()
@@ -234,7 +240,7 @@ class OcrOrchestrator:
                 stages=stages, engines=engines, fallback_attempted=fallback_attempted,
                 used_fallback=used_fallback, warnings=warnings,
                 options_requested=job.options_requested, options_effective=options,
-                output_validation=validation,
+                output_validation=validation, input_signatures=signatures,
             )
             checkpoint()
             persist_report(job.working_dir, report)

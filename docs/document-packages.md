@@ -6,6 +6,7 @@ Um pacote é a forma local e interoperável de entregar um documento processado:
 
 - Trabalho concluído com `output_format=pdfa` e `pdfa_conformance=passed`; outros resultados recebem `409 package_requires_pdfa`.
 - Um snapshot de metadados **aprovado**. Sem `metadata_revision_id`, usa-se o aprovado mais recente; rascunho ou revisão desconhecida → `409 metadata_not_approved`.
+- Original assinado: se o PDF de entrada tem assinatura digital (campo `/Sig` com valor) ou certificação DocMDP, ou se a estrutura não pôde ser inspecionada, `include_original=false` → `409 signed_original_required`. O OCR sempre reescreve o arquivo, então a assinatura nunca passa para `document.pdf`; o que se preserva são os bytes do original, idênticos e conferidos pelo hash, em `original.pdf`. A detecção é estrutural e não verifica a validade da assinatura.
 - As fontes precisam corresponder ao snapshot: hash do PDF do OCR (relatório, validação anterior e snapshot), hash do original e hash do `pages.jsonl`. Qualquer divergência → `409 package_source_mismatch`, antes de escrever o PDF.
 
 ## Ordem de construção (fixa)

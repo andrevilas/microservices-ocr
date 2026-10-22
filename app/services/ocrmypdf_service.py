@@ -8,13 +8,16 @@ from pathlib import Path
 from app.config import settings
 from app.options import EffectiveOptions
 from app.services.cancellation import active, run_process
+from app.services.pdf_signatures import inspect_signatures
+
+INVALIDATE_SIGNATURES = "--invalidate-digital-signatures"
 
 
 def preset_arguments(profile: str, output_format: str) -> list[str]:
     """Fixed OCRmyPDF 16.x arguments per preset. No JBIG2 lossy, no rasterization, no resampling."""
     pdfa = output_format == "pdfa"
     args = ["--output-type", "pdfa-2" if pdfa else "pdf"]
-    if profile == "economic":  # experimental until benchmarked: lossy JPEG/PNG re-encoding
+    if profile == "economic":  # withdrawn (not homologated): kept to document what earlier jobs ran
         args += ["--optimize", "2", "--jpeg-quality", "75"]
     elif profile == "balanced":  # lossless optimizer; Ghostscript PDF/A conversion may still re-encode JPEG
         args += ["--optimize", "1"]
@@ -23,6 +26,12 @@ def preset_arguments(profile: str, output_format: str) -> list[str]:
     if pdfa and profile == "preservation":
         args += ["--pdfa-image-compression", "lossless"]
     return args
+
+
+def signature_arguments(input_pdf_path: Path) -> list[str]:
+    """OCRmyPDF refuses signed input. The derivative is a new, unsigned file (the original is kept byte for
+    byte), so allow it explicitly, also when the structure could not be inspected."""
+    return [INVALIDATE_SIGNATURES] if inspect_signatures(input_pdf_path).signed is not False else []
 
 
 class OcrmypdfService:
@@ -34,10 +43,12 @@ class OcrmypdfService:
         if options is not None:
             self._run(["--skip-text", "--output-type", "pdf", "--optimize", "0",
                        "--language", "+".join(options.languages), "--jobs", str(options.engine_jobs),
+                       *signature_arguments(input_pdf_path),
                        str(input_pdf_path), str(output_pdf_path)], timeout=options.subprocess_timeout_seconds)
             return
         self._run(
             [
+                *signature_arguments(input_pdf_path),
                 "--skip-text",
                 "--output-type",
                 "pdf",
@@ -52,21 +63,13 @@ class OcrmypdfService:
                       options: EffectiveOptions | None = None) -> dict | None:
         """Final conversion/compression. With options, returns the effective preset arguments."""
         if options is not None:
-            preset = preset_arguments(options.compression_profile, options.output_format)
+            preset = [*preset_arguments(options.compression_profile, options.output_format),
+                      *signature_arguments(input_pdf_path)]
             common = ["--skip-text", "--language", "+".join(options.languages), "--jobs", str(options.engine_jobs)]
-            fallback = None
-            try:
-                self._run([*common, *preset, str(input_pdf_path), str(output_pdf_path)],
-                          timeout=options.subprocess_timeout_seconds)
-            except RuntimeError as exc:
-                # optimize 2 needs pngquant; degrade to the lossless optimizer and record it.
-                if options.compression_profile != "economic" or "pngquant" not in str(exc).lower():
-                    raise
-                preset = preset_arguments("balanced", options.output_format)
-                fallback = "pngquant_unavailable_used_optimize_1"
-                self._run([*common, *preset, str(input_pdf_path), str(output_pdf_path)],
-                          timeout=options.subprocess_timeout_seconds)
-            return {"arguments": preset, "fallback": fallback}
+            self._run([*common, *preset, str(input_pdf_path), str(output_pdf_path)],
+                      timeout=options.subprocess_timeout_seconds)
+            # No homologated preset needs pngquant, so there is no fallback to record any more.
+            return {"arguments": preset, "fallback": None}
         try:
             self._run(self._optimize_args(input_pdf_path, output_pdf_path, settings.final_pdf_optimize_level))
         except RuntimeError as exc:
@@ -78,6 +81,7 @@ class OcrmypdfService:
     @staticmethod
     def _optimize_args(input_pdf_path: Path, output_pdf_path: Path, optimize_level: int) -> list[str]:
         return [
+            *signature_arguments(input_pdf_path),
             "--skip-text",
             "--output-type",
             settings.final_output_type,

@@ -31,11 +31,22 @@ OCRmyPDF 16.x com `--output-type pdfa-2` explícito para PDF/A (`pdf` para PDF p
 | Preset | Argumentos | Observação |
 | --- | --- | --- |
 | `none` | `--optimize 0` | compatível com versões anteriores |
-| `balanced` (padrão) | `--optimize 1` | otimizador sem perdas, mas a conversão PDF/A do Ghostscript pode recodificar JPEG: **não é totalmente sem perdas** |
-| `economic` | `--optimize 2 --jpeg-quality 75` | **experimental** até benchmark; sem `pngquant`, cai para `--optimize 1` e registra `pngquant_unavailable_used_optimize_1` |
-| `preservation` | `--optimize 0` + `--pdfa-image-compression lossless` (só PDF/A) | não promete identidade de bytes da derivada |
+| `balanced` (padrão) | `--optimize 1` | otimizador sem perdas; no benchmark as imagens saíram pixel a pixel iguais, mas isso não é garantia para todo PDF |
+| `economic` | `--optimize 2 --jpeg-quality 75` | **retirado**: reprovou na homologação (legibilidade em digitalização colorida). Recusado com `422 compression_profile_unavailable` |
+| `preservation` | `--optimize 0` + `--pdfa-image-compression lossless` (só PDF/A) | imagens sem perdas; não promete identidade de bytes da derivada |
 
-Os argumentos efetivos e o fallback ficam em `output_validation.compression_arguments`/`compression_fallback`. Nenhum preset altera a resolução nem garante 300 dpi.
+`none`, `balanced` e `preservation` estão homologados para esta versão de preset. Corpus, critérios, resultados e a decisão sobre o `economic` estão em [preset-homologation.md](preset-homologation.md). As capacidades listam só os homologados; `withdrawn_compression_profiles` lista os retirados e `experimental_compression_profiles` fica vazio.
+
+Os argumentos efetivos ficam em `output_validation.compression_arguments`. `compression_fallback` só aparece em relatórios antigos do `economic` (`pngquant_unavailable_used_optimize_1`); nenhum preset homologado tem fallback. Nenhum preset altera a resolução nem garante 300 dpi.
+
+## Originais assinados
+
+- O relatório traz `input_signatures`: `signed`, `signature_count`, `certified` (DocMDP) e o método `acroform-sig-fields-v1`. Conta campos `/Sig` com valor `/V`, incluindo `/FT` herdado na árvore de campos. A detecção é estrutural: a assinatura **não é verificada**.
+- `signed=true` acrescenta o aviso `input_signed_signature_not_carried_to_output`. Se a estrutura não puder ser inspecionada, `signed=null` e o aviso `input_signature_inspection_failed`; para a preservação, isso conta como assinado.
+- O OCRmyPDF recusa entrada assinada (`DigitalSignatureError`). Até esta versão, um PDF assinado terminava em `processing_failed`. Agora, quando a entrada de uma chamada do OCRmyPDF está assinada ou não pôde ser inspecionada, o serviço passa `--invalidate-digital-signatures`, que fica registrado em `output_validation.compression_arguments`.
+- O OCR sempre gera um arquivo novo: a assinatura nunca passa para a derivada e `passed` não afirma nada sobre ela. O original fica **byte a byte idêntico** no trabalho (hash em `input.sha256`) até a expiração dos artefatos.
+- Pacote: original assinado ou não inspecionável exige `include_original=true`; caso contrário, `409 signed_original_required`. O `original.pdf` do pacote são os bytes exatos da entrada (ver `docs/document-packages.md`).
+- Relatórios gravados antes disso não têm o campo (`input_signatures=null`) e continuam válidos. Fixtures reais de três versões anteriores de produção ficam em `tests/fixtures/legacy_reports/`.
 
 ## UI
 
@@ -59,6 +70,6 @@ Documentos sintéticos (nenhum dado original). Duas evidências distintas:
 ## Limites
 
 - Um descendente que crie a própria sessão escapa do `killpg`.
-- A derivada não preserva assinaturas digitais do original; `passed` não declara isso.
+- A derivada não preserva assinaturas digitais do original; `passed` não declara isso. O que se preserva é o original (seção acima).
 - Testes unitários usam veraPDF/OCRmyPDF falsos e só comprovam regras do wrapper e da integração. Testes com engines simuladas que não tratam de PDF/A fixam `FINAL_OUTPUT_TYPE=pdf` localmente; os testes PDF/A explícitos ficam em `tests/test_pdfa_integration.py`.
-- A evidência real acima não constitui benchmark completo nem homologação de produção. O preset `economic` continua **experimental**. O harness de 8 casos passou com limite de 2 GiB de memória (pico ~249 MiB), mas o corpus é pequeno: isso não dimensiona documentos de 300 páginas nem homologa o TrueNAS.
+- A evidência real acima não constitui benchmark completo; a homologação dos presets está em [preset-homologation.md](preset-homologation.md), com seus limites. O harness de 8 casos passou com limite de 2 GiB de memória (pico ~249 MiB), mas o corpus é pequeno: isso não dimensiona documentos de 300 páginas nem homologa o TrueNAS.

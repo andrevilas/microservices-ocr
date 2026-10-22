@@ -34,7 +34,7 @@ def capabilities(pdfa):
             "engines": {"ocrmypdf": {"available": True, "version": "16.13.0", "reasons": []}, "verapdf": verapdf},
             "languages": ["eng", "por"], "processing_modes": ["extract_text", "preserve_existing_text"],
             "output_formats": (["pdfa", "pdf_searchable"] if pdfa else ["pdf_searchable"]),
-            "compression_profiles": ["none", "balanced", "economic", "preservation"],
+            "compression_profiles": ["none", "balanced", "preservation"],
             "fallback_policies": ["disabled"], "fallback_language_sets": [],
             "defaults": PDFA_OPTIONS, "limits": {"text_response_max_chars": 20000},
             "probe_cache_seconds": 60, "warnings": []}

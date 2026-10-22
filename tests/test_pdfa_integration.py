@@ -37,9 +37,9 @@ def engines():
     return engine, fallback
 
 
-def run_job(system, options, validator=None, **kwargs):
+def run_job(system, options, validator=None, data=None, **kwargs):
     from test_results import pdf
-    receipt = upload(system, data=pdf(["the original document has a name and a date for the page"]))
+    receipt = upload(system, data=data or pdf(["the original document has a name and a date for the page"]))
     response = submit(system, receipt, options)
     assert response.status_code == 202, response.text
     job_id = response.json()["job_id"]
@@ -194,6 +194,27 @@ def test_searchable_pdf_is_not_validated_and_completes(system, probes):
     assert report.output.sha256 == hashlib.sha256(published).hexdigest()
 
 
+def test_signed_input_is_reported_and_left_untouched(system, probes):
+    from signed_pdf import signed_pdf
+    from test_results import pdf
+    original = signed_pdf(pdf(["the original document has a name and a date for the page"]), certified=True)
+    job_id, result = run_job(system, {"languages": ["eng"]}, stub("passed", ("compliant",)), data=original)
+    assert result is not None
+    report = JobApplication(system.jobs).report(READER, job_id)
+    assert report.input_signatures.signed and report.input_signatures.certified
+    assert report.input_signatures.signature_count == 1
+    assert "input_signed_signature_not_carried_to_output" in report.warnings
+    assert system.jobs.get_snapshot(job_id).input_pdf_path.read_bytes() == original
+    assert report.input.sha256 == hashlib.sha256(original).hexdigest()
+
+
+def test_unsigned_input_reports_no_signature(system, probes):
+    job_id, _ = run_job(system, {"languages": ["eng"]}, stub("passed", ("compliant",)))
+    report = JobApplication(system.jobs).report(READER, job_id)
+    assert report.input_signatures.signed is False
+    assert not any(w.startswith("input_sign") for w in report.warnings)
+
+
 def legacy_job(system):
     from test_results import pdf
     return system.jobs.create(filename="legacy.pdf", payload=pdf(["the original document has a name and a date"]),
@@ -271,20 +292,28 @@ def test_preset_arguments_are_fixed_and_conservative(profile, fmt, expected):
         assert forbidden not in args
 
 
-def test_economic_falls_back_without_pngquant_and_records_it(system, probes, monkeypatch, tmp_path):
+def test_withdrawn_economic_preset_is_refused_at_admission_and_by_the_worker(system, probes):
     _, _, service = probes
     from app.options import ProcessingOptions
-    options = service.resolve(ProcessingOptions(languages=("eng",), compression_profile="economic"))
+    with pytest.raises(ApplicationError) as caught:
+        service.resolve(ProcessingOptions(languages=("eng",), compression_profile="economic"))
+    assert (caught.value.status, caught.value.code) == (422, "compression_profile_unavailable")
+    receipt = upload(system)
+    response = submit(system, receipt, {"languages": ["eng"], "compression_profile": "economic"})
+    assert response.status_code == 422 and response.json()["error"]["code"] == "compression_profile_unavailable"
+
+
+def test_optimizer_records_preset_arguments_without_fallback(monkeypatch, tmp_path, probes):
+    _, _, service = probes
+    from app.options import ProcessingOptions
     calls = []
-    def run(self, args, *, timeout=None):
-        calls.append(args)
-        if "2" == args[args.index("--optimize") + 1]:
-            raise RuntimeError("pngquant not found")
-    monkeypatch.setattr(OcrmypdfService, "_run", run)
+    monkeypatch.setattr(OcrmypdfService, "_run", lambda self, args, *, timeout=None: calls.append(args))
+    options = service.resolve(ProcessingOptions(languages=("eng",)))
+    from test_results import pdf
+    (tmp_path / "in.pdf").write_bytes(pdf(["unsigned input"]))
     effective = OcrmypdfService().optimize_pdfa(tmp_path / "in.pdf", tmp_path / "out.pdf", options)
-    assert effective == {"arguments": ["--output-type", "pdfa-2", "--optimize", "1"],
-                         "fallback": "pngquant_unavailable_used_optimize_1"}
-    assert len(calls) == 2
+    assert effective == {"arguments": ["--output-type", "pdfa-2", "--optimize", "1"], "fallback": None}
+    assert len(calls) == 1
 
 
 def test_capabilities_report_validator_reason_without_paths(system, probes, monkeypatch):
@@ -296,8 +325,9 @@ def test_capabilities_report_validator_reason_without_paths(system, probes, monk
     assert capabilities.engines["verapdf"].reasons == ["unsupported_platform"]
     assert capabilities.output_formats == ["pdf_searchable"]
     assert "pdfa_validator_unavailable_pdfa_not_offered" in capabilities.warnings
-    assert capabilities.compression_profiles == ["none", "economic", "balanced", "preservation"]
-    assert capabilities.experimental_compression_profiles == ["economic"]
+    assert capabilities.compression_profiles == ["none", "balanced", "preservation"]
+    assert capabilities.experimental_compression_profiles == []
+    assert capabilities.withdrawn_compression_profiles == ["economic"]
     monkeypatch.setattr(pdfa_validator, "_PLATFORM", "linux")
     monkeypatch.setattr(settings, "verapdf_executable", None)
     assert service.snapshot(refresh=True).engines["verapdf"].reasons == ["validator_not_configured"]

@@ -50,8 +50,8 @@ permite preparar upload, submeter uma referência e recuperar texto e artefato.
 
 ### Catálogo (contextos e tipos documentais) — HTTP e MCP
 
-Contrato atual: HTTP `1.11.0` com exatamente 77 operações (44 anteriores, incluindo
-14 de catálogo, mais 15 de documentos, 10 de entrega RAG, 4 de pacotes e 4 de [extração assistida](llm-extraction.md)) e MCP `0.9.0` com exatamente 62 ferramentas:
+Contrato atual: HTTP `1.12.0` com exatamente 77 operações (44 anteriores, incluindo
+14 de catálogo, mais 15 de documentos, 10 de entrega RAG, 4 de pacotes e 4 de [extração assistida](llm-extraction.md)) e MCP `0.10.0` com exatamente 62 ferramentas:
 20 legadas, 14 de catálogo, 12 de documentos, 3 de pacotes, 4 de extração e 9 de [entrega RAG](rag-api-mcp.md); 39 leituras e 23 escritas. A tabela
 acima lista só o subconjunto legado (20 tools; histórico: 12 leituras e 8 escritas).
 As 14 operações de catálogo (tag `Catalog`) estão implementadas em HTTP e MCP, e a
