@@ -13,7 +13,7 @@ from app.application import ErrorResponse
 from app.observability import request_id_var
 
 logger = logging.getLogger(__name__)
-API_VERSION = "1.11.0"
+API_VERSION = "1.12.0"
 
 
 def is_v1(path: str) -> bool:

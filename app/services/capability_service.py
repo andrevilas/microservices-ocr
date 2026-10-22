@@ -10,7 +10,7 @@ import time
 from threading import Lock
 
 from app.config import settings
-from app.options import COMPRESSION_PRESET_VERSION, Capabilities, EffectiveOptions, EngineCapability, ProcessingOptions, ResolvedOptions
+from app.options import COMPRESSION_PRESET_VERSION, HOMOLOGATED_COMPRESSION, Capabilities, EffectiveOptions, EngineCapability, ProcessingOptions, ResolvedOptions
 from app.results import MAX_PAGE_CHARS, MAX_TOTAL_CHARS, package_version
 
 
@@ -134,7 +134,7 @@ class CapabilityService:
                                                reasons=[] if fallback_ready else ["dependencies_or_local_pt_en_models_unavailable"])
         engines["verapdf"] = self._probe_verapdf()
         warnings = ["probe_is_not_ocr_homologation", "defaults_may_be_unavailable",
-                    "extract_text_does_not_recognize_scans", "economic_compression_is_experimental"]
+                    "extract_text_does_not_recognize_scans"]
         pdfa_ready = ready and engines["verapdf"].available
         if not engines["verapdf"].available:
             # PDF/A is not offered (and is rejected at admission) until a validator is available.
@@ -143,7 +143,7 @@ class CapabilityService:
             engines=engines, languages=languages if ready else [],
             processing_modes=["extract_text", "preserve_existing_text"] if ready else ["extract_text"],
             output_formats=["pdf_searchable", "pdfa"] if pdfa_ready else ["pdf_searchable"],
-            compression_profiles=["none", "economic", "balanced", "preservation"] if ready else ["none"],
+            compression_profiles=list(HOMOLOGATED_COMPRESSION) if ready else ["none"],
             fallback_policies=["disabled", "if_low_quality"] if ready and fallback_ready and languages == ["eng", "por"] else ["disabled"],
             fallback_language_sets=[["eng", "por"]] if fallback_ready else [],
             defaults=ProcessingOptions().resolved(), limits={}, warnings=warnings,
@@ -173,6 +173,10 @@ class CapabilityService:
             raise ApplicationError(503, "ocr_unavailable", "OCR dependencies are unavailable.")
         if not options.languages or not set(options.languages) <= set(capabilities.languages):
             raise ApplicationError(422, "language_unavailable", "Requested OCR language is not installed or supported.")
+        if options.compression_profile not in capabilities.compression_profiles:
+            # Also refuses, at the worker's revalidation, jobs admitted before a preset was withdrawn.
+            raise ApplicationError(422, "compression_profile_unavailable",
+                                   "Requested compression preset is not homologated or not available.")
         if options.output_format == "pdfa" and "pdfa" not in capabilities.output_formats:
             # Checked before admission and again by the worker (refresh=True) before processing.
             raise ApplicationError(503, "pdfa_validator_unavailable", "PDF/A output requires an available veraPDF validator.")

@@ -15,7 +15,7 @@
   const OPTION_LABELS = {extract_text: "Extrair texto existente", preserve_existing_text: "OCR preservando texto existente",
     eng: "Inglês", por: "Português", "eng+por": "Português e inglês", pdf_searchable: "PDF pesquisável",
     pdfa: "PDF/A-2b (validação obrigatória)", none: "Sem compactação", balanced: "Compactação equilibrada",
-    economic: "Compactação econômica (experimental)", preservation: "Preservação (imagens sem perdas)",
+    economic: "Compactação econômica (retirada)", preservation: "Preservação (imagens sem perdas)",
     disabled: "Desativado", if_low_quality: "Usar se a qualidade for baixa"};
   const WARNINGS = {
     quality_is_heuristic_not_accuracy: "A qualidade é uma heurística; não mede precisão.",

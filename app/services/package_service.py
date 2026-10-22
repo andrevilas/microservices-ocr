@@ -31,6 +31,7 @@ from app.package_models import (
 )
 from app.retention_models import retention_info
 from app.results import digest_file
+from app.services.pdf_signatures import inspect_signatures
 from app.services.package_xmp import FIELD_TYPE, PROPERTIES, XmpField, XmpProjection, declared_properties, extract, inject
 from app.services.pdfa_validator import PROFILE_2B, REASON_NOT_CONFIGURED, build_validator, unavailable_result
 
@@ -230,6 +231,11 @@ class DocumentPackageService:
     def create(self, principal: Principal, job_id: str, body: CreatePackageInput, *, checkpoint=None) -> PackageReceipt:
         job = self._job(principal, job_id)
         owner = job.effective_owner
+        if (not body.include_original and job.input_pdf_path.exists()
+                and inspect_signatures(job.input_pdf_path).signed is not False):
+            # The derivative cannot carry the signature: the signed bytes must travel unchanged with it.
+            raise _failed(409, "signed_original_required",
+                          "The original PDF is digitally signed (or could not be inspected) and must be included.")
         revisions = self.document.list_revisions(principal, job_id)
         approved = [r for r in revisions if r.state == "approved"]
         if body.metadata_revision_id is not None:

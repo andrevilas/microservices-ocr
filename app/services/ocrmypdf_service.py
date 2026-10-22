@@ -14,7 +14,7 @@ def preset_arguments(profile: str, output_format: str) -> list[str]:
     """Fixed OCRmyPDF 16.x arguments per preset. No JBIG2 lossy, no rasterization, no resampling."""
     pdfa = output_format == "pdfa"
     args = ["--output-type", "pdfa-2" if pdfa else "pdf"]
-    if profile == "economic":  # experimental until benchmarked: lossy JPEG/PNG re-encoding
+    if profile == "economic":  # withdrawn (not homologated): kept to document what earlier jobs ran
         args += ["--optimize", "2", "--jpeg-quality", "75"]
     elif profile == "balanced":  # lossless optimizer; Ghostscript PDF/A conversion may still re-encode JPEG
         args += ["--optimize", "1"]
@@ -54,19 +54,10 @@ class OcrmypdfService:
         if options is not None:
             preset = preset_arguments(options.compression_profile, options.output_format)
             common = ["--skip-text", "--language", "+".join(options.languages), "--jobs", str(options.engine_jobs)]
-            fallback = None
-            try:
-                self._run([*common, *preset, str(input_pdf_path), str(output_pdf_path)],
-                          timeout=options.subprocess_timeout_seconds)
-            except RuntimeError as exc:
-                # optimize 2 needs pngquant; degrade to the lossless optimizer and record it.
-                if options.compression_profile != "economic" or "pngquant" not in str(exc).lower():
-                    raise
-                preset = preset_arguments("balanced", options.output_format)
-                fallback = "pngquant_unavailable_used_optimize_1"
-                self._run([*common, *preset, str(input_pdf_path), str(output_pdf_path)],
-                          timeout=options.subprocess_timeout_seconds)
-            return {"arguments": preset, "fallback": fallback}
+            self._run([*common, *preset, str(input_pdf_path), str(output_pdf_path)],
+                      timeout=options.subprocess_timeout_seconds)
+            # No homologated preset needs pngquant, so there is no fallback to record any more.
+            return {"arguments": preset, "fallback": None}
         try:
             self._run(self._optimize_args(input_pdf_path, output_pdf_path, settings.final_pdf_optimize_level))
         except RuntimeError as exc:

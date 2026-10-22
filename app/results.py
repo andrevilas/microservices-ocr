@@ -61,6 +61,14 @@ class OutputValidation(BaseModel):
     compression_fallback: str | None = None
 
 
+class InputSignatures(BaseModel):
+    """Structural detection on the input; signatures are never verified nor carried into the derivative."""
+    method: Literal["acroform-sig-fields-v1"] = "acroform-sig-fields-v1"
+    signed: bool | None = Field(description="None when the structure could not be inspected; treated as signed.")
+    signature_count: int = Field(default=0, ge=0)
+    certified: bool = False
+
+
 class JobReport(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
     job_id: str
@@ -79,6 +87,8 @@ class JobReport(BaseModel):
     warnings: list[str]
     options_requested: ProcessingOptions | None = None
     options_effective: EffectiveOptions | None = None
+    # None for reports written before signature detection existed.
+    input_signatures: InputSignatures | None = None
 
 
 class TextChunk(BaseModel):

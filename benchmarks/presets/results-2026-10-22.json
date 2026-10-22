@@ -1,0 +1,1511 @@
+{
+ "criteria_v1_superseded": {
+  "text_layer_preserved": "extracted text identical to the pre-compression OCR text",
+  "readability": "re-OCR CER at most 0.01 above re-OCR of the rendered input, per scanned page",
+  "visual_fidelity": "PSNR against the input rendering at least 30 dB on every page"
+ },
+ "criteria": {
+  "pdfa_passed": "veraPDF PDF/A-2b passed on the final bytes (validated hash == file hash)",
+  "pages_preserved": "same page count and exactly the same page sizes as the input",
+  "text_layer": "extracted text identical to the preservation output's (NFC, collapsed spaces)",
+  "readability": "re-OCR CER at most 0.01 above re-OCR of the preservation rendering, per scanned page",
+  "visual_fidelity": "PSNR of the 150 dpi rendering against the preservation rendering at least 30 dB",
+  "lossless": "preservation only: every image decodes to exactly the input's pixels",
+  "resources": "peak RSS of the conversion at most 1536 MiB",
+  "economic_purpose": "economic only: smaller than balanced on every case with images (at most +1% without), at least 15% smaller in median on scanned cases"
+ },
+ "cases": [
+  {
+   "name": "digital",
+   "description": "born-digital text, 2 pages",
+   "scanned_pages": []
+  },
+  {
+   "name": "scan-300-gray",
+   "description": "grayscale scan, 300 dpi, JPEG",
+   "scanned_pages": [
+    1
+   ]
+  },
+  {
+   "name": "scan-150-lowres",
+   "description": "low-resolution grayscale scan, 150 dpi",
+   "scanned_pages": [
+    1
+   ]
+  },
+  {
+   "name": "scan-small-print",
+   "description": "300 dpi scan with small (about 8 pt) print",
+   "scanned_pages": [
+    1
+   ]
+  },
+  {
+   "name": "scan-color-stamp",
+   "description": "color scan with logo, gradient, pen stroke and red stamp",
+   "scanned_pages": [
+    1
+   ]
+  },
+  {
+   "name": "scan-table",
+   "description": "300 dpi scan of a ruled table",
+   "scanned_pages": [
+    1
+   ]
+  },
+  {
+   "name": "scan-a3",
+   "description": "large A3 scan, 300 dpi",
+   "scanned_pages": [
+    1
+   ]
+  },
+  {
+   "name": "scan-bilevel",
+   "description": "bilevel (fax-like) 300 dpi PNG scan",
+   "scanned_pages": [
+    1
+   ]
+  },
+  {
+   "name": "mixed",
+   "description": "born-digital page followed by a color scan",
+   "scanned_pages": [
+    2
+   ]
+  },
+  {
+   "name": "already-pdfa",
+   "description": "balanced PDF/A output fed back as input",
+   "scanned_pages": []
+  }
+ ],
+ "results": [
+  {
+   "case": "digital",
+   "preset": "preservation",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0",
+    "--pdfa-image-compression",
+    "lossless"
+   ],
+   "exit": 0,
+   "seconds": 0.93,
+   "peak_rss_mb": 67.3,
+   "input_bytes": 2471,
+   "ocr_bytes": 2975,
+   "has_images": false,
+   "output_bytes": 53835,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 35.02,
+     "psnr_db": 99.0
+    },
+    {
+     "page": 2,
+     "pipeline_psnr_db": 35.25,
+     "psnr_db": 99.0
+    }
+   ],
+   "sha256": "772d5bb1862eb4827cbc68b0a170796f85eec63869b3217dbb962ebc042d2eff",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "digital",
+   "preset": "none",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0"
+   ],
+   "exit": 0,
+   "seconds": 0.94,
+   "peak_rss_mb": 67.2,
+   "input_bytes": 2471,
+   "ocr_bytes": 2975,
+   "has_images": false,
+   "output_bytes": 53726,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 35.02,
+     "psnr_db": 99.0
+    },
+    {
+     "page": 2,
+     "pipeline_psnr_db": 35.25,
+     "psnr_db": 99.0
+    }
+   ],
+   "sha256": "d0a0fa1d1a4da1aafc00345807331368ae36e2e951e9ca75bd5b9f23c72def1a",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "digital",
+   "preset": "balanced",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "1"
+   ],
+   "exit": 0,
+   "seconds": 0.93,
+   "peak_rss_mb": 67.2,
+   "input_bytes": 2471,
+   "ocr_bytes": 2975,
+   "has_images": false,
+   "output_bytes": 53704,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 35.02,
+     "psnr_db": 99.0
+    },
+    {
+     "page": 2,
+     "pipeline_psnr_db": 35.25,
+     "psnr_db": 99.0
+    }
+   ],
+   "sha256": "25c27e75d42d95d4db339fce30f651ffde97ff9a7e330b5bd8ce93cabb22a959",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "digital",
+   "preset": "economic",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "2",
+    "--jpeg-quality",
+    "75"
+   ],
+   "exit": 0,
+   "seconds": 0.96,
+   "peak_rss_mb": 67.3,
+   "input_bytes": 2471,
+   "ocr_bytes": 2975,
+   "has_images": false,
+   "output_bytes": 53704,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 35.02,
+     "psnr_db": 99.0
+    },
+    {
+     "page": 2,
+     "pipeline_psnr_db": 35.25,
+     "psnr_db": 99.0
+    }
+   ],
+   "sha256": "227a373e817f3747e76ccedc46adfb95a20a52e3911a1d16e09368ff7256bc06",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "already-pdfa",
+   "preset": "preservation",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0",
+    "--pdfa-image-compression",
+    "lossless"
+   ],
+   "exit": 0,
+   "seconds": 0.9,
+   "peak_rss_mb": 67.1,
+   "input_bytes": 53704,
+   "ocr_bytes": 53711,
+   "has_images": false,
+   "output_bytes": 53873,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 99.0,
+     "psnr_db": 99.0
+    },
+    {
+     "page": 2,
+     "pipeline_psnr_db": 99.0,
+     "psnr_db": 99.0
+    }
+   ],
+   "sha256": "96b884668518a562cda6116ae9745a5adcc604d73e7f3382ca30a81e956fd6d5",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "already-pdfa",
+   "preset": "none",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0"
+   ],
+   "exit": 0,
+   "seconds": 0.91,
+   "peak_rss_mb": 66.8,
+   "input_bytes": 53704,
+   "ocr_bytes": 53711,
+   "has_images": false,
+   "output_bytes": 53755,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 99.0,
+     "psnr_db": 99.0
+    },
+    {
+     "page": 2,
+     "pipeline_psnr_db": 99.0,
+     "psnr_db": 99.0
+    }
+   ],
+   "sha256": "95d94c261e69303c6dc5cc8ff88ab292337f23f8319e8212290405b166af7316",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "already-pdfa",
+   "preset": "balanced",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "1"
+   ],
+   "exit": 0,
+   "seconds": 0.93,
+   "peak_rss_mb": 66.6,
+   "input_bytes": 53704,
+   "ocr_bytes": 53711,
+   "has_images": false,
+   "output_bytes": 53735,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 99.0,
+     "psnr_db": 99.0
+    },
+    {
+     "page": 2,
+     "pipeline_psnr_db": 99.0,
+     "psnr_db": 99.0
+    }
+   ],
+   "sha256": "9d99aa6861027e748e43a32d19439f90ec1e0aa02f755d9e8ce8525bb68e7679",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "already-pdfa",
+   "preset": "economic",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "2",
+    "--jpeg-quality",
+    "75"
+   ],
+   "exit": 0,
+   "seconds": 0.91,
+   "peak_rss_mb": 67.1,
+   "input_bytes": 53704,
+   "ocr_bytes": 53711,
+   "has_images": false,
+   "output_bytes": 53735,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 99.0,
+     "psnr_db": 99.0
+    },
+    {
+     "page": 2,
+     "pipeline_psnr_db": 99.0,
+     "psnr_db": 99.0
+    }
+   ],
+   "sha256": "ec1ea42d3bcfc4901a26472b4ff822dd35b90ce897d045752cb6b0ae5f6f9931",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-300-gray",
+   "preset": "preservation",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0",
+    "--pdfa-image-compression",
+    "lossless"
+   ],
+   "exit": 0,
+   "seconds": 0.98,
+   "peak_rss_mb": 79.5,
+   "input_bytes": 917572,
+   "ocr_bytes": 920950,
+   "has_images": true,
+   "output_bytes": 740732,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 33.6,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "fcd8fe9c353b5428ea20f513d935744c90755a56778a4343a11533dc1921cf3a",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-300-gray",
+   "preset": "none",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0"
+   ],
+   "exit": 0,
+   "seconds": 0.98,
+   "peak_rss_mb": 79.3,
+   "input_bytes": 917572,
+   "ocr_bytes": 920950,
+   "has_images": true,
+   "output_bytes": 740732,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 33.6,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "693d65e9d304bcc7960c6ef71af29d33dc4d09bd2cf8e4dae197e62b7860ef67",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-300-gray",
+   "preset": "balanced",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "1"
+   ],
+   "exit": 0,
+   "seconds": 1.62,
+   "peak_rss_mb": 89.9,
+   "input_bytes": 917572,
+   "ocr_bytes": 920950,
+   "has_images": true,
+   "output_bytes": 670339,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 33.6,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "9205e7fbe55cf97ddc479123f5377f0159989d135240c1818d1032ff186a2b66",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-300-gray",
+   "preset": "economic",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "2",
+    "--jpeg-quality",
+    "75"
+   ],
+   "exit": 0,
+   "seconds": 1.07,
+   "peak_rss_mb": 93.4,
+   "input_bytes": 917572,
+   "ocr_bytes": 920950,
+   "has_images": true,
+   "output_bytes": 199914,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 33.53,
+     "psnr_db": 49.09,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "fdaa3ed39bb3d92db905579ebdaf45c5cdf17226481b45f001a0b8d3b2158cc9",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": false
+  },
+  {
+   "case": "scan-150-lowres",
+   "preset": "preservation",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0",
+    "--pdfa-image-compression",
+    "lossless"
+   ],
+   "exit": 0,
+   "seconds": 0.94,
+   "peak_rss_mb": 69.4,
+   "input_bytes": 248056,
+   "ocr_bytes": 251399,
+   "has_images": true,
+   "output_bytes": 205132,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 31.21,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0029,
+     "cer": 0.0029
+    }
+   ],
+   "sha256": "e174e7a952bb4b0f842862e23cd8e8bbc7942e5f47493f4ec9852896d4795399",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-150-lowres",
+   "preset": "none",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0"
+   ],
+   "exit": 0,
+   "seconds": 0.95,
+   "peak_rss_mb": 69.6,
+   "input_bytes": 248056,
+   "ocr_bytes": 251399,
+   "has_images": true,
+   "output_bytes": 205132,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 31.21,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0029,
+     "cer": 0.0029
+    }
+   ],
+   "sha256": "947d6de0ff4f9b869af49df75df723cddc81fcb19b2fd7467b0655fc061bda3e",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-150-lowres",
+   "preset": "balanced",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "1"
+   ],
+   "exit": 0,
+   "seconds": 1.12,
+   "peak_rss_mb": 72.2,
+   "input_bytes": 248056,
+   "ocr_bytes": 251399,
+   "has_images": true,
+   "output_bytes": 189371,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 31.21,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0029,
+     "cer": 0.0029
+    }
+   ],
+   "sha256": "36b63e06d04498b12ef01221ee36512aa0ddc8a9351e4c1b5e9790ee90805a36",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-150-lowres",
+   "preset": "economic",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "2",
+    "--jpeg-quality",
+    "75"
+   ],
+   "exit": 0,
+   "seconds": 0.97,
+   "peak_rss_mb": 74.1,
+   "input_bytes": 248056,
+   "ocr_bytes": 251399,
+   "has_images": true,
+   "output_bytes": 65279,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 31.14,
+     "psnr_db": 46.07,
+     "pipeline_cer_input": 0.0029,
+     "cer": 0.0029
+    }
+   ],
+   "sha256": "f7ac943d32b63a7590a01e2437b031017f6b285e6c2f4068be139483a86a8188",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": false
+  },
+  {
+   "case": "scan-small-print",
+   "preset": "preservation",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0",
+    "--pdfa-image-compression",
+    "lossless"
+   ],
+   "exit": 0,
+   "seconds": 1.03,
+   "peak_rss_mb": 79.9,
+   "input_bytes": 1031304,
+   "ocr_bytes": 1035930,
+   "has_images": true,
+   "output_bytes": 832680,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 30.53,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "7a45fc33d29d4ecd623c760d714920c32de2dd3913ba4a295cc65a6196962458",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-small-print",
+   "preset": "none",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0"
+   ],
+   "exit": 0,
+   "seconds": 1.08,
+   "peak_rss_mb": 79.3,
+   "input_bytes": 1031304,
+   "ocr_bytes": 1035930,
+   "has_images": true,
+   "output_bytes": 832680,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 30.53,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "68184a5a8fb98a437a1d235a49dd09bd85e975521b00340f04f08753f96c5693",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-small-print",
+   "preset": "balanced",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "1"
+   ],
+   "exit": 0,
+   "seconds": 1.66,
+   "peak_rss_mb": 90.4,
+   "input_bytes": 1031304,
+   "ocr_bytes": 1035930,
+   "has_images": true,
+   "output_bytes": 770537,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 30.53,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "6610b604a8100f91afaeed5d4b5495ba8caa80249776841c65860679569b45c8",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-small-print",
+   "preset": "economic",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "2",
+    "--jpeg-quality",
+    "75"
+   ],
+   "exit": 0,
+   "seconds": 1.12,
+   "peak_rss_mb": 92.8,
+   "input_bytes": 1031304,
+   "ocr_bytes": 1035930,
+   "has_images": true,
+   "output_bytes": 261208,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 30.49,
+     "psnr_db": 48.6,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "fe48fe471617dc3a7aafebd01a1ff8fa78cdc1c2c0b1c369b84eb25d5c82e5cc",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": false
+  },
+  {
+   "case": "scan-color-stamp",
+   "preset": "preservation",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0",
+    "--pdfa-image-compression",
+    "lossless"
+   ],
+   "exit": 0,
+   "seconds": 1.04,
+   "peak_rss_mb": 99.6,
+   "input_bytes": 1070271,
+   "ocr_bytes": 1074671,
+   "has_images": true,
+   "output_bytes": 862998,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 33.3,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0578,
+     "cer": 0.0289
+    }
+   ],
+   "sha256": "22b70e1342e596ed6d32cf758defb84d1d8ca0f8cf34b85cd09ee7e63cd51149",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-color-stamp",
+   "preset": "none",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0"
+   ],
+   "exit": 0,
+   "seconds": 1.03,
+   "peak_rss_mb": 98.9,
+   "input_bytes": 1070271,
+   "ocr_bytes": 1074671,
+   "has_images": true,
+   "output_bytes": 862998,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 33.3,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0578,
+     "cer": 0.0289
+    }
+   ],
+   "sha256": "a40287dc59e1f3d58ab6c7e768fa056341973f2f283f1c501a1207300573dfa2",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-color-stamp",
+   "preset": "balanced",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "1"
+   ],
+   "exit": 0,
+   "seconds": 2.14,
+   "peak_rss_mb": 126.4,
+   "input_bytes": 1070271,
+   "ocr_bytes": 1074671,
+   "has_images": true,
+   "output_bytes": 787412,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 33.3,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0578,
+     "cer": 0.0289
+    }
+   ],
+   "sha256": "466304b15f49da3b11fd2b2a83bc1f3a2fa917ae5807b9ccdfa6883408d6b1b7",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-color-stamp",
+   "preset": "economic",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "2",
+    "--jpeg-quality",
+    "75"
+   ],
+   "exit": 0,
+   "seconds": 1.13,
+   "peak_rss_mb": 126.5,
+   "input_bytes": 1070271,
+   "ocr_bytes": 1074671,
+   "has_images": true,
+   "output_bytes": 251531,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 33.16,
+     "psnr_db": 46.97,
+     "pipeline_cer_input": 0.0578,
+     "cer": 0.0607
+    }
+   ],
+   "sha256": "09c9f3e3ec663e4fbcec836730375654691d27d0d8f3e3c3bb4d1a2388326ed9",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": false
+  },
+  {
+   "case": "scan-table",
+   "preset": "preservation",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0",
+    "--pdfa-image-compression",
+    "lossless"
+   ],
+   "exit": 0,
+   "seconds": 1.01,
+   "peak_rss_mb": 79.8,
+   "input_bytes": 1044979,
+   "ocr_bytes": 1049652,
+   "has_images": true,
+   "output_bytes": 843143,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 26.86,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.8014,
+     "cer": 0.7996
+    }
+   ],
+   "sha256": "89c90b4b36a8216355d2cccba6a94a89df951f31d3f17cdd018b5e99a9a24d64",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": false,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-table",
+   "preset": "none",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0"
+   ],
+   "exit": 0,
+   "seconds": 1.02,
+   "peak_rss_mb": 79.1,
+   "input_bytes": 1044979,
+   "ocr_bytes": 1049652,
+   "has_images": true,
+   "output_bytes": 843142,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 26.86,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.8014,
+     "cer": 0.7996
+    }
+   ],
+   "sha256": "d24bec8cd56751e92bf40a907f5e4150ff9e348f8921ffb2506d92cfdf83f631",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": false,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-table",
+   "preset": "balanced",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "1"
+   ],
+   "exit": 0,
+   "seconds": 1.67,
+   "peak_rss_mb": 89.6,
+   "input_bytes": 1044979,
+   "ocr_bytes": 1049652,
+   "has_images": true,
+   "output_bytes": 741461,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 26.86,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.8014,
+     "cer": 0.7996
+    }
+   ],
+   "sha256": "47d325746205e9ff9e0c9bfa5f58e99744012502b1d19f12180d89638da9c4ba",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": false,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-table",
+   "preset": "economic",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "2",
+    "--jpeg-quality",
+    "75"
+   ],
+   "exit": 0,
+   "seconds": 1.07,
+   "peak_rss_mb": 93.7,
+   "input_bytes": 1044979,
+   "ocr_bytes": 1049652,
+   "has_images": true,
+   "output_bytes": 236519,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 26.84,
+     "psnr_db": 48.87,
+     "pipeline_cer_input": 0.8014,
+     "cer": 0.8086
+    }
+   ],
+   "sha256": "e448f39739999b130a796b0eae14db70c836fad9463020a2285ef1b38e34b4a5",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": false,
+   "text_layer_matches_reference": true,
+   "images_lossless": false
+  },
+  {
+   "case": "scan-a3",
+   "preset": "preservation",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0",
+    "--pdfa-image-compression",
+    "lossless"
+   ],
+   "exit": 0,
+   "seconds": 1.07,
+   "peak_rss_mb": 101.2,
+   "input_bytes": 1827856,
+   "ocr_bytes": 1832272,
+   "has_images": true,
+   "output_bytes": 1470369,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 99.0,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "5c0a460a22f5e667828990d24cb725e04c47d9a03c2b46242b184d3388735ba5",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-a3",
+   "preset": "none",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0"
+   ],
+   "exit": 0,
+   "seconds": 1.06,
+   "peak_rss_mb": 101.1,
+   "input_bytes": 1827856,
+   "ocr_bytes": 1832272,
+   "has_images": true,
+   "output_bytes": 1470369,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 99.0,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "147cff07136bfe3213d2d954153f22a104206091e1a0dd6895561121c6f4f118",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-a3",
+   "preset": "balanced",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "1"
+   ],
+   "exit": 0,
+   "seconds": 2.37,
+   "peak_rss_mb": 120.1,
+   "input_bytes": 1827856,
+   "ocr_bytes": 1832272,
+   "has_images": true,
+   "output_bytes": 1331542,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 99.0,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "c3bdcfdb544ce0b61475494f75e98e0de38df01c38225f0dd544cbb792625f00",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-a3",
+   "preset": "economic",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "2",
+    "--jpeg-quality",
+    "75"
+   ],
+   "exit": 0,
+   "seconds": 1.17,
+   "peak_rss_mb": 119.3,
+   "input_bytes": 1827856,
+   "ocr_bytes": 1832272,
+   "has_images": true,
+   "output_bytes": 391748,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 49.3,
+     "psnr_db": 49.3,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "de9daf94b5f0ed239c5f4fc0113a3e34d0736660a3bef922ba4c147a517dc52a",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": false
+  },
+  {
+   "case": "scan-bilevel",
+   "preset": "preservation",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0",
+    "--pdfa-image-compression",
+    "lossless"
+   ],
+   "exit": 0,
+   "seconds": 1.17,
+   "peak_rss_mb": 96.0,
+   "input_bytes": 55557,
+   "ocr_bytes": 53756,
+   "has_images": true,
+   "output_bytes": 62470,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 30.55,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "fa8ea1dce7187c31b51fb87912e69ba7ed5db5108eb09f53a89c52ed22499b48",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-bilevel",
+   "preset": "none",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0"
+   ],
+   "exit": 0,
+   "seconds": 1.22,
+   "peak_rss_mb": 96.6,
+   "input_bytes": 55557,
+   "ocr_bytes": 53756,
+   "has_images": true,
+   "output_bytes": 62469,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 30.55,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "7f7406f929459de39b935536099cd006006627c714823ba94ba5e8cfee7fdc8d",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-bilevel",
+   "preset": "balanced",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "1"
+   ],
+   "exit": 0,
+   "seconds": 1.64,
+   "peak_rss_mb": 125.2,
+   "input_bytes": 55557,
+   "ocr_bytes": 53756,
+   "has_images": true,
+   "output_bytes": 62455,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 30.55,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "d6bc81712ad14bc3695b1ce9a18673dd23c721eb879ac120372b116b6fcbb970",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "scan-bilevel",
+   "preset": "economic",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "2",
+    "--jpeg-quality",
+    "75"
+   ],
+   "exit": 0,
+   "seconds": 2.17,
+   "peak_rss_mb": 125.3,
+   "input_bytes": 55557,
+   "ocr_bytes": 53756,
+   "has_images": true,
+   "output_bytes": 21154,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 30.55,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0,
+     "cer": 0.0
+    }
+   ],
+   "sha256": "15d6aa93d453fd915404ecbd80cf85356e873b72e857e821b8197f101ab34ac2",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "mixed",
+   "preset": "preservation",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0",
+    "--pdfa-image-compression",
+    "lossless"
+   ],
+   "exit": 0,
+   "seconds": 1.1,
+   "peak_rss_mb": 99.0,
+   "input_bytes": 1012103,
+   "ocr_bytes": 1016059,
+   "has_images": true,
+   "output_bytes": 863803,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 35.02,
+     "psnr_db": 99.0
+    },
+    {
+     "page": 2,
+     "pipeline_psnr_db": 34.63,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0443,
+     "cer": 0.0701
+    }
+   ],
+   "sha256": "11e3a7d573c9b8b4b9234f94548b8e1020df81a166e24aa83477feecdaa3e033",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "mixed",
+   "preset": "none",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "0"
+   ],
+   "exit": 0,
+   "seconds": 1.12,
+   "peak_rss_mb": 98.9,
+   "input_bytes": 1012103,
+   "ocr_bytes": 1016059,
+   "has_images": true,
+   "output_bytes": 863691,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 35.02,
+     "psnr_db": 99.0
+    },
+    {
+     "page": 2,
+     "pipeline_psnr_db": 34.63,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0443,
+     "cer": 0.0701
+    }
+   ],
+   "sha256": "af1a6ce7cb393143924aad1cd8988e74be294d680897a5fc1d6ae0210a90ed10",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "mixed",
+   "preset": "balanced",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "1"
+   ],
+   "exit": 0,
+   "seconds": 2.23,
+   "peak_rss_mb": 125.3,
+   "input_bytes": 1012103,
+   "ocr_bytes": 1016059,
+   "has_images": true,
+   "output_bytes": 783952,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 35.02,
+     "psnr_db": 99.0
+    },
+    {
+     "page": 2,
+     "pipeline_psnr_db": 34.63,
+     "psnr_db": 99.0,
+     "pipeline_cer_input": 0.0443,
+     "cer": 0.0701
+    }
+   ],
+   "sha256": "4d61202d335d5bd51db21fafeaad8e2698a56ba0dff72b7d6531f16e66d4097c",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": true
+  },
+  {
+   "case": "mixed",
+   "preset": "economic",
+   "arguments": [
+    "--output-type",
+    "pdfa-2",
+    "--optimize",
+    "2",
+    "--jpeg-quality",
+    "75"
+   ],
+   "exit": 0,
+   "seconds": 1.25,
+   "peak_rss_mb": 127.6,
+   "input_bytes": 1012103,
+   "ocr_bytes": 1016059,
+   "has_images": true,
+   "output_bytes": 264100,
+   "pages": [
+    {
+     "page": 1,
+     "pipeline_psnr_db": 35.02,
+     "psnr_db": 99.0
+    },
+    {
+     "page": 2,
+     "pipeline_psnr_db": 34.47,
+     "psnr_db": 47.7,
+     "pipeline_cer_input": 0.0443,
+     "cer": 0.048
+    }
+   ],
+   "sha256": "123ccdce04fc7c2928b619563bbce638917201e6b1fce845b56da9c7c311f351",
+   "pdfa": "passed",
+   "pdfa_hash_matches": true,
+   "pages_preserved": true,
+   "pipeline_text_layer_preserved": true,
+   "text_layer_matches_reference": true,
+   "images_lossless": false
+  }
+ ],
+ "verdicts": {
+  "preservation": {
+   "homologated": true,
+   "failures": []
+  },
+  "none": {
+   "homologated": true,
+   "failures": []
+  },
+  "balanced": {
+   "homologated": true,
+   "failures": []
+  },
+  "economic": {
+   "homologated": false,
+   "failures": [
+    "scan-color-stamp p1: readability 0.0289->0.0607"
+   ]
+  }
+ }
+}
