@@ -1,5 +1,7 @@
 """Signed originals (OCR-EV-01): detection, report field and compatibility with reports written before it."""
+import importlib.util
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -42,6 +44,41 @@ def test_cyclic_field_tree_terminates(tmp_path):
 @pytest.mark.parametrize("data", [b"%PDF-1.7\n garbage", b"not a pdf"])
 def test_unreadable_structure_is_unknown(tmp_path, data):
     assert inspect(tmp_path, data).signed is None
+
+
+def test_ocrmypdf_is_told_to_invalidate_only_for_signed_or_unknown_input(tmp_path, monkeypatch):
+    from app.options import EffectiveOptions
+    from app.services.ocrmypdf_service import INVALIDATE_SIGNATURES, OcrmypdfService
+    calls = []
+    monkeypatch.setattr(OcrmypdfService, "_run", lambda self, args, *, timeout=None: calls.append(args))
+    options = EffectiveOptions(languages=("eng",), processing_mode="preserve_existing_text", output_format="pdfa",
+                               compression_profile="balanced", fallback_policy="disabled", engine_jobs=1,
+                               subprocess_timeout_seconds=60, quality_min_text=1, quality_valid_ratio_threshold=0.5,
+                               fallback_character_tolerance=0)
+    for name, data, expected in [("plain", plain_pdf(), False), ("signed", signed_pdf(), True),
+                                 ("unknown", b"%PDF-1.7 broken", True)]:
+        path = tmp_path / f"{name}.pdf"
+        path.write_bytes(data)
+        calls.clear()
+        engine = OcrmypdfService()
+        engine.run_ocr(path, tmp_path / "ocr.pdf", options)
+        effective = engine.optimize_pdfa(path, tmp_path / "out.pdf", options)
+        engine.run_ocr(path, tmp_path / "legacy.pdf")
+        assert [INVALIDATE_SIGNATURES in args for args in calls] == [expected] * 3, name
+        # Recorded among the effective arguments of the report.
+        assert (INVALIDATE_SIGNATURES in effective["arguments"]) is expected
+
+
+@pytest.mark.skipif(shutil.which("tesseract") is None or importlib.util.find_spec("ocrmypdf") is None,
+                    reason="Real OCRmyPDF/Tesseract required")
+def test_real_ocrmypdf_processes_signed_input_and_leaves_original_untouched(tmp_path):
+    from app.services.ocrmypdf_service import OcrmypdfService
+    original = signed_pdf()
+    source = tmp_path / "signed.pdf"
+    source.write_bytes(original)
+    OcrmypdfService().run_ocr(source, tmp_path / "out.pdf")  # Without the flag OCRmyPDF exits with code 2.
+    assert (tmp_path / "out.pdf").read_bytes().startswith(b"%PDF-")
+    assert source.read_bytes() == original
 
 
 LEGACY = sorted((Path(__file__).parent / "fixtures" / "legacy_reports").glob("report-*.json"))

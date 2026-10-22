@@ -43,6 +43,7 @@ Os argumentos efetivos ficam em `output_validation.compression_arguments`. `comp
 
 - O relatório traz `input_signatures`: `signed`, `signature_count`, `certified` (DocMDP) e o método `acroform-sig-fields-v1`. Conta campos `/Sig` com valor `/V`, incluindo `/FT` herdado na árvore de campos. A detecção é estrutural: a assinatura **não é verificada**.
 - `signed=true` acrescenta o aviso `input_signed_signature_not_carried_to_output`. Se a estrutura não puder ser inspecionada, `signed=null` e o aviso `input_signature_inspection_failed`; para a preservação, isso conta como assinado.
+- O OCRmyPDF recusa entrada assinada (`DigitalSignatureError`). Até esta versão, um PDF assinado terminava em `processing_failed`. Agora, quando a entrada de uma chamada do OCRmyPDF está assinada ou não pôde ser inspecionada, o serviço passa `--invalidate-digital-signatures`, que fica registrado em `output_validation.compression_arguments`.
 - O OCR sempre gera um arquivo novo: a assinatura nunca passa para a derivada e `passed` não afirma nada sobre ela. O original fica **byte a byte idêntico** no trabalho (hash em `input.sha256`) até a expiração dos artefatos.
 - Pacote: original assinado ou não inspecionável exige `include_original=true`; caso contrário, `409 signed_original_required`. O `original.pdf` do pacote são os bytes exatos da entrada (ver `docs/document-packages.md`).
 - Relatórios gravados antes disso não têm o campo (`input_signatures=null`) e continuam válidos. Fixtures reais de três versões anteriores de produção ficam em `tests/fixtures/legacy_reports/`.

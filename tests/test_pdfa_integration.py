@@ -309,6 +309,8 @@ def test_optimizer_records_preset_arguments_without_fallback(monkeypatch, tmp_pa
     calls = []
     monkeypatch.setattr(OcrmypdfService, "_run", lambda self, args, *, timeout=None: calls.append(args))
     options = service.resolve(ProcessingOptions(languages=("eng",)))
+    from test_results import pdf
+    (tmp_path / "in.pdf").write_bytes(pdf(["unsigned input"]))
     effective = OcrmypdfService().optimize_pdfa(tmp_path / "in.pdf", tmp_path / "out.pdf", options)
     assert effective == {"arguments": ["--output-type", "pdfa-2", "--optimize", "1"], "fallback": None}
     assert len(calls) == 1

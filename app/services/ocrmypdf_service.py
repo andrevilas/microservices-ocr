@@ -8,6 +8,9 @@ from pathlib import Path
 from app.config import settings
 from app.options import EffectiveOptions
 from app.services.cancellation import active, run_process
+from app.services.pdf_signatures import inspect_signatures
+
+INVALIDATE_SIGNATURES = "--invalidate-digital-signatures"
 
 
 def preset_arguments(profile: str, output_format: str) -> list[str]:
@@ -25,6 +28,12 @@ def preset_arguments(profile: str, output_format: str) -> list[str]:
     return args
 
 
+def signature_arguments(input_pdf_path: Path) -> list[str]:
+    """OCRmyPDF refuses signed input. The derivative is a new, unsigned file (the original is kept byte for
+    byte), so allow it explicitly, also when the structure could not be inspected."""
+    return [INVALIDATE_SIGNATURES] if inspect_signatures(input_pdf_path).signed is not False else []
+
+
 class OcrmypdfService:
     @staticmethod
     def is_available() -> bool:
@@ -34,10 +43,12 @@ class OcrmypdfService:
         if options is not None:
             self._run(["--skip-text", "--output-type", "pdf", "--optimize", "0",
                        "--language", "+".join(options.languages), "--jobs", str(options.engine_jobs),
+                       *signature_arguments(input_pdf_path),
                        str(input_pdf_path), str(output_pdf_path)], timeout=options.subprocess_timeout_seconds)
             return
         self._run(
             [
+                *signature_arguments(input_pdf_path),
                 "--skip-text",
                 "--output-type",
                 "pdf",
@@ -52,7 +63,8 @@ class OcrmypdfService:
                       options: EffectiveOptions | None = None) -> dict | None:
         """Final conversion/compression. With options, returns the effective preset arguments."""
         if options is not None:
-            preset = preset_arguments(options.compression_profile, options.output_format)
+            preset = [*preset_arguments(options.compression_profile, options.output_format),
+                      *signature_arguments(input_pdf_path)]
             common = ["--skip-text", "--language", "+".join(options.languages), "--jobs", str(options.engine_jobs)]
             self._run([*common, *preset, str(input_pdf_path), str(output_pdf_path)],
                       timeout=options.subprocess_timeout_seconds)
@@ -69,6 +81,7 @@ class OcrmypdfService:
     @staticmethod
     def _optimize_args(input_pdf_path: Path, output_pdf_path: Path, optimize_level: int) -> list[str]:
         return [
+            *signature_arguments(input_pdf_path),
             "--skip-text",
             "--output-type",
             settings.final_output_type,
