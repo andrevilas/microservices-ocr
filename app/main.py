@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -270,4 +271,13 @@ def create_app(service_provider=get_job_application, *, request_authenticator=No
     return application
 
 
-app = create_app()
+
+def _served_app():
+    # OCR_REMOTE_CONFIG_FILE adds the OAuth MCP hostname to this same process (OCR-AM-13).
+    if os.environ.get("OCR_REMOTE_CONFIG_FILE"):
+        from app.remote import create_served_app
+        return create_served_app()
+    return create_app()
+
+
+app = _served_app()

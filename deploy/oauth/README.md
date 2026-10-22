@@ -134,3 +134,31 @@ Referências: [MCP Authorization](https://modelcontextprotocol.io/specification/
 [Keycloak containers](https://www.keycloak.org/server/containers),
 [Keycloak reverse proxy](https://www.keycloak.org/server/reverseproxy).
 Detalhe de audience: [migração Keycloak 26.6.2](https://www.keycloak.org/docs/26.8.0/upgrading/).
+
+## Produção (22/10/2026)
+
+O candidato de dados separados (Compose acima) **não** é usado em produção. O OCR de
+produção é o próprio servidor de recursos: com `OCR_REMOTE_CONFIG_FILE`, o
+`app.main:app` atende no mesmo processo dois hostnames.
+
+- **Qualquer outro host:** a superfície local de sempre (UI, Bearer local, `/mcp` só em loopback).
+- **`ocr-mcp.andre.goiania.br`:** a superfície `RemoteSurface`.
+  - Só OAuth (introspection) e a allowlist `OPERATIONS`.
+  - Sem UI, `/health` nem rotas RAG.
+  - Exige o cabeçalho `X-OCR-Gateway`, que o NPM injeta, no lugar de TLS até o processo. O cabeçalho é removido antes do app.
+- **Provedor fora:** a descoberta do provedor roda em segundo plano, com nova tentativa a cada 30 s. Enquanto o provedor estiver fora, só a superfície remota responde 503.
+
+Caminho público:
+
+| Hostname | Cadeia | Filtro |
+| --- | --- | --- |
+| `ocr-auth.andre.goiania.br` | Cloudflare Tunnel `truenas-npm` → NPM → Service `keycloak.ocr-oauth` (ClusterIP) | Discovery do realm `ocr` (também os aliases RFC 8414 com inserção de path), endpoints OIDC, `login-actions` e `/resources`. O resto, inclusive `/admin`, o realm `master`, o console de conta e DCR, responde 404 |
+| `ocr-mcp.andre.goiania.br` | Cloudflare Tunnel `truenas-npm` → NPM → NodePort do OCR (31800) | `/mcp`, metadata RFC 9728 e `/api/v1/*`, com `X-OCR-Gateway` |
+
+Arquivos de produção:
+- **Manifests:** `k8s/ocr-oauth.yaml` (namespace `ocr-oauth`: PostgreSQL 17 e Keycloak 26.8.1, só ClusterIP, com limites de memória).
+- **NPM:** `configure-npm-oauth-hosts.py`.
+- **Clientes:** `clients.production.json`, com callbacks exatos a confirmar em cada app na AM-16.
+- **Segredos:** em `/mnt/NVME/ocr-oauth/secrets` (root 0600). O OCR lê cópias em `/mnt/NVME/ocr-apps/config`, montado em `/etc/ocr-rag`.
+- **Usuários:** são criados pelo admin REST interno.
+- **`subjects` em `remote.json`:** liga cada `sub` do Keycloak a um usuário OCR explícito, nunca administrador.
