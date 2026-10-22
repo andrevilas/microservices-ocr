@@ -69,6 +69,10 @@ _OPERATIONS = {
         4, (0, 1000), ("sha256", "offset", "max_chars"),
     ),
     "list_document_packages": (_ROOT + "/packages", ("job_id",), 1, (), ()),
+    "get_document_graph": (
+        _ROOT + "/graph", ("job_id", "metadata_revision_id", "sensitivity_ceiling"), 1,
+        (None, "internal"), ("metadata_revision_id", "sensitivity_ceiling"),
+    ),
     "get_document_package": (
         _ROOT + "/packages/{package_id}", ("job_id", "package_id"), 2, (), (),
     ),
@@ -94,6 +98,10 @@ def _valid(name, value, operation):
         return _matches(value, _DIGEST)
     if name == "field_name":
         return _matches(value, _FIELD)
+    if name == "metadata_revision_id":
+        return value is None or _matches(value, _ID)
+    if name == "sensitivity_ceiling":
+        return type(value) is str and value in ("public", "internal", "restricted")
     if name == "part":
         return type(value) is str and value in ("raw", "normalized")
     if name == "after":

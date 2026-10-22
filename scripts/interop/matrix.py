@@ -208,7 +208,7 @@ async def flow(kind, api, token, other_token, readonly_token, rec: Recorder, pri
     try:
         if isinstance(ops, McpOps):
             names = await ops.tools()
-            rec.check(kind, "tools_list", len(names) == 62 and "ocr_submit_job" in names, tools=len(names),
+            rec.check(kind, "tools_list", len(names) == 63 and "ocr_submit_job" in names, tools=len(names),
                       protocol_version=str(ops.client.protocol_version), server=getattr(ops.client.server_info, "version", None))
         me = await ops.call("whoami")
         rec.check(kind, "whoami_service_identity", me.get("kind") == "service" and "jobs:submit" in me.get("scopes", []))

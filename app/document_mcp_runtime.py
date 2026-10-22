@@ -6,6 +6,8 @@ from app.document_mcp_tools import DOCUMENT_OPERATIONS
 from app.extraction_models import ApplyExtractionInput, CreateExtractionInput
 from app.package_models import CreatePackageInput
 from app.services.document_runtime import DocumentServices
+from app.graph_contract import parse_graph
+from app.services.graph_export import approved_material
 
 
 _CANONICAL = frozenset({
@@ -90,6 +92,11 @@ def _dispatch(services, principal, operation, args, checkpoint):
     if operation == "get_document_package":
         job_id, package_id = args
         return services.packages.get(principal, job_id, package_id)
+    if operation == "get_document_graph":
+        job_id, revision_id, ceiling = args
+        if ceiling not in ("public", "internal", "restricted"):
+            raise ApplicationError(422, "invalid_metadata_query", "Invalid document metadata query.")
+        return parse_graph(approved_material(services.document, principal, job_id, ceiling, revision_id).graph)
     if operation == "create_metadata_extraction":
         job_id, body = args
         return services.extractions.create(

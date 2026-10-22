@@ -18,6 +18,8 @@ from app.services.rag_delivery_contract import (
 MAX_ARTIFACTS = 8 * 1024 * 1024
 MAX_PAGES = 2 * 1024 * 1024
 MAX_RECEIPT = 65536
+MEDIA_TYPES = {"pdf": "application/pdf", "pages": "application/x-ndjson",
+               "metadata": "application/json", "graph": "application/json"}
 
 
 def _plain_http_allowed(hostname):
@@ -83,7 +85,8 @@ def _json(value) -> bytes:
 
 
 def prepare_delivery(store, principal: Principal, job_id: str,
-                     destination: Destination) -> PreparedDelivery:
+                     destination: Destination, material=None) -> PreparedDelivery:
+    """`material` (approved metadata + its ocr-graph/1) turns the package into ocr-rag/2."""
     principal.require("jobs:read")
     principal.require("artifacts:read")
     destination.validate()
@@ -117,14 +120,20 @@ def prepare_delivery(store, principal: Principal, job_id: str,
                 page_lines.append(line)
             pages = b"".join(page_lines)
             raw = {"pdf": pdf, "pages": pages}
+            if material is not None:
+                raw.update(metadata=material.metadata, graph=material.graph)
+                if sum(map(len, raw.values())) > MAX_ARTIFACTS:
+                    raise ApplicationError(413, "rag_package_limit", "Result exceeds the RAG pilot limit.")
             descriptors = [
                 {"role": role, "sha256": hashlib.sha256(body).hexdigest(), "size_bytes": len(body),
-                 "media_type": "application/pdf" if role == "pdf" else "application/x-ndjson"}
+                 "media_type": MEDIA_TYPES[role]}
                 for role, body in raw.items()]
             data = dict(
-                contract_version="ocr-rag/1", delivery_id="pending", destination_id=destination.destination_id,
+                contract_version="ocr-rag/1" if material is None else "ocr-rag/2", delivery_id="pending",
+                destination_id=destination.destination_id,
                 job_id=job_id, source_revision=report.output.sha256, source_kind=destination.source_kind,
-                process_reference=destination.process_reference, metadata_state="absent", artifacts=descriptors)
+                process_reference=destination.process_reference,
+                metadata_state="absent" if material is None else "approved", artifacts=descriptors)
             # Bind retries to owner, full source and destination classification.
             data["delivery_id"] = hashlib.sha256(_json({"owner": principal.subject, "manifest": data})).hexdigest()
             manifest = parse_manifest(_json(data))

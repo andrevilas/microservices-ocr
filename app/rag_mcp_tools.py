@@ -26,7 +26,8 @@ def rag_request(operation, args):
         query = "?limit=" + str(limit) + ("&state=" + state if state else "")
         return "GET", "/rag/deliveries" + query, None
     if operation == "submit_rag_delivery":
-        return "POST", "/rag/deliveries", args[0].model_dump(mode="json")
+        # Defaults omitted: a plain delivery stays readable by servers before ocr-rag/2.
+        return "POST", "/rag/deliveries", args[0].model_dump(mode="json", exclude_defaults=True)
     delivery_id = args[0]
     if not isinstance(delivery_id, str) or not re.fullmatch("[0-9a-f]{64}", delivery_id):
         raise ToolError("validation_error: Invalid delivery identifier.")
@@ -45,7 +46,7 @@ def register_rag_tools(server, invoke):
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True))
     async def ocr_submit_rag_delivery(ctx: Context, body: DeliveryInput) -> DeliveryStatus:
-        """Queue an owned completed OCR result. Replay the same job and destination after uncertainty. Submission is not an indexed receipt."""
+        """Queue an owned completed OCR result. Replay the same job and destination after uncertainty. Submission is not an indexed receipt. include_graph=true (also requires metadata:read) adds the latest or the given APPROVED metadata snapshot and its ocr-graph/1, limited to the destination's sensitivity ceiling (contract ocr-rag/2); a job delivered without the graph keeps that delivery (rag_delivery_conflict)."""
         return await invoke(ctx, "submit_rag_delivery", body)
 
     @server.tool(annotations=read)

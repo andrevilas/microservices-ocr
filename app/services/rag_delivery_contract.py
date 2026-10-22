@@ -33,12 +33,17 @@ _MEDIA_TYPES = {
     "pdf": "application/pdf",
     "pages": "application/x-ndjson",
     "metadata": "application/json",
+    "graph": "application/json",
 }
 _SIZE_LIMITS = {
     "pdf": 512 * 1024 * 1024,
     "pages": 64 * 1024 * 1024,
     "metadata": 512 * 1024,
+    "graph": 2 * 1024 * 1024,
 }
+# ocr-rag/2 is ocr-rag/1 plus an ocr-graph/1 artifact derived from the approved
+# metadata snapshot. A version-1 receiver rejects it instead of dropping the graph.
+ContractVersion = Literal["ocr-rag/1", "ocr-rag/2"]
 
 
 def _not_dot(value: str) -> str:
@@ -68,7 +73,7 @@ Sha256 = Annotated[
 class Artifact(BaseModel):
     model_config = _CONFIG
 
-    role: Literal["pdf", "pages", "metadata"]
+    role: Literal["pdf", "pages", "metadata", "graph"]
     sha256: Sha256
     size_bytes: Annotated[int, Field(strict=True, gt=0)]
     media_type: Annotated[str, StringConstraints(strict=True, max_length=64)]
@@ -82,22 +87,26 @@ class Artifact(BaseModel):
         return self
 
 
-Artifacts = Annotated[tuple[Artifact, ...], Field(min_length=2, max_length=3)]
+Artifacts = Annotated[tuple[Artifact, ...], Field(min_length=2, max_length=4)]
 
 
-def _check_roles(artifacts: tuple[Artifact, ...]) -> set[str]:
+def _check_roles(artifacts: tuple[Artifact, ...], version: str) -> set[str]:
     roles = {artifact.role for artifact in artifacts}
     if len(roles) != len(artifacts):
         raise ValueError("duplicate_artifact_role")
     if not {"pdf", "pages"}.issubset(roles):
         raise ValueError("missing_artifact_role")
+    if ("graph" in roles) != (version == "ocr-rag/2"):
+        raise ValueError("graph_version_mismatch")
+    if "graph" in roles and "metadata" not in roles:
+        raise ValueError("graph_requires_metadata")
     return roles
 
 
 class DeliveryManifest(BaseModel):
     model_config = _CONFIG
 
-    contract_version: Literal["ocr-rag/1"]
+    contract_version: ContractVersion
     delivery_id: SafeId
     destination_id: SafeId
     job_id: SafeId
@@ -111,18 +120,20 @@ class DeliveryManifest(BaseModel):
 
     @model_validator(mode="after")
     def check_manifest(self) -> "DeliveryManifest":
-        roles = _check_roles(self.artifacts)
+        roles = _check_roles(self.artifacts, self.contract_version)
         if self.source_kind == "process_record" and self.process_reference is None:
             raise ValueError("process_reference_required")
         if ("metadata" in roles) != (self.metadata_state != "absent"):
             raise ValueError("metadata_state_mismatch")
+        if "graph" in roles and self.metadata_state != "approved":
+            raise ValueError("graph_requires_approved_metadata")
         return self
 
 
 class DeliveryReceipt(BaseModel):
     model_config = _CONFIG
 
-    contract_version: Literal["ocr-rag/1"]
+    contract_version: ContractVersion
     delivery_id: SafeId
     destination_id: SafeId
     manifest_sha256: Sha256
@@ -134,7 +145,7 @@ class DeliveryReceipt(BaseModel):
 
     @model_validator(mode="after")
     def check_receipt(self) -> "DeliveryReceipt":
-        _check_roles(self.artifacts)
+        _check_roles(self.artifacts, self.contract_version)
         return self
 
 
@@ -210,7 +221,8 @@ def match_receipt(manifest: DeliveryManifest, receipt: DeliveryReceipt) -> bool:
     manifest = _validated_manifest(manifest)
     receipt = _validated_receipt(receipt)
     if (
-        receipt.delivery_id != manifest.delivery_id
+        receipt.contract_version != manifest.contract_version
+        or receipt.delivery_id != manifest.delivery_id
         or receipt.destination_id != manifest.destination_id
         or receipt.manifest_sha256 != manifest_digest(manifest)
         or sorted(receipt.artifacts, key=lambda item: item.role)
