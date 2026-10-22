@@ -1,26 +1,38 @@
 """Pure MCP registry and REST mapping for delivery operations."""
 import re
-from typing import Any
+from typing import Any, get_args
 from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from app.rag_models import DeliveryId, DeliveryInput, DeliveryStatus, DestinationList, RecoveryLink
+from app.rag_models import (DeliveryId, DeliveryInput, DeliveryList, DeliveryOperations, DeliveryState,
+                            DeliveryStatus, DestinationList, RecoveryLink)
 
 RAG_OPERATIONS = frozenset({"list_rag_destinations", "submit_rag_delivery", "get_rag_delivery",
-                            "get_rag_receipt", "cancel_rag_delivery", "get_rag_recovery"})
+                            "get_rag_receipt", "cancel_rag_delivery", "get_rag_recovery",
+                            "retry_rag_delivery", "list_rag_deliveries", "get_rag_operations"})
 
 
 def rag_request(operation, args):
     if operation == "list_rag_destinations":
         return "GET", "/rag/destinations", None
+    if operation == "get_rag_operations":
+        return "GET", "/rag/operations", None
+    if operation == "list_rag_deliveries":
+        state, limit = args
+        if state is not None and state not in get_args(DeliveryState):
+            raise ToolError("validation_error: Invalid delivery state.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ToolError("validation_error: Invalid limit.")
+        query = "?limit=" + str(limit) + ("&state=" + state if state else "")
+        return "GET", "/rag/deliveries" + query, None
     if operation == "submit_rag_delivery":
         return "POST", "/rag/deliveries", args[0].model_dump(mode="json")
     delivery_id = args[0]
     if not isinstance(delivery_id, str) or not re.fullmatch("[0-9a-f]{64}", delivery_id):
         raise ToolError("validation_error: Invalid delivery identifier.")
-    suffix = {"get_rag_delivery": "", "get_rag_receipt": "/receipt",
+    suffix = {"get_rag_delivery": "", "get_rag_receipt": "/receipt", "retry_rag_delivery": "/retry",
               "cancel_rag_delivery": "/cancel", "get_rag_recovery": "/recovery"}[operation]
-    return ("POST" if operation == "cancel_rag_delivery" else "GET",
+    return ("POST" if operation in ("cancel_rag_delivery", "retry_rag_delivery") else "GET",
             "/rag/deliveries/" + delivery_id + suffix, None)
 
 
@@ -50,6 +62,21 @@ def register_rag_tools(server, invoke):
     async def ocr_get_rag_recovery(ctx: Context, delivery_id: DeliveryId) -> RecoveryLink:
         """Get authenticated HTTP download path/hash for a retained recovery package. No document bytes in MCP. Download never releases hold."""
         return await invoke(ctx, "get_rag_recovery", delivery_id)
+
+    @server.tool(annotations=read)
+    async def ocr_list_rag_deliveries(ctx: Context, state: DeliveryState | None = None, limit: int = 50) -> DeliveryList:
+        """List owned deliveries, newest first, optionally by state (e.g. resolution). Administrators see every owner."""
+        return await invoke(ctx, "list_rag_deliveries", state, limit)
+
+    @server.tool(annotations=read)
+    async def ocr_get_rag_operations(ctx: Context) -> DeliveryOperations:
+        """Administrator-only aggregate worker state: queue counts, deadlines, resolution and worker failure. No documents."""
+        return await invoke(ctx, "get_rag_operations")
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
+    async def ocr_retry_rag_delivery(ctx: Context, delivery_id: DeliveryId) -> DeliveryStatus:
+        """Return a delivery in resolution to the retry queue with a fresh attempt budget. Requires jobs:submit and a retained package; deletes nothing."""
+        return await invoke(ctx, "retry_rag_delivery", delivery_id)
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
     async def ocr_cancel_rag_delivery(ctx: Context, delivery_id: DeliveryId) -> DeliveryStatus:

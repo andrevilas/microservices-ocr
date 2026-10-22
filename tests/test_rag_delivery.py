@@ -126,6 +126,7 @@ def test_no_redirect_or_automatic_retry(source, status):
         send_delivery(prepared, dest, transport=httpx2.MockTransport(receive))
     assert len(calls) == 1
     assert exc.value.code == ("rag_delivery_uncertain" if status in (429, 500, 503)
+                              else "rag_destination_unauthorized" if status in (401, 403)
                               else "rag_delivery_rejected")
     assert job.output_pdf_path.is_file()
 
@@ -243,7 +244,7 @@ def test_real_receiver_handoff(source, tmp_path):
             remote_store.revoke(token)
             with pytest.raises(ApplicationError) as exc:
                 send_delivery(prepared, dest)
-            assert exc.value.code == "rag_delivery_rejected"
+            assert exc.value.code == "rag_destination_unauthorized"
             assert job.output_pdf_path.is_file() and job.artifacts_removed_at is None
     finally:
         process.terminate()

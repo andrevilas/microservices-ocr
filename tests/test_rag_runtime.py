@@ -56,6 +56,8 @@ def test_shutdown_reports_live_writer(outbox, tmp_path, monkeypatch):
     assert exc.value.code == "rag_shutdown_pending"
 
 
+@pytest.mark.skipif(not __import__("app.services.metadata_files", fromlist=["_SUPPORTED"])._SUPPORTED,
+                    reason="Linux dirfd metadata layer required by the application lifespan")
 @pytest.mark.parametrize("stop_fails", [False, True])
 def test_application_lifespan_pins_store_and_retains_lease_on_failed_stop(outbox, tmp_path, monkeypatch, stop_fails):
     import asyncio

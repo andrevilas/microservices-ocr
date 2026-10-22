@@ -13,14 +13,34 @@ class DeliveryInput(BaseModel):
     destination: DestinationKey
 
 
+DeliveryState = Literal["queued", "sending", "retry", "indexed", "resolution", "canceled"]
+
+
 class DeliveryStatus(BaseModel):
     id: DeliveryId
     job_id: str
-    state: Literal["queued", "sending", "retry", "indexed", "resolution", "canceled"]
+    state: DeliveryState
     deadline: float
     attempts: int
     next_attempt: float
     error: str | None
+
+
+class DeliveryList(BaseModel):
+    """Owned deliveries; a human administrator sees every owner."""
+    items: list[DeliveryStatus]
+
+
+class DeliveryOperations(BaseModel):
+    """Aggregate worker state for administrators; no documents, URLs or tokens."""
+    enabled: bool
+    worker_running: bool
+    worker_failure: str | None
+    states: dict[str, int]
+    due: int
+    near_deadline: int
+    requires_resolution: int
+    queued_payload_bytes: int
 
 
 class RecoveryLink(BaseModel):

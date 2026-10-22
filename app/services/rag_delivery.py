@@ -20,6 +20,21 @@ MAX_PAGES = 2 * 1024 * 1024
 MAX_RECEIPT = 65536
 
 
+def _plain_http_allowed(hostname):
+    """Loopback, or a Kubernetes service name resolved inside the node's cluster
+    network. Never a LAN/Internet host: those require HTTPS."""
+    if hostname in ("127.0.0.1", "::1", "localhost"):
+        return True
+    # The trailing-dot form is absolute: resolvers skip search suffixes, so the
+    # name can only be answered by the cluster DNS (pods use ndots:5).
+    if hostname.endswith(".svc.cluster.local."):
+        hostname = hostname[:-1]
+    labels = hostname.split(".")
+    return (hostname.endswith(".svc.cluster.local") and len(labels) == 5
+            and all(label and len(label) <= 63 and all(c.isascii() and (c.isalnum() or c == "-")
+                                                        for c in label) for label in labels))
+
+
 @dataclass(frozen=True)
 class Destination:
     """Operator-owned binding, never constructed from an untrusted request."""
@@ -42,7 +57,7 @@ class Destination:
         if (parsed.username or parsed.password or parsed.query or parsed.fragment
                 or not parsed.hostname or parsed.path not in ("", "/")
                 or (parsed.scheme != "https"
-                    and not (parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "::1", "localhost")))
+                    and not (parsed.scheme == "http" and _plain_http_allowed(parsed.hostname)))
                 or not isinstance(self.token, str) or not 32 <= len(self.token) <= 256
                 or any(ord(c) < 33 or ord(c) > 126 for c in self.token)):
             raise ApplicationError(503, "rag_configuration_invalid", "RAG destination is not configured safely.")
@@ -146,6 +161,11 @@ def send_delivery(delivery: PreparedDelivery, destination: Destination, *, trans
                                headers={"Authorization": "Bearer " + destination.token,
                                         "Content-Type": "application/json", "Accept-Encoding": "identity"}) as response:
                 if response.status_code != 200:
+                    if response.status_code in (401, 403, 404):
+                        # Credential rotation or binding misconfiguration is an
+                        # operator condition, not a verdict on the package.
+                        raise ApplicationError(503, "rag_destination_unauthorized",
+                                               "RAG destination rejected the configured credential.")
                     retryable = response.status_code in (408, 429, 500, 502, 503, 504)
                     raise ApplicationError(503 if retryable else 409,
                                            "rag_delivery_uncertain" if retryable else "rag_delivery_rejected",

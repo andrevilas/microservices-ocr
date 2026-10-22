@@ -1,9 +1,11 @@
 """Explicit opt-in runtime from a bounded operator configuration file."""
 from pathlib import Path
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.application import ApplicationError
 from app.services.rag_application import RagApplication
 from app.services.rag_delivery import Destination
+from app.services.rag_delivery_contract import SafeId
 from app.services.rag_outbox import DeliveryPolicy, RagOutbox
 from app.services.rag_worker import RagDeliveryWorker
 
@@ -12,16 +14,24 @@ class BindingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     key: str = Field(pattern="^[a-zA-Z0-9_-]{1,64}$")
     url: str
-    destination_id: str
+    # Same constraints as the ocr-rag/1 manifest, so a misconfigured binding
+    # fails at startup instead of surfacing later as an OCR integrity error.
+    destination_id: SafeId
     owner: str
-    source_kind: str
-    process_reference: str | None = None
+    source_kind: Literal["process_record", "historical_reference", "normative_source"]
+    process_reference: SafeId | None = None
     token: str = Field(repr=False)
+
+    @model_validator(mode="after")
+    def _process_binding(self):
+        if self.source_kind == "process_record" and self.process_reference is None:
+            raise ValueError("process_reference is required for process records")
+        return self
 
 
 class RuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    policy: dict[str, int]
+    policy: dict[str, int | None]
     destinations: list[BindingConfig] = Field(min_length=1, max_length=100)
     interval_seconds: int = Field(ge=1, le=86400)
     batch_size: int = Field(ge=1, le=100)
@@ -37,10 +47,10 @@ class RagRuntime:
                 raise ValueError("duplicate destination key")
             destinations[entry.key] = Destination(**entry.model_dump(exclude={"key"}))
         outbox = RagOutbox(store, DeliveryPolicy(**config.policy))
-        self.service = RagApplication(outbox, destinations)
         self.worker = RagDeliveryWorker(outbox, destinations.values(),
             interval_seconds=config.interval_seconds, batch_size=config.batch_size,
             warning_seconds=config.warning_seconds)
+        self.service = RagApplication(outbox, destinations, self.worker)
         self.shutdown_seconds = config.shutdown_seconds
 
     def start(self):

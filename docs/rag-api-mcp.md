@@ -1,6 +1,6 @@
 # Entregas OCR para RAG: API e MCP
 
-Contrato candidato HTTP 1.8.0: 66 operações. MCP 0.7.0: 52 ferramentas.
+Contrato candidato HTTP 1.9.0: 69 operações. MCP 0.7.0: 55 ferramentas.
 Esta integração está disponível no código candidato; não constitui registro
 de implantação em produção. A configuração permanece desabilitada por padrão.
 
@@ -13,6 +13,9 @@ de implantação em produção. A configuração permanece desabilitada por padr
 | GET `/deliveries/{id}/recovery` | `ocr_get_rag_recovery` | URL relativa autenticada, hash e tamanho |
 | GET `/deliveries/{id}/recovery/content` | Download HTTP | Bytes do pacote retido |
 | POST `/deliveries/{id}/cancel` | `ocr_cancel_rag_delivery` | Cancelar e liberar hold explicitamente |
+| GET `/deliveries?state=&limit=` | `ocr_list_rag_deliveries` | Listar entregas (administrador vê todas) |
+| POST `/deliveries/{id}/retry` | `ocr_retry_rag_delivery` | Devolver entrega em resolução à fila |
+| GET `/operations` | `ocr_get_rag_operations` | Estado agregado do worker (administrador) |
 
 O MCP remoto e o adaptador stdio usam as mesmas operações. Nenhuma ferramenta
 transfere o pacote inteiro. Cada requisição autentica o principal atual.
@@ -30,17 +33,41 @@ pending não é confirmação indexed. Um cancelamento não desfaz conteúdo que
 tenha chegado ao receptor; ele permite a limpeza local de arquivos vencidos.
 
 Consultas exigem `jobs:read`; admissão e recuperação também `artifacts:read`;
-cancelamento também `artifacts:delete`. Todas verificam propriedade, inclusive
-recibos e download. Metadados continuam com edição/aprovação somente por MCP.
+cancelamento também `artifacts:delete`; nova tentativa também `jobs:submit`.
+Todas verificam propriedade, inclusive recibos e download. Um administrador
+humano pode listar, consultar, repetir e cancelar entregas de qualquer
+proprietário; esses atos ficam auditados como `operator-*`. Recibos e pacotes
+de recuperação continuam restritos ao proprietário.
+
+## Resolução
+
+- `resolution` bloqueia novas admissões apenas do mesmo proprietário.
+- Capacidade (`max_entries`, `max_payload_bytes` e o opcional
+  `max_entries_per_owner`) conta somente entregas ativas; `indexed` e
+  `canceled` não ocupam vagas.
+- `retry` exige pacote retido, zera tentativas e renova o prazo de hold uma vez
+  pela política da própria entrega. Nada é apagado.
+- Reenviar job/destino após `canceled` recoloca a mesma entrega na fila com o
+  pacote reconstruído; o receptor devolve o mesmo recibo se já a tinha.
+- HTTP 401/403/404 do receptor viram `rag_destination_unauthorized`, tratado
+  como condição transitória de operador (credencial/vínculo), com backoff.
+- `claim_seconds` mínimo de 60 s, para que uma tentativa HTTP limitada não
+  seja descartada como `superseded`. Metadados continuam com edição/aprovação somente por MCP.
 
 ## Ativação pelo operador
 
 `RAG_CONFIG_FILE` aponta para arquivo JSON privado com caminho absoluto,
 limitado a 64 KiB. Nunca versionar tokens. O arquivo contém:
 
-- `policy`: todos os sete campos de `DeliveryPolicy` descritos em rag-outbox.md;
+- `policy`: os sete campos obrigatórios de `DeliveryPolicy` (e o opcional `max_entries_per_owner`) descritos em rag-outbox.md;
 - `destinations`: até 100 entradas com key, url, destination_id, owner,
-  source_kind, process_reference e token;
+  source_kind, process_reference e token; `destination_id`,
+  `source_kind` e `process_reference` são validados no startup com as mesmas
+  regras do manifesto `ocr-rag/1`. URL: HTTPS, HTTP em loopback ou HTTP para
+  nome de serviço Kubernetes `<svc>.<namespace>.svc.cluster.local.` (rede
+  interna do nó). Usar a forma com ponto final: o nome é absoluto e não
+  passa pelos sufixos de busca do resolvedor (ndots:5), então só o DNS do
+  cluster responde. O OCR precisa rodar como pod do mesmo cluster. Hosts de LAN/Internet exigem HTTPS;
 - `interval_seconds`, `batch_size`, `warning_seconds`, `shutdown_seconds`:
   valores explícitos, sem prazos de produção assumidos pelo código.
 
