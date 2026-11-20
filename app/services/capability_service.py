@@ -10,7 +10,10 @@ import time
 from threading import Lock
 
 from app.config import settings
-from app.options import COMPRESSION_PRESET_VERSION, HOMOLOGATED_COMPRESSION, Capabilities, EffectiveOptions, EngineCapability, ProcessingOptions, ResolvedOptions
+from app.options import COMPRESSION_PRESET_VERSION, HOMOLOGATED_COMPRESSION, Capabilities, EffectiveOptions, EngineCapability, Language, ProcessingOptions, ResolvedOptions
+from typing import get_args
+
+SUPPORTED_LANGUAGES: set[str] = set(get_args(Language))
 from app.results import MAX_PAGE_CHARS, MAX_TOTAL_CHARS, package_version
 
 
@@ -110,7 +113,7 @@ class CapabilityService:
         if engines["tesseract"].available:
             output = command_output([binaries["tesseract"], "--list-langs"])
             if output is not None:
-                languages = sorted(set(output.splitlines()) & {"eng", "por"})
+                languages = sorted(set(output.splitlines()) & SUPPORTED_LANGUAGES)
         reasons = []
         if not supported:
             reasons.append("ocrmypdf_16_4_to_16_x_required")
@@ -144,7 +147,7 @@ class CapabilityService:
             processing_modes=["extract_text", "preserve_existing_text"] if ready else ["extract_text"],
             output_formats=["pdf_searchable", "pdfa"] if pdfa_ready else ["pdf_searchable"],
             compression_profiles=list(HOMOLOGATED_COMPRESSION) if ready else ["none"],
-            fallback_policies=["disabled", "if_low_quality"] if ready and fallback_ready and languages == ["eng", "por"] else ["disabled"],
+            fallback_policies=["disabled", "if_low_quality"] if ready and fallback_ready and {"eng", "por"} <= set(languages) else ["disabled"],
             fallback_language_sets=[["eng", "por"]] if fallback_ready else [],
             defaults=ProcessingOptions().resolved(), limits={}, warnings=warnings,
         )
