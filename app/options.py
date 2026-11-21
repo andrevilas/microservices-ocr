@@ -3,7 +3,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-Language = Literal["eng", "por"]
+Language = Literal[
+    "eng", "por", "rus", "deu", "ita", "spa", "fra",
+    "ces", "hun", "pol", "ara", "chi_sim", "chi_tra",
+    "jpn", "kor", "tur", "heb", "ukr",
+]
 Mode = Literal["preserve_existing_text", "extract_text"]
 OutputFormat = Literal["pdf_searchable", "pdfa"]
 Compression = Literal["none", "economic", "balanced", "preservation"]
@@ -19,7 +23,7 @@ WITHDRAWN_COMPRESSION: tuple[Compression, ...] = ("economic",)
 
 class ProcessingOptions(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    languages: tuple[Language, ...] | None = Field(default=None, max_length=2)
+    languages: tuple[Language, ...] | None = Field(default=None, max_length=4)
     processing_mode: Mode = "preserve_existing_text"
     output_format: OutputFormat | None = None
     compression_profile: Compression | None = None

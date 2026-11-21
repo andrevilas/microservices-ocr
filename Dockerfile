@@ -44,6 +44,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
     tesseract-ocr-por \
+    tesseract-ocr-rus \
+    tesseract-ocr-deu \
+    tesseract-ocr-ita \
+    tesseract-ocr-spa \
+    tesseract-ocr-fra \
+    tesseract-ocr-ces \
+    tesseract-ocr-hun \
+    tesseract-ocr-pol \
+    tesseract-ocr-ara \
+    tesseract-ocr-chi-sim \
+    tesseract-ocr-chi-tra \
+    tesseract-ocr-jpn \
+    tesseract-ocr-kor \
+    tesseract-ocr-tur \
+    tesseract-ocr-heb \
+    tesseract-ocr-ukr \
     ghostscript \
     poppler-utils \
     pngquant \
